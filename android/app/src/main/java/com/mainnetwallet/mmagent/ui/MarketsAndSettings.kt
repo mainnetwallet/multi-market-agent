@@ -138,6 +138,8 @@ fun SettingsScreen(
     appLockEnabled: Boolean,
     appLockAvailable: Boolean,
     appLockTimeoutMinutes: Int,
+    blockScreenshots: Boolean,
+    onSetBlockScreenshots: (Boolean) -> Unit,
     onLoadReport: () -> Unit,
     onLoadAudit: () -> Unit,
     onRaiseCeiling: (name: String, value: String, password: String, onResult: (Boolean, String) -> Unit) -> Unit,
@@ -154,6 +156,7 @@ fun SettingsScreen(
     var lockTimeout by remember { mutableStateOf(appLockTimeoutMinutes.toString()) }
     // AppLock is not observable, so the switch keeps its own state and writes through.
     var lockOn by remember(appLockEnabled) { mutableStateOf(appLockEnabled) }
+    var blockShots by remember(blockScreenshots) { mutableStateOf(blockScreenshots) }
     val capabilities = state.status.capabilities
 
     LazyColumn(
@@ -207,6 +210,20 @@ fun SettingsScreen(
                             "Save lock timeout",
                             enabled = lockTimeout.toIntOrNull() in 0..60,
                             onClick = { onSetAppLock(lockOn, lockTimeout.toIntOrNull() ?: 5) },
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Block screenshots", style = MaterialTheme.typography.bodyMedium)
+                        Switch(
+                            checked = blockShots,
+                            onCheckedChange = { on ->
+                                blockShots = on
+                                onSetBlockScreenshots(on)
+                            },
                         )
                     }
                     ValueRow("Per-trade cap", Format.money(state.status.maxTradeUsd))

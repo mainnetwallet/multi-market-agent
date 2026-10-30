@@ -29,6 +29,14 @@ class AppLock(context: Context) {
         get() = prefs.getBoolean(KEY_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_ENABLED, value).apply()
 
+    /**
+     * Block screenshots and screen recording (FLAG_SECURE). Off by default so the
+     * operator can take screenshots; Settings can turn the block back on.
+     */
+    var blockScreenshots: Boolean
+        get() = prefs.getBoolean(KEY_BLOCK_SCREENSHOTS, false)
+        set(value) = prefs.edit().putBoolean(KEY_BLOCK_SCREENSHOTS, value).apply()
+
     /** True when this device can actually unlock the app. */
     fun available(context: Context): Boolean {
         val manager = BiometricManager.from(context)
@@ -79,6 +87,7 @@ class AppLock(context: Context) {
         const val DEFAULT_TIMEOUT = 5
         private const val KEY_TIMEOUT = "timeout_minutes"
         private const val KEY_ENABLED = "enabled"
+        private const val KEY_BLOCK_SCREENSHOTS = "block_screenshots"
         private const val KEY_BACKGROUND_AT = "background_at"
     }
 }

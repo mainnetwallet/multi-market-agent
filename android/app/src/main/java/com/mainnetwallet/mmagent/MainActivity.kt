@@ -49,17 +49,26 @@ import kotlinx.coroutines.launch
 /**
  * The native shell.
  *
- * FLAG_SECURE stays on: the copy button covers addresses, and a screenshot of a
- * wallet should not be a screenshot of a wallet.
+ * Screenshots are allowed by default. Settings has a "Block screenshots" switch that
+ * sets FLAG_SECURE (no screenshots, no screen recording, blank recents thumbnail).
  */
 class MainActivity : FragmentActivity() {
 
     private lateinit var appLock: AppLock
 
+    /** FLAG_SECURE on = no screenshots or screen recording; off = they work normally. */
+    private fun applyScreenshotPolicy(block: Boolean) {
+        if (block) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         appLock = AppLock(this)
+        applyScreenshotPolicy(appLock.blockScreenshots)
 
         // The token provider reads the saved session on every request. It used to be a
         // hardcoded `null`, so nothing after login was ever authenticated and every
@@ -235,6 +244,11 @@ class MainActivity : FragmentActivity() {
                                 appLockEnabled = appLock.enabled,
                                 appLockAvailable = appLock.available(this@MainActivity),
                                 appLockTimeoutMinutes = appLock.timeoutMinutes,
+                                blockScreenshots = appLock.blockScreenshots,
+                                onSetBlockScreenshots = { block ->
+                                    appLock.blockScreenshots = block
+                                    applyScreenshotPolicy(block)
+                                },
                                 onLoadReport = { appViewModel.loadReport() },
                                 onLoadAudit = { appViewModel.loadAudit() },
                                 onRaiseCeiling = { name, value, password, onResult ->

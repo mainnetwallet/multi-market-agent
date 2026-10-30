@@ -87,8 +87,9 @@ CI: `.github/workflows/android.yml`.
   Pause stay one tap plus a normal dialog.
 - When the server is unreachable, every money-adding and money-out action is
   disabled. Cancel and Pause stay available.
-- `FLAG_SECURE` stays on, so a screenshot of the app is not a screenshot of your
-  wallet. The copy button covers addresses.
+- Screenshots work by default. Settings → Security → **Block screenshots** turns on
+  `FLAG_SECURE` (no screenshots or screen recording, blank recents thumbnail). The
+  copy button covers addresses either way.
 - One idempotency key per user intent, reused if you tap again after a timeout
   and discarded after a definite result.
 
