@@ -500,6 +500,9 @@ fun WithdrawReviewScreen(
 fun TradeSheetScreen(
     draft: com.mainnetwallet.mmagent.data.TradeDraft,
     estimate: com.mainnetwallet.mmagent.data.TradeEstimate,
+    bids: List<BookLevel>,
+    asks: List<BookLevel>,
+    history: List<PricePoint>,
     submitting: Boolean,
     error: String?,
     result: String?,
@@ -595,6 +598,34 @@ fun TradeSheetScreen(
             modifier = Modifier.fillMaxWidth(),
         )
 
+        Spacer(Modifier.height(14.dp))
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                SectionHeader("Order book")
+                DepthView(bids = bids, asks = asks)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                SectionHeader("Price history", "1 day")
+                if (history.isEmpty()) {
+                    Text(
+                        "No price history for this venue.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    PriceChart(points = history)
+                }
+            }
+        }
         Spacer(Modifier.height(14.dp))
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),

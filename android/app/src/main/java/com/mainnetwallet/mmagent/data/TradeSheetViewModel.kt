@@ -10,6 +10,8 @@ import org.json.JSONObject
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.UUID
+import com.mainnetwallet.mmagent.ui.BookLevel
+import com.mainnetwallet.mmagent.ui.PricePoint
 
 /** What the operator is building, before anything is sent. */
 data class TradeDraft(
@@ -51,6 +53,9 @@ data class TradeEstimate(
 data class TradeUiState(
     val draft: TradeDraft = TradeDraft(),
     val estimate: TradeEstimate = TradeEstimate(),
+    val bids: List<BookLevel> = emptyList(),
+    val asks: List<BookLevel> = emptyList(),
+    val history: List<PricePoint> = emptyList(),
     val submitting: Boolean = false,
     val result: String? = null,
     val error: String? = null,
@@ -85,6 +90,35 @@ class TradeSheetViewModel(private val api: ApiClient) : ViewModel() {
 
     fun setMarket(marketId: String, title: String) {
         _state.value = _state.value.copy(draft = _state.value.draft.copy(marketId = marketId, title = title))
+    }
+
+    /** Load the book and the price history the market detail shows. */
+    fun loadMarketData(marketId: String, venue: String, outcome: String) {
+        viewModelScope.launch {
+            try {
+                val book = api.get("/v1/markets/$marketId/book?venue=$venue&outcome=$outcome&depth=20")
+                val levels = { key: String ->
+                    ApiClient.arrayOf(book, key).objects().map {
+                        BookLevel(
+                            BigDecimal(it.optString("price", "0")),
+                            BigDecimal(it.optString("shares", "0")),
+                        )
+                    }
+                }
+                _state.value = _state.value.copy(bids = levels("bids"), asks = levels("asks"))
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message)
+            }
+            try {
+                val history = api.get("/v1/markets/$marketId/history?venue=$venue&interval=1d")
+                val points = ApiClient.arrayOf(history, "points").objects().map {
+                    PricePoint(it.optString("at"), BigDecimal(it.optString("close", "0")))
+                }
+                _state.value = _state.value.copy(history = points)
+            } catch (e: Exception) {
+                // A venue with no price history is normal; the chart simply stays empty.
+            }
+        }
     }
 
     fun setOutcome(outcome: String) {

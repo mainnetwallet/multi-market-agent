@@ -385,6 +385,11 @@ class FakeVenue(Venue):
             source="fake taker formula",
         )
 
+    async def redeem_positions(self, *, market_id: str, outcome: Any = None) -> dict[str, Any]:
+        """The fake venue settles positions locally; nothing to redeem."""
+
+        return {"supported": True, "settled": True, "market_id": market_id}
+
     async def get_price_history(self, market_id: str, *, interval: str = "1d") -> list[dict[str, Any]]:
         """A short synthetic series so the history route can be exercised."""
 

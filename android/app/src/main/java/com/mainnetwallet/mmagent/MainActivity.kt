@@ -12,6 +12,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -63,6 +68,7 @@ class MainActivity : ComponentActivity() {
                 var selectedVenue by remember { mutableStateOf("") }
                 var depositInfo by remember { mutableStateOf<org.json.JSONObject?>(null) }
                 var depositError by remember { mutableStateOf<String?>(null) }
+                var toast by remember { mutableStateOf<String?>(null) }
                 val clipboard = LocalClipboardManager.current
 
                 val tradeVm = remember { TradeSheetViewModel(api) }
@@ -79,6 +85,15 @@ class MainActivity : ComponentActivity() {
                         onLogin = { user, pass -> appViewModel.login(user, pass) {} },
                     )
                 } else {
+                    toast?.let {
+                        // Surface the server's own message; nothing is paraphrased.
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
                     AppScaffold(
                     state = state,
                     tab = tab,
@@ -89,6 +104,9 @@ class MainActivity : ComponentActivity() {
                         "trade" -> TradeSheetScreen(
                             draft = tradeState.draft,
                             estimate = tradeState.estimate,
+                            bids = tradeState.bids,
+                            asks = tradeState.asks,
+                            history = tradeState.history,
                             submitting = tradeState.submitting,
                             error = tradeState.error,
                             result = tradeState.result,
@@ -155,6 +173,7 @@ class MainActivity : ComponentActivity() {
                                     tradeVm.newIntent()
                                     tradeVm.setMarket(marketId, title)
                                     applyCapabilities(tradeVm, state, marketId)
+                                    tradeVm.loadMarketData(marketId, tradeVm.state.value.draft.venue, "YES")
                                     overlay = "trade"
                                 },
                             )
@@ -163,9 +182,21 @@ class MainActivity : ComponentActivity() {
                                 state = state,
                                 onCancelOrder = { appViewModel.cancelOrder(it) },
                                 onCancelAll = { appViewModel.cancelAll() },
-                                onSell = { _, _ -> },
-                                onRedeem = { _, _ -> },
-                                onAdvanced = { _, _ -> },
+                                onSell = { marketId, outcome, shares, venue ->
+                                    appViewModel.sellPosition(marketId, outcome, shares, venue) { message ->
+                                        toast = message
+                                    }
+                                },
+                                onRedeem = { marketId, outcome, venue ->
+                                    appViewModel.redeemPosition(marketId, outcome, venue) { message ->
+                                        toast = message
+                                    }
+                                },
+                                onAdvanced = { marketId, venue, action ->
+                                    appViewModel.splitOrMerge(marketId, venue, action) { message ->
+                                        toast = message
+                                    }
+                                },
                             )
 
                             Tab.WALLET -> WalletScreen(

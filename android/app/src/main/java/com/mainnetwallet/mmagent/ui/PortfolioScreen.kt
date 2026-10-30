@@ -30,6 +30,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import java.math.BigDecimal
+import java.math.RoundingMode
 import com.mainnetwallet.mmagent.data.AppUiState
 import com.mainnetwallet.mmagent.data.Format
 import org.json.JSONObject
@@ -40,9 +42,9 @@ fun PortfolioScreen(
     state: AppUiState,
     onCancelOrder: (String) -> Unit,
     onCancelAll: () -> Unit,
-    onSell: (String, String) -> Unit,
-    onRedeem: (String, String) -> Unit,
-    onAdvanced: (String, String) -> Unit,
+    onSell: (marketId: String, outcome: String, shares: String, venue: String) -> Unit,
+    onRedeem: (marketId: String, outcome: String, venue: String) -> Unit,
+    onAdvanced: (marketId: String, venue: String, action: String) -> Unit,
 ) {
     var tab by remember { mutableIntStateOf(0) }
     val titles = listOf("Positions", "Orders", "Rules", "History")
@@ -69,9 +71,9 @@ fun PortfolioScreen(
 @Composable
 private fun PositionsList(
     state: AppUiState,
-    onSell: (String, String) -> Unit,
-    onRedeem: (String, String) -> Unit,
-    onAdvanced: (String, String) -> Unit,
+    onSell: (marketId: String, outcome: String, shares: String, venue: String) -> Unit,
+    onRedeem: (marketId: String, outcome: String, venue: String) -> Unit,
+    onAdvanced: (marketId: String, venue: String, action: String) -> Unit,
 ) {
     val capabilities = state.status.capabilities
     LazyColumn(
@@ -87,24 +89,13 @@ private fun PositionsList(
             val venueCaps = capabilities?.optJSONObject("venues")?.optJSONObject(venue)
             val canRedeem = venueCaps?.optJSONObject("funds")?.optBoolean("redeem") == true
             val canSplit = venue == "polymarket"
+            val shares = position.optString("shares")
 
             RowCard(
-                title = "${position.optString("outcome")} · ${Format.shares(position.optString("shares"))} shares",
+                title = "${position.optString("outcome")} · ${Format.shares(shares)} shares",
                 subtitle = position.optString("market_title").ifBlank { marketId },
                 detail = "avg ${Format.cents(position.optString("avg_price"))} · uPnL ${Format.signedMoney(position.optString("unrealized_pnl"))}",
                 accent = if (position.optString("outcome") == "YES") Palette.Long else Palette.Short,
-                trailing = {
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            "Sell",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .padding(6.dp),
-                        )
-                    }
-                },
             )
             // Sell 25 / 50 / 100% and the other actions, as separate audited calls.
             Row(
@@ -112,12 +103,16 @@ private fun PositionsList(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 listOf("25", "50", "100").forEach { percent ->
+                    val portion = BigDecimal(shares)
+                        .multiply(BigDecimal(percent))
+                        .divide(BigDecimal(100), 4, RoundingMode.DOWN)
                     Text(
                         "Sell $percent%",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier
                             .clip(RoundedCornerShape(999.dp))
+                            .clickable { onSell(marketId, outcome, portion.toPlainString(), venue) }
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                     )
                 }
@@ -133,16 +128,28 @@ private fun PositionsList(
                         color = Palette.Long,
                         modifier = Modifier
                             .clip(RoundedCornerShape(999.dp))
+                            .clickable { onRedeem(marketId, outcome, venue) }
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                     )
                 }
                 if (canSplit) {
+                    // Advanced: these move collateral, not just position size.
                     Text(
-                        "Split / Merge",
+                        "Split",
                         style = MaterialTheme.typography.labelMedium,
                         color = Palette.Alert,
                         modifier = Modifier
                             .clip(RoundedCornerShape(999.dp))
+                            .clickable { onAdvanced(marketId, venue, "split") }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    )
+                    Text(
+                        "Merge",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Palette.Alert,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .clickable { onAdvanced(marketId, venue, "merge") }
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                     )
                 }
@@ -189,6 +196,7 @@ private fun OrdersList(
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
+                            .clickable { onCancelOrder(order.optString("id")) }
                             .padding(6.dp),
                     )
                 },

@@ -241,6 +241,82 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         }
     }
 
+    /** Sell part or all of a position. Reduce-only: the server refuses an open short. */
+    fun sellPosition(
+        marketId: String,
+        outcome: String,
+        shares: String,
+        venue: String,
+        onDone: (String) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            try {
+                api.post(
+                    "/v1/positions/sell",
+                    ApiClient.jsonOf(
+                        "venue" to venue,
+                        "market_id" to marketId,
+                        "outcome" to outcome,
+                        "shares" to shares,
+                    ),
+                    java.util.UUID.randomUUID().toString(),
+                )
+                onDone("Sell submitted.")
+                refresh()
+            } catch (e: ApiClient.ApiException) {
+                onDone(e.message ?: "Sell failed.")
+            } catch (e: Exception) {
+                onDone(e.message ?: "Sell failed.")
+            }
+        }
+    }
+
+    /** Redeem a resolved position, where the venue has an API for it. */
+    fun redeemPosition(
+        marketId: String,
+        outcome: String,
+        venue: String,
+        onDone: (String) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            try {
+                api.post(
+                    "/v1/positions/redeem",
+                    ApiClient.jsonOf("venue" to venue, "market_id" to marketId, "outcome" to outcome),
+                )
+                onDone("Redeem submitted.")
+                refresh()
+            } catch (e: ApiClient.ApiException) {
+                onDone(e.message ?: "Redeem failed.")
+            } catch (e: Exception) {
+                onDone(e.message ?: "Redeem failed.")
+            }
+        }
+    }
+
+    /** Split a full outcome set or merge it back into collateral (Polymarket only). */
+    fun splitOrMerge(
+        marketId: String,
+        venue: String,
+        action: String,
+        onDone: (String) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            try {
+                api.post(
+                    "/v1/positions/$action",
+                    ApiClient.jsonOf("venue" to venue, "market_id" to marketId),
+                )
+                onDone("${action.replaceFirstChar { it.uppercase() }} submitted.")
+                refresh()
+            } catch (e: ApiClient.ApiException) {
+                onDone(e.message ?: "${action.replaceFirstChar { it.uppercase() }} failed.")
+            } catch (e: Exception) {
+                onDone(e.message ?: "${action.replaceFirstChar { it.uppercase() }} failed.")
+            }
+        }
+    }
+
     companion object {
         const val KEY_BASE_URL = "base_url"
         const val KEY_TOKEN = "session_token"
