@@ -48,4 +48,10 @@ class FormatTimeTest {
         assertNull(Format.secondsUntil("not a time", now))
         assertNotNull(Format.parseInstant("2026-10-30T12:00:00Z"))
     }
+
+    @Test
+    fun clockIsDhakaTime() {
+        // 12:00 UTC is 18:00 in Dhaka.
+        assertEquals("18:00", Format.clock(Instant.parse("2026-10-30T12:00:00Z").toEpochMilli()))
+    }
 }

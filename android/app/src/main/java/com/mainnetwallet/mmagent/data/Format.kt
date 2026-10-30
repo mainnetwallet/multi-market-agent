@@ -131,6 +131,12 @@ object Format {
         }
     }
 
+    private val clockFormat: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("HH:mm").withZone(DHAKA)
+
+    /** "18:05" in Dhaka time, for a chat message sent at [epochMillis]. */
+    fun clock(epochMillis: Long): String = clockFormat.format(Instant.ofEpochMilli(epochMillis))
+
     /** An address in 4-character groups, so it can be read aloud and compared. */
     fun groupAddress(address: String?): String =
         address?.chunked(4)?.joinToString(" ") ?: "—"
