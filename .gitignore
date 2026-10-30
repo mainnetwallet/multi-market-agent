@@ -1,0 +1,42 @@
+# secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+.venv/
+venv/
+ENV/
+
+# databases and runtime state
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+data/
+backups/
+logs/
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# node
+node_modules/
