@@ -100,8 +100,17 @@ The operator asked for a second audit. These concrete gaps were closed:
 - [x] Local PAPER instance started; login, HEAD `/health`, `/status`, markets and PWA verified over HTTP.
 
 Remaining honest gaps are listed in README and BUILD_REPORT; the most important are
-no live credentials/order proof, Kalshi sub-cent tick bands, Limitless fee
-estimate, resting take-profit exits, and native venue WebSockets.
+no live credentials/order proof, Kalshi strategy maths near sub-cent edge bands,
+legacy Limitless fee-curve approximation, resting take-profit exits, native
+venue WebSockets, and Android background push.
+
+## Android app (operator-requested P8 extension)
+
+- [x] Native Android WebView shell, first-run Render HTTPS URL setup.
+- [x] Persistent WebView cookies, JS dialogs, back navigation, SSL fail-closed, external links.
+- [x] Server URL validation (HTTPS only), server switch, reload, clear session.
+- [x] Android unit tests for URL normalization.
+- [x] GitHub Actions Android APK build and artifact upload; first APK release published.
 
 ## Quality gate
 
@@ -113,6 +122,8 @@ Last run 2026-10-30 after the audit fixes:
 - `pytest` — 48 passed
 - `alembic upgrade head` + `alembic check` — pass
 - Public doctor — Polymarket OK / Kalshi OK / Limitless OK (auth/order checks skipped, no credentials)
+- GitHub CI — pass (after setuptools upgrade)
+- Android APK CI — pass; release `v1.0.0-android`
 - Real order sent — **none**
 
 ## Deliberate v1 limitations

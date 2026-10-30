@@ -22,6 +22,16 @@ cookies, JavaScript dialogs, back navigation and a server URL setting.
 The backend blueprint already uses `APP_ENV=production`, `HOST=0.0.0.0`,
 `PORT=10000`, a persistent disk at `/app/data`, SQLite, and `/health`.
 
+## Prebuilt APK
+
+The first build is attached to the private repo release:
+
+**Download:** https://github.com/mainnetwallet/multi-market-agent/releases/tag/v1.0.0-android  
+**File:** `mm-agent-1.0.0-debug.apk`  
+**SHA256:** `80FDF368D6AF7EDE121465539402A5EE5953B899B50C91FA8AF60A4D63964AA4`
+
+This is a debug-signed sideload build, not a Play Store upload.
+
 ## Build the APK
 
 ### Option A — GitHub Actions (recommended)

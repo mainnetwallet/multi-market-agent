@@ -300,7 +300,9 @@ reconciled.
 - **Database:** SQLite is the dev default. Use Postgres for production by setting
   `DATABASE_URL=postgresql+psycopg://...`, installing `.[postgres]`, and running
   `alembic upgrade head`.
-- The container runs as a non-root user. `.env` is never copied into the image.
+- The container entrypoint makes the Render-mounted `/app/data` disk writable,
+  then drops to the non-root `mmagent` user for the server process. `.env` is
+  never copied into the image.
 - Put the API behind HTTPS/VPN; it binds `127.0.0.1` by default. Only one
   Telegram poller may run (DB lease); a second instance logs a conflict and does
   not poll.

@@ -41,3 +41,34 @@ jobs:
           alembic check
       - name: Dependency audit
         run: pip-audit
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t mm-agent:ci .
+      - name: Run PAPER smoke container
+        run: |
+          docker run -d --name mm-agent-ci \
+            -p 127.0.0.1:8080:8080 \
+            -e APP_ENV=production \
+            -e ENABLED_VENUES=fake \
+            -e ACTIVE_VENUE=fake \
+            -e ADMIN_USERNAME=operator \
+            -e ADMIN_PASSWORD=ci-password-not-secret \
+            -e SESSION_SECRET=ci-session-secret-not-secret \
+            -e LLM_BASE_URL= \
+            -e LLM_MODEL= \
+            mm-agent:ci
+          for i in $(seq 1 30); do
+            if curl -fsS -I http://127.0.0.1:8080/health; then break; fi
+            sleep 2
+          done
+          curl -fsS -I http://127.0.0.1:8080/health
+          docker exec mm-agent-ci id
+          docker logs --tail 80 mm-agent-ci
+      - name: Stop container
+        if: always()
+        run: docker rm -f mm-agent-ci || true

@@ -16,6 +16,9 @@ Repository: **private** `mainnetwallet/multi-market-agent`
 | `pip-audit` | no known vulnerabilities in runtime deps; local project skipped as not-on-PyPI |
 | Docker compose config | valid |
 | Docker image build | **not run** — Docker daemon was not running on the build host |
+| GitHub CI (Python) | pass after setuptools upgrade |
+| Android APK CI | **pass** — unit tests + debug APK built and uploaded |
+| Android APK | 22,937 bytes, debug-signed, released as `v1.0.0-android` |
 | Git history secret scan | clean after excluding public fixture condition ids and the redaction canary file |
 
 ## Venue doctor (public; no orders)
@@ -38,6 +41,15 @@ HTML were verified over HTTP.
 | Limitless | OK | active markets OK | orderbook OK | SKIPPED | SKIPPED |
 
 No real order was sent during the build.
+
+## Android app
+
+- Native Android WebView shell in `android/`; first launch asks for the Render
+  HTTPS URL; credentials are never stored by the app.
+- GitHub Actions `Android APK` passed; artifact contains `app-debug.apk`.
+- GitHub release: https://github.com/mainnetwallet/multi-market-agent/releases/tag/v1.0.0-android
+- SHA256: `80FDF368D6AF7EDE121465539402A5EE5953B899B50C91FA8AF60A4D63964AA4`
+- This is a debug-signed sideload APK, not a Play Store build.
 
 ## Commits
 
