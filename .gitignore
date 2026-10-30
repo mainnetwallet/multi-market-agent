@@ -15,7 +15,9 @@ ENV/
 *.db-journal
 *.sqlite
 *.sqlite3
-data/
+# Anchored: the runtime SQLite directory only. A source package called "data"
+# (android/app/src/main/java/.../data) must still be tracked.
+/data/
 backups/
 logs/
 *.log
