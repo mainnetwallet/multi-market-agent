@@ -25,19 +25,28 @@ class ApiClient(
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * Called when the server says the session itself is gone (not a wrong
+     * step-up password, which also answers 401). The app clears the token and
+     * returns to the login screen.
+     */
+    @Volatile
+    var onUnauthorized: (() -> Unit)? = null
+
     /** A failure the operator can act on: the server's own message, verbatim. */
     class ApiException(val status: Int, val code: String, message: String) : Exception(message)
 
-    suspend fun get(path: String): JSONObject = request("GET", path, null, null, null)
+    suspend fun get(path: String): JSONObject = request("GET", path, null, null, null, null)
 
     suspend fun post(
         path: String,
         body: JSONObject,
         idempotencyKey: String? = null,
         stepupToken: String? = null,
-    ): JSONObject = request("POST", path, body, idempotencyKey, stepupToken)
+        readTimeoutSeconds: Long? = null,
+    ): JSONObject = request("POST", path, body, idempotencyKey, stepupToken, readTimeoutSeconds)
 
-    suspend fun delete(path: String): JSONObject = request("DELETE", path, null, null, null)
+    suspend fun delete(path: String): JSONObject = request("DELETE", path, null, null, null, null)
 
     private suspend fun request(
         method: String,
@@ -45,6 +54,7 @@ class ApiClient(
         body: JSONObject?,
         idempotencyKey: String?,
         stepupToken: String?,
+        readTimeoutSeconds: Long?,
     ): JSONObject = withContext(Dispatchers.IO) {
         val builder = Request.Builder().url(baseUrl.trimEnd('/') + path)
         val token = tokenProvider()
@@ -64,7 +74,12 @@ class ApiClient(
                 (body?.toString() ?: "{}").toRequestBody("application/json".toMediaType())
             )
         }
-        val response = http.newCall(builder.build()).execute()
+        val client = if (readTimeoutSeconds != null) {
+            http.newBuilder().readTimeout(readTimeoutSeconds, TimeUnit.SECONDS).build()
+        } else {
+            http
+        }
+        val response = client.newCall(builder.build()).execute()
         response.use {
             val text = it.body?.string().orEmpty()
             val json = try {
@@ -75,7 +90,11 @@ class ApiClient(
             if (!it.isSuccessful) {
                 val error = json.optJSONObject("error")
                 val detail = error?.optString("message").orEmpty()
-                    .ifBlank { json.optString("detail").ifBlank { "Request failed (${it.code})." } }
+                    .ifBlank { detailText(json.opt("detail")) }
+                    .ifBlank { "Request failed (${it.code})." }
+                if (it.code == 401 && !token.isNullOrBlank() && isSessionGone(error, detail)) {
+                    onUnauthorized?.invoke()
+                }
                 throw ApiException(it.code, error?.optString("code") ?: "http_${it.code}", detail)
             }
             json
@@ -83,6 +102,31 @@ class ApiClient(
     }
 
     companion object {
+        /** FastAPI's own 401 texts: the session cookie/token is missing, bad or expired. */
+        private fun isSessionGone(error: JSONObject?, detail: String): Boolean =
+            error == null && (detail == "login required" || detail == "invalid or expired session")
+
+        /**
+         * FastAPI puts a plain string in `detail`, but a refused approve carries
+         * the engine's whole result object there. Show its own message, never raw JSON.
+         */
+        fun detailText(detail: Any?): String = when (detail) {
+            null, JSONObject.NULL -> ""
+            is String -> detail
+            is JSONObject -> listOf("error", "message", "reason", "detail")
+                .map { key -> detail.opt(key) }
+                .firstNotNullOfOrNull { value ->
+                    when (value) {
+                        is String -> value.takeIf { v -> v.isNotBlank() }
+                        is JSONObject -> value.optString("message").takeIf { v -> v.isNotBlank() }
+                        else -> null
+                    }
+                } ?: detail.toString()
+            is JSONArray -> (0 until detail.length())
+                .joinToString("; ") { index -> detailText(detail.opt(index)) }
+            else -> detail.toString()
+        }
+
         fun jsonOf(vararg pairs: Pair<String, Any?>): JSONObject {
             val obj = JSONObject()
             for ((key, value) in pairs) {

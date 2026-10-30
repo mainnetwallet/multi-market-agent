@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mainnetwallet.mmagent.data.AppUiState
 import com.mainnetwallet.mmagent.data.Format
@@ -78,7 +79,7 @@ fun SettingsScreen(
     appLockEnabled: Boolean,
     appLockAvailable: Boolean,
     appLockTimeoutMinutes: Int,
-    onRaiseCeiling: (name: String, value: String, stepupToken: String?) -> Unit,
+    onRaiseCeiling: (name: String, value: String, password: String, onResult: (Boolean, String) -> Unit) -> Unit,
     onSetAppLock: (enabled: Boolean, timeoutMinutes: Int) -> Unit,
     onLogout: () -> Unit,
     onOpenVenue: (url: String) -> Unit,
@@ -86,6 +87,8 @@ fun SettingsScreen(
     var newCeiling by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var ceilingNote by remember { mutableStateOf<String?>(null) }
+    var ceilingBusy by remember { mutableStateOf(false) }
     var lockTimeout by remember { mutableStateOf(appLockTimeoutMinutes.toString()) }
     val capabilities = state.status.capabilities
 
@@ -177,16 +180,32 @@ fun SettingsScreen(
                         onValueChange = { password = it },
                         label = { Text("Password for step-up (never stored)") },
                         singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(10.dp))
                     ErrorNote(error)
+                    ceilingNote?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(6.dp))
+                    }
                     ConfirmButton(
                         label = "Request step-up and raise",
-                        enabled = newCeiling.isNotBlank() && password.isNotBlank(),
+                        enabled = newCeiling.isNotBlank() && password.isNotBlank() && !ceilingBusy,
                         onClick = {
                             error = null
-                            onRaiseCeiling("max_trade_usd", newCeiling, null)
+                            ceilingNote = null
+                            ceilingBusy = true
+                            onRaiseCeiling("max_trade_usd", newCeiling.trim(), password) { ok, message ->
+                                ceilingBusy = false
+                                if (ok) {
+                                    ceilingNote = message
+                                    password = ""
+                                    newCeiling = ""
+                                } else {
+                                    error = message
+                                }
+                            }
                         },
                     )
                     Spacer(Modifier.height(6.dp))

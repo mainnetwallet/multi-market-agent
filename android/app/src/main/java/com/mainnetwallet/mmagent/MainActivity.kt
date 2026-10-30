@@ -39,6 +39,10 @@ import com.mainnetwallet.mmagent.ui.Tab
 import com.mainnetwallet.mmagent.ui.TradeSheetScreen
 import com.mainnetwallet.mmagent.ui.WalletScreen
 import com.mainnetwallet.mmagent.ui.WithdrawReviewScreen
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -56,12 +60,30 @@ class MainActivity : FragmentActivity() {
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         appLock = AppLock(this)
 
-        val api = ApiClient(BuildConfig.DEFAULT_BASE_URL ?: "") { null }
+        // The token provider reads the saved session on every request. It used to be a
+        // hardcoded `null`, so nothing after login was ever authenticated and every
+        // screen came back empty (401).
+        val prefs = getSharedPreferences("mm_agent_prefs", MODE_PRIVATE)
+        val savedUrl = prefs.getString(AppViewModel.KEY_BASE_URL, null)?.takeIf { it.isNotBlank() }
+        val api = ApiClient(savedUrl ?: BuildConfig.DEFAULT_BASE_URL) {
+            prefs.getString(AppViewModel.KEY_TOKEN, null)
+        }
         val appViewModel: AppViewModel by viewModels {
             object : androidx.lifecycle.ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
                     return AppViewModel(applicationContext, api) as T
+                }
+            }
+        }
+
+        // 15 s background refresh, only while the app is on screen. Silent: it never
+        // flips the loading flag, and a failed tick keeps the last good data.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    delay(AUTO_REFRESH_MS)
+                    if (appViewModel.state.value.loggedIn) appViewModel.refresh(silent = true)
                 }
             }
         }
@@ -263,7 +285,9 @@ class MainActivity : FragmentActivity() {
                                 appLockEnabled = appLock.enabled,
                                 appLockAvailable = appLock.available(this@MainActivity),
                                 appLockTimeoutMinutes = appLock.timeoutMinutes,
-                                onRaiseCeiling = { name, value, stepup -> raiseCeiling(api, name, value, stepup) },
+                                onRaiseCeiling = { name, value, password, onResult ->
+                                    appViewModel.raiseCeiling(name, value, password, onResult)
+                                },
                                 onSetAppLock = { enabled, minutes ->
                                     appLock.enabled = enabled
                                     appLock.timeoutMinutes = minutes
@@ -297,24 +321,6 @@ class MainActivity : FragmentActivity() {
         )
     }
 
-    /** Raising a hard ceiling needs a step-up token; the server enforces it. */
-    private fun raiseCeiling(
-        api: ApiClient,
-        name: String,
-        value: String,
-        stepupToken: String?,
-    ) {
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            runCatching {
-                api.post(
-                    "/v1/limits/hard-ceiling",
-                    ApiClient.jsonOf("name" to name, "value" to value),
-                    stepupToken = stepupToken,
-                )
-            }
-        }
-    }
-
     /** Unsupported features open the venue in a Custom Tab, never in a WebView. */
     private fun openInBrowser(url: String) {
         try {
@@ -343,6 +349,10 @@ class MainActivity : FragmentActivity() {
                 onLoaded(null, e.message)
             }
         }
+    }
+
+    companion object {
+        private const val AUTO_REFRESH_MS = 15_000L
     }
 
     override fun onStop() {

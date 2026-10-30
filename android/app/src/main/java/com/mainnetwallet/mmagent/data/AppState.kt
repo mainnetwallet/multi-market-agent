@@ -4,8 +4,12 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -27,6 +31,16 @@ data class AgentStatus(
     val counts: Map<String, Int> = emptyMap(),
     val capabilities: JSONObject? = null,
     val heartbeat: String = "",
+    /** Every venue the server knows: venue, display_name, enabled, ready, reason, live, mode. */
+    val venues: List<JSONObject> = emptyList(),
+)
+
+/** One line of the chat tab. [role] is "user", "agent" or "error". */
+data class ChatMessage(val role: String, val text: String, val at: Long = System.currentTimeMillis())
+
+data class ChatUiState(
+    val messages: List<ChatMessage> = emptyList(),
+    val busy: Boolean = false,
 )
 
 data class AppUiState(
@@ -75,45 +89,70 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     private val _state = MutableStateFlow(AppUiState())
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
+    private val _chat = MutableStateFlow(ChatUiState())
+    val chat: StateFlow<ChatUiState> = _chat.asStateFlow()
+
+    /** One-shot messages for the snackbar: the server's own words, never paraphrased. */
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    val messages: SharedFlow<String> = _messages.asSharedFlow()
+
+    private var refreshJob: Job? = null
+
+    init {
+        // A 401 that means "the session is gone" sends the operator back to login.
+        api.onUnauthorized = { expireSession() }
+        loadSession()
+    }
+
+    /** The saved URL, or the one baked into the build when nothing is saved yet. */
     var baseUrl: String
-        get() = prefs.getString(KEY_BASE_URL, "") ?: ""
+        get() = prefs.getString(KEY_BASE_URL, null)?.takeIf { it.isNotBlank() } ?: api.baseUrl
         set(value) {
             prefs.edit().putString(KEY_BASE_URL, value).apply()
             api.baseUrl = value
         }
 
+    /** The token lives in private prefs; the API client reads it on every request. */
     var token: String?
         get() = prefs.getString(KEY_TOKEN, null)
         set(value) {
-            prefs.edit().putString(KEY_TOKEN, value).apply()
+            prefs.edit().apply {
+                if (value.isNullOrBlank()) remove(KEY_TOKEN) else putString(KEY_TOKEN, value)
+            }.apply()
         }
 
     fun saveBaseUrl(url: String) {
-        baseUrl = url
+        baseUrl = url.trim()
     }
 
+    /** Restore the saved session after a restart: URL first, then token. */
     fun loadSession() {
-        token = prefs.getString(KEY_TOKEN, null)
-        _state.value = _state.value.copy(loggedIn = !token.isNullOrBlank())
+        prefs.getString(KEY_BASE_URL, null)?.takeIf { it.isNotBlank() }?.let { api.baseUrl = it }
+        val saved = token
+        _state.value = _state.value.copy(loggedIn = !saved.isNullOrBlank())
+        if (!saved.isNullOrBlank()) refresh()
     }
 
     fun login(username: String, password: String, onDone: (Boolean) -> Unit) {
         viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, error = null)
             try {
                 val response = api.post(
                     "/v1/auth/login",
                     ApiClient.jsonOf("username" to username, "password" to password)
                 )
                 val newToken = response.optString("token")
+                if (newToken.isBlank()) {
+                    _state.value = _state.value.copy(loading = false, error = "The server did not return a session token.")
+                    onDone(false)
+                    return@launch
+                }
                 token = newToken
-                _state.value = _state.value.copy(loggedIn = true, error = null)
+                _state.value = _state.value.copy(loggedIn = true, loading = false, error = null)
                 refresh()
                 onDone(true)
-            } catch (e: ApiClient.ApiException) {
-                _state.value = _state.value.copy(error = e.message)
-                onDone(false)
             } catch (e: Exception) {
-                _state.value = _state.value.copy(error = e.message)
+                _state.value = _state.value.copy(loading = false, error = e.message ?: "Cannot reach the server.")
                 onDone(false)
             }
         }
@@ -122,17 +161,48 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     fun logout() {
         viewModelScope.launch {
             runCatching { api.post("/v1/auth/logout", JSONObject()) }
-            token = null
-            prefs.edit().remove(KEY_TOKEN).apply()
-            _state.value = AppUiState()
+            clearSession(null)
         }
     }
 
-    fun refresh() {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(loading = true, error = null)
+    /** The server rejected the session: forget it and ask for the password again. */
+    private fun expireSession() {
+        if (token.isNullOrBlank()) return
+        clearSession("Your session expired. Sign in again.")
+    }
+
+    private fun clearSession(error: String?) {
+        refreshJob?.cancel()
+        token = null
+        _chat.value = ChatUiState()
+        _state.value = AppUiState(error = error)
+    }
+
+    fun notify(message: String) {
+        _messages.tryEmit(message)
+    }
+
+    /**
+     * Pull everything the screens show.
+     *
+     * [silent] is the 15 s background refresh: it never flips `loading`, so the
+     * money-adding buttons do not blink off every cycle, and a failed endpoint
+     * keeps the last good data instead of blanking its screen. A manual refresh
+     * shows the spinner.
+     */
+    fun refresh(silent: Boolean = false) {
+        if (token.isNullOrBlank()) return
+        if (refreshJob?.isActive == true) {
+            // A background tick must not pile up; an operator action wins and restarts it
+            // so the screen never shows data from before the action.
+            if (silent) return
+            refreshJob?.cancel()
+        }
+        refreshJob = viewModelScope.launch {
+            if (!silent) _state.value = _state.value.copy(loading = true, error = null)
             try {
                 val status = api.get("/v1/status")
+                val previous = _state.value
                 val balance = runCatching { api.get("/v1/balance") }.getOrNull()
                 val markets = runCatching { api.get("/v1/markets?limit=60") }.getOrNull()
                 val positions = runCatching { api.get("/v1/positions") }.getOrNull()
@@ -146,13 +216,16 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 val fundsHistory = runCatching { api.get("/v1/funds/history") }.getOrNull()
                 val withdrawals = runCatching { api.get("/v1/funds/withdrawals") }.getOrNull()
 
+                // The session may have been cleared while we were waiting.
+                if (token.isNullOrBlank()) return@launch
+
                 val capabilities = status.optJSONObject("capabilities")
                 val limits = status.optJSONObject("limits")
-                val counts = JSONObject()
+                val counts = HashMap<String, Int>()
                 status.optJSONObject("counts")?.let { source ->
-                    source.keys().forEach { key -> counts.put(key, source.optInt(key)) }
+                    source.keys().forEach { key -> counts[key] = source.optInt(key) }
                 }
-                val balances = ApiClient.arrayOf(balance, "balances").objects()
+                val balances = if (balance != null) ApiClient.arrayOf(balance, "balances").objects() else previous.balances
                 val firstBalance = balances.firstOrNull()
 
                 _state.value = AppUiState(
@@ -168,28 +241,35 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                         unitGuardReason = status.optJSONObject("unit_guard")?.optString("reason") ?: "",
                         hardCeilingMaxTrade = limits?.optJSONObject("hard_ceilings")?.optString("max_trade_usd") ?: "2",
                         maxTradeUsd = limits?.optString("max_trade_usd") ?: "2",
-                        counts = counts.keys().asSequence().associateWith { counts.optInt(it) },
+                        counts = counts,
                         capabilities = capabilities,
                         heartbeat = capabilities?.optJSONObject("heartbeat")?.optString("reason") ?: "",
+                        venues = ApiClient.arrayOf(status, "venues").objects(),
                     ),
                     balances = balances,
-                    markets = ApiClient.arrayOf(markets, "markets").objects(),
-                    positions = ApiClient.arrayOf(positions, "positions").objects(),
-                    orders = ApiClient.arrayOf(orders, "orders").objects(),
-                    proposals = ApiClient.arrayOf(proposals, "proposals").objects(),
-                    rules = ApiClient.arrayOf(rules, "rules").objects(),
-                    trades = ApiClient.arrayOf(trades, "trades").objects(),
-                    pnlDays = ApiClient.arrayOf(pnl, "days").objects().map { obj ->
-                        obj.optString("date") to java.math.BigDecimal(obj.optString("realized_usd", "0"))
-                    },
-                    allowlist = ApiClient.arrayOf(allowlist, "entries").objects(),
-                    approvals = ApiClient.arrayOf(approvals, "approvals").objects(),
-                    fundsHistory = ApiClient.arrayOf(fundsHistory, "history").objects(),
-                    withdrawals = ApiClient.arrayOf(withdrawals, "withdrawals").objects(),
+                    markets = markets?.let { ApiClient.arrayOf(it, "markets").objects() } ?: previous.markets,
+                    positions = positions?.let { ApiClient.arrayOf(it, "positions").objects() } ?: previous.positions,
+                    orders = orders?.let { ApiClient.arrayOf(it, "orders").objects() } ?: previous.orders,
+                    proposals = proposals?.let { ApiClient.arrayOf(it, "proposals").objects() } ?: previous.proposals,
+                    rules = rules?.let { ApiClient.arrayOf(it, "rules").objects() } ?: previous.rules,
+                    trades = trades?.let { ApiClient.arrayOf(it, "trades").objects() } ?: previous.trades,
+                    pnlDays = pnl?.let { body ->
+                        ApiClient.arrayOf(body, "days").objects().map { obj ->
+                            obj.optString("date") to (obj.optString("realized_usd", "0").toBigDecimalOrNull() ?: BigDecimal.ZERO)
+                        }
+                    } ?: previous.pnlDays,
+                    allowlist = allowlist?.let { ApiClient.arrayOf(it, "entries").objects() } ?: previous.allowlist,
+                    approvals = approvals?.let { ApiClient.arrayOf(it, "approvals").objects() } ?: previous.approvals,
+                    fundsHistory = fundsHistory?.let { ApiClient.arrayOf(it, "history").objects() } ?: previous.fundsHistory,
+                    withdrawals = withdrawals?.let { ApiClient.arrayOf(it, "withdrawals").objects() } ?: previous.withdrawals,
                     loading = false,
                     loggedIn = true,
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                if (token.isNullOrBlank()) return@launch
+                // Keep the last good data on screen; `error` is what turns the money buttons off.
                 _state.value = _state.value.copy(loading = false, error = e.message ?: "Cannot reach the server.")
             }
         }
@@ -198,16 +278,116 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     /** Pause and cancel-all reduce risk, so they are one tap plus a normal dialog. */
     fun pause() {
         viewModelScope.launch {
-            runCatching { api.post("/v1/pause", JSONObject()) }
+            try {
+                api.post("/v1/pause", JSONObject())
+                notify("Agent paused.")
+            } catch (e: Exception) {
+                notify(e.message ?: "Pause failed.")
+            }
             refresh()
         }
     }
 
     fun resume() {
         viewModelScope.launch {
-            runCatching { api.post("/v1/resume", JSONObject()) }
+            try {
+                api.post("/v1/resume", JSONObject())
+                notify("Agent resumed.")
+            } catch (e: Exception) {
+                notify(e.message ?: "Resume failed.")
+            }
             refresh()
         }
+    }
+
+    /**
+     * Switch the active venue. The server only accepts a ready venue and answers
+     * 409 with its own reason otherwise; that reason goes to the snackbar verbatim.
+     */
+    fun switchVenue(venue: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                api.post("/v1/venues/active", ApiClient.jsonOf("venue" to venue))
+                notify("Active venue: ${venue.replaceFirstChar { it.uppercase() }}.")
+                refresh()
+                onDone(true)
+            } catch (e: Exception) {
+                notify(e.message ?: "Venue switch failed.")
+                onDone(false)
+            }
+        }
+    }
+
+    /** Rejecting a proposal places no order, so it is one tap. */
+    fun rejectProposal(proposalId: String, onDone: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val message = try {
+                api.post("/v1/proposals/$proposalId/reject", JSONObject())
+                "Proposal rejected."
+            } catch (e: Exception) {
+                e.message ?: "Reject failed."
+            }
+            notify(message)
+            onDone(message)
+            refresh()
+        }
+    }
+
+    /**
+     * Raise a hard ceiling. The server wants a single-use step-up token bound to
+     * the "ceiling_raise" action; the password is exchanged for one here and is
+     * never stored. (The old code sent no token, so every raise was refused.)
+     */
+    fun raiseCeiling(name: String, value: String, password: String, onDone: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val stepup = api.post(
+                    "/v1/auth/stepup",
+                    ApiClient.jsonOf("password" to password, "action" to "ceiling_raise"),
+                )
+                val stepupToken = stepup.optString("stepup_token")
+                if (stepupToken.isBlank()) {
+                    onDone(false, "The server did not issue a step-up token.")
+                    return@launch
+                }
+                api.post(
+                    "/v1/limits/hard-ceiling",
+                    ApiClient.jsonOf("name" to name, "value" to value),
+                    stepupToken = stepupToken,
+                )
+                onDone(true, "Hard ceiling updated.")
+                refresh()
+            } catch (e: Exception) {
+                onDone(false, e.message ?: "Could not raise the ceiling.")
+            }
+        }
+    }
+
+    /** Send one chat message; slash commands and plain text take the same route. */
+    fun sendChat(text: String) {
+        val message = text.trim()
+        if (message.isEmpty() || _chat.value.busy) return
+        _chat.value = ChatUiState(_chat.value.messages + ChatMessage("user", message), busy = true)
+        viewModelScope.launch {
+            val reply = try {
+                // The LLM can take longer than the default 30 s read timeout.
+                val response = api.post(
+                    "/v1/chat",
+                    ApiClient.jsonOf("message" to message),
+                    readTimeoutSeconds = 120,
+                )
+                ChatMessage("agent", response.optString("reply").ifBlank { "(no reply)" })
+            } catch (e: Exception) {
+                ChatMessage("error", e.message ?: "Chat failed.")
+            }
+            _chat.value = ChatUiState(_chat.value.messages + reply, busy = false)
+            // A slash command may have changed orders, proposals or the venue.
+            if (message.startsWith("/")) refresh()
+        }
+    }
+
+    fun clearChat() {
+        _chat.value = ChatUiState()
     }
 
     fun cancelAll(onDone: (String) -> Unit = {}) {
