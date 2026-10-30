@@ -60,7 +60,6 @@ class ExecutionGateway:
         market: Market,
         *,
         proposal_id: str | None = None,
-        client_ref: str | None = None,
     ) -> tuple[OrderResult, str]:
         adapter = self.registry.get(req.venue)
         local_id = self.store.create_order(
@@ -76,7 +75,6 @@ class ExecutionGateway:
             reduce_only=req.reduce_only,
             order_type=req.order_type.value,
             post_only=req.post_only,
-            client_ref=client_ref,
         )
         venue_lock = await self.locks.venue(req.venue)
         async with venue_lock:

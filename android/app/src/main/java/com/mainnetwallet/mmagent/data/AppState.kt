@@ -347,6 +347,28 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         }
     }
 
+    /**
+     * Amend a resting order. Only Kalshi supports it; elsewhere the server
+     * refuses and says so, and the app offers cancel-then-new as two separate
+     * audited actions instead.
+     */
+    fun amendOrder(orderId: String, price: String?, shares: String?, onDone: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                api.post(
+                    "/v1/orders/$orderId/amend",
+                    ApiClient.jsonOf("price" to price, "shares" to shares),
+                )
+                onDone("Order amended.")
+                refresh()
+            } catch (e: ApiClient.ApiException) {
+                onDone(e.message ?: "Amend failed.")
+            } catch (e: Exception) {
+                onDone(e.message ?: "Amend failed.")
+            }
+        }
+    }
+
     companion object {
         const val KEY_BASE_URL = "base_url"
         const val KEY_TOKEN = "session_token"

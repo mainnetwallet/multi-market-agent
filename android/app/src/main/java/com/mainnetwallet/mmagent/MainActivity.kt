@@ -217,6 +217,11 @@ class MainActivity : FragmentActivity() {
                                         toast = message
                                     }
                                 },
+                                onAmendOrder = { orderId, price, shares ->
+                                    appViewModel.amendOrder(orderId, price, shares) { message ->
+                                        toast = message
+                                    }
+                                },
                             )
 
                             Tab.WALLET -> WalletScreen(

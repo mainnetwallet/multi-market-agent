@@ -593,7 +593,6 @@ class Store:
         reduce_only: bool = False,
         order_type: str = "GTC",
         post_only: bool = False,
-        client_ref: str | None = None,
     ) -> str:
         from ..domain import stable_id
 
@@ -616,7 +615,6 @@ class Store:
                         reduce_only=reduce_only,
                         order_type=order_type,
                         post_only=post_only,
-                        client_ref=client_ref,
                     )
                 )
                 s.flush()
@@ -722,7 +720,6 @@ class Store:
             "reduce_only": row.reduce_only,
             "order_type": row.order_type,
             "post_only": row.post_only,
-            "client_ref": row.client_ref,
             "proposal_id": row.proposal_id,
             "fee_usd": row.fee_usd,
             "error": row.error,
@@ -1369,14 +1366,19 @@ class Store:
                 row.confirmed_at = utcnow()
             return True
 
-    def withdrawn_today(self, venue: VenueId) -> Decimal:
-        """Amount already sent today. Used for the daily withdrawal limit."""
+    def withdrawn_today(self, venue: VenueId, *, sent_only: bool = False) -> Decimal:
+        """Amount counted against today's withdrawal limit.
+
+        Pending withdrawals count too, so creating them reserves the room. Pass
+        ``sent_only=True`` to count only what has actually moved.
+        """
 
         start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        statuses = ["SUBMITTED", "CONFIRMED"] if sent_only else ["PENDING_HOLD", "SUBMITTED", "CONFIRMED"]
         stmt = select(func.coalesce(func.sum(WithdrawalRow.amount_usd), 0)).where(
             WithdrawalRow.venue == venue.value,
             WithdrawalRow.created_at >= start,
-            WithdrawalRow.status.in_(["PENDING_HOLD", "SUBMITTED", "CONFIRMED"]),
+            WithdrawalRow.status.in_(statuses),
         )
         with self.session() as s:
             return Decimal(str(s.scalar(stmt) or 0))

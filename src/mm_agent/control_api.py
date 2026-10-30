@@ -114,7 +114,8 @@ class LimitOrderBody(BaseModel):
     tif: OrderType = OrderType.GTC
     expires_at: datetime | None = None
     post_only: bool = False
-    client_id: str | None = None
+    # The venue's client order id; it lands in an 80-character column.
+    client_id: str | None = Field(default=None, max_length=64)
 
 
 class MarketOrderBody(BaseModel):
@@ -125,7 +126,7 @@ class MarketOrderBody(BaseModel):
     shares: Decimal | None = None
     amount_usd: Decimal | None = None
     max_slippage_cents: Decimal = Decimal("2")
-    client_id: str | None = None
+    client_id: str | None = Field(default=None, max_length=64)
 
 
 class SellBody(BaseModel):
@@ -863,6 +864,12 @@ def create_app(
             if not registry.get(target).caps.funds_history:
                 continue
             try:
+                if target is VenueId.POLYMARKET:
+                    wallet = settings.polymarket_wallet_address.strip()
+                    if wallet:
+                        for row in await funds.polymarket_history(wallet):
+                            rows.append({"venue": target.value, **row})
+                    continue
                 for row in await registry.get(target).get_funds_history():
                     rows.append({"venue": target.value, **row})
             except Exception:

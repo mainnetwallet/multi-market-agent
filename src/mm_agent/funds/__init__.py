@@ -10,7 +10,6 @@ transaction hash and asks the operator to look, nothing resends.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -367,17 +366,57 @@ class FundsService:
             "daily_remaining_usd": str(remaining),
         }
 
+    async def _bridge_asset(self, network: str, asset: str) -> dict[str, str]:
+        """Resolve a chain id and token address from the bridge's own list.
+
+        The bridge is the only authority on which chain and token are valid, so
+        the operator's choice is looked up there instead of being trusted.
+        """
+        base = self.settings.funds_polymarket_bridge_url.rstrip("/")
+        try:
+            client = await self.client()
+            response = await client.get(f"{base}/supported-assets")
+            response.raise_for_status()
+            assets = response.json().get("supportedAssets") or []
+        except Exception as exc:
+            raise FundsError(
+                f"could not read the bridge's supported assets: {type(exc).__name__}",
+                code="supported_assets_failed",
+                status=502,
+            ) from exc
+        for entry in assets:
+            token = entry.get("token") or {}
+            chain_id = str(entry.get("chainId") or "")
+            chain_name = str(entry.get("chainName") or "")
+            # The operator types "base"; the bridge says "Base".
+            wanted = network.strip().lower()
+            if wanted and wanted not in (chain_id.lower(), chain_name.lower()):
+                continue
+            if asset and str(token.get("symbol") or "").upper() != asset.upper():
+                continue
+            return {
+                "chain_id": chain_id,
+                "token_address": str(token.get("address") or ""),
+                "chain_name": chain_name or chain_id,
+            }
+        raise FundsError(
+            f"the bridge does not support {network}/{asset}",
+            code="unsupported_destination",
+            status=400,
+        )
+
     async def _polymarket_quote(self, amount: Decimal, entry: dict[str, Any]) -> dict[str, Any]:
         """Bridge quote. The from side is Polymarket (Polygon, pUSD)."""
 
         base = self.settings.funds_polymarket_bridge_url.rstrip("/")
+        destination = await self._bridge_asset(entry["network"], entry["asset"])
         body = {
             "fromAmountBaseUnit": str(int(amount * Decimal("1000000"))),
             "fromChainId": "137",
             "fromTokenAddress": POLYMARKET_PUSD,
             "recipientAddress": entry["address"],
-            "toChainId": str(entry.get("chain_id") or "8453"),
-            "toTokenAddress": str(entry.get("token_address") or ""),
+            "toChainId": destination["chain_id"],
+            "toTokenAddress": destination["token_address"],
         }
         try:
             client = await self.client()
@@ -477,6 +516,17 @@ class FundsService:
 
         withdrawal_id = record["id"]
         venue = VenueId(record["venue"])
+        # The limit is checked again here: the money leaves now, not when the
+        # withdrawal was created, and the hold window may have crossed midnight.
+        # Only what has already moved counts, so this withdrawal does not block
+        # itself.
+        daily_limit = self.settings.funds_withdrawal_daily_limit_usd
+        remaining = daily_limit - self.store.withdrawn_today(venue, sent_only=True)
+        if Decimal(str(record["amount_usd"])) > remaining:
+            reason = f"the daily withdrawal limit is {daily_limit}; only {remaining} is left today"
+            self.store.transition_withdrawal(withdrawal_id, "FAILED", error=reason)
+            self.store.audit("funds", "funds.withdraw.failed", {"id": withdrawal_id, "error": reason})
+            return {"id": withdrawal_id, "status": "FAILED", "error": reason}
         try:
             if venue is VenueId.POLYMARKET:
                 bridge_address = await self._polymarket_withdraw_address(record)
@@ -548,16 +598,18 @@ class FundsService:
     async def _polymarket_withdraw_address(self, record: dict[str, Any]) -> str:
         """Ask the bridge for the address tied to this exact destination.
 
-        The returned address is checked against the recipient on the withdrawal
-        record; if anything differs the withdrawal fails and nothing is sent.
+        The chain and the token come from the bridge's own supported list, and
+        the recipient from the withdrawal record, so the address is requested for
+        exactly one destination. The answer is checked before it is used.
         """
 
         base = self.settings.funds_polymarket_bridge_url.rstrip("/")
         entry = self.store.allowlist_get(record["address_id"]) or {}
+        destination = await self._bridge_asset(entry.get("network") or "", entry.get("asset") or "")
         body = {
             "address": self._polymarket_wallet(),
-            "toChainId": str(entry.get("chain_id") or "8453"),
-            "toTokenAddress": str(entry.get("token_address") or ""),
+            "toChainId": destination["chain_id"],
+            "toTokenAddress": destination["token_address"],
             "recipientAddr": record["recipient"],
         }
         headers = {}
@@ -567,16 +619,33 @@ class FundsService:
         client = await self.client()
         response = await client.post(f"{base}/withdraw", json=body, headers=headers)
         response.raise_for_status()
-        addresses = response.json().get("address") or {}
+        payload = response.json()
+        addresses = payload.get("address") or {}
         bridge_address = addresses.get("evm")
         if not bridge_address:
             raise FundsError("the bridge returned no EVM address for this withdrawal", code="no_bridge_address")
-        if record["recipient"].lower() not in json.dumps(body).lower():
-            raise FundsError("the bridge address does not match this withdrawal's recipient", code="recipient_mismatch")
+        # The bridge must have answered for this exact destination. It does not
+        # echo the request, so the reply is checked for a mismatch instead.
+        echoed = {k: str(v).lower() for k, v in payload.items() if k not in {"address", "note"}}
+        for key, expected in (
+            ("toChainId", destination["chain_id"].lower()),
+            ("toTokenAddress", destination["token_address"].lower()),
+            ("recipientAddr", record["recipient"].lower()),
+        ):
+            if key in echoed and echoed[key] != expected:
+                raise FundsError(
+                    f"the bridge answered for a different {key}; nothing was sent",
+                    code="destination_mismatch",
+                )
         return str(bridge_address)
 
     def list_withdrawals(self, *, venue: VenueId | None = None) -> dict[str, Any]:
         return {"withdrawals": self.store.list_withdrawals(venue=venue)}
+
+    async def polymarket_history(self, wallet: str) -> list[dict[str, Any]]:
+        """Polymarket's bridge reports the wallet's deposits and withdrawals."""
+
+        return await self._polymarket_funds_history(wallet)
 
     async def refresh_submitted(self) -> list[dict[str, Any]]:
         """Poll the bridge so a submitted withdrawal can reach CONFIRMED.
@@ -610,22 +679,63 @@ class FundsService:
         return out
 
     async def _bridge_status(self, bridge_address: str, record: dict[str, Any]) -> bool:
-        """True when the bridge shows this withdrawal completed."""
+        """True when the bridge shows this withdrawal completed.
+
+        The bridge's documented status values are DEPOSIT_DETECTED, PROCESSING,
+        ORIGIN_TX_CONFIRMED, SUBMITTED, COMPLETED and FAILED.
+        """
 
         base = self.settings.funds_polymarket_bridge_url.rstrip("/")
         client = await self.client()
         response = await client.get(f"{base}/status/{bridge_address}")
         response.raise_for_status()
         body = response.json()
-        rows = body.get("transactions") or body.get("data") or body.get("history") or []
-        if isinstance(rows, dict):
-            rows = rows.get("transactions") or []
+        rows = body.get("transactions") or []
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            if str(row.get("status") or "").lower() in {"completed", "confirmed", "success", "delivered"}:
+            status = str(row.get("status") or "").upper()
+            if status == "COMPLETED":
                 return True
+            if status == "FAILED":
+                return False
         return False
+
+    async def _polymarket_funds_history(self, wallet: str) -> list[dict[str, Any]]:
+        """Deposits and withdrawals the bridge saw for the wallet."""
+
+        base = self.settings.funds_polymarket_bridge_url.rstrip("/")
+        try:
+            client = await self.client()
+            deposit = await client.post(f"{base}/deposit", json={"address": wallet})
+            deposit.raise_for_status()
+            addresses = deposit.json().get("address") or {}
+            bridge_address = addresses.get("evm")
+            if not bridge_address:
+                return []
+            response = await client.get(f"{base}/status/{bridge_address}")
+            response.raise_for_status()
+            rows = response.json().get("transactions") or []
+        except Exception as exc:
+            logger.warning("bridge history failed", error=str(exc)[:120])
+            return []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            amount = Decimal(str(row.get("fromAmountBaseUnit") or 0)) / Decimal("1000000")
+            out.append(
+                {
+                    "kind": "deposit" if str(row.get("fromChainId")) != "137" else "withdrawal",
+                    "id": str(row.get("txHash") or row.get("createdTimeMs") or ""),
+                    "status": str(row.get("status") or ""),
+                    "type": "crypto",
+                    "amount_usd": str(amount),
+                    "fee_usd": "0",
+                    "at": row.get("createdTimeMs"),
+                }
+            )
+        return out
 
 
 # pUSD on Polygon, the Polymarket collateral the bridge unwraps from.

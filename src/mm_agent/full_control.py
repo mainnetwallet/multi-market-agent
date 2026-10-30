@@ -263,7 +263,13 @@ class FullControlService:
             raise FullControlError("no active venue", code="no_venue", status=409)
         return target
 
-    def _check_order_type(self, venue: VenueId, order_type: OrderType, post_only: bool) -> None:
+    def _check_order_type(
+        self,
+        venue: VenueId,
+        order_type: OrderType,
+        post_only: bool,
+        expires_at: Any = None,
+    ) -> None:
         caps = self.registry.get(venue).caps
         if order_type not in caps.order_types:
             reason = caps.unsupported_reason.get(order_type.value.lower())
@@ -285,6 +291,22 @@ class FullControlService:
                 code="post_only_conflict",
                 status=400,
             )
+        if order_type is OrderType.GTD:
+            if expires_at is None:
+                raise FullControlError(
+                    "an order with an expiry needs an expiry time",
+                    code="missing_expiry",
+                    status=400,
+                )
+            # Polymarket's docs: an expiry must be at least three minutes away,
+            # and the order expires one minute before it.
+            remaining = (expires_at - utcnow()).total_seconds() / 60
+            if remaining < 3:
+                raise FullControlError(
+                    "the expiry must be at least 3 minutes away",
+                    code="expiry_too_soon",
+                    status=400,
+                )
 
     async def _market_for(self, venue: VenueId, market_id: str) -> Market:
         try:
@@ -301,7 +323,7 @@ class FullControlService:
             return quantize_shares(amount_usd / price, 4)
         raise FullControlError("provide either shares or amount_usd", code="missing_size", status=400)
 
-    def _check_risk(self, venue: VenueId, amount: Decimal) -> None:
+    def _check_risk(self, venue: VenueId, amount: Decimal, *, market_id: str | None = None) -> None:
         """Manual orders pass the same caps as agent proposals."""
 
         mode = self.registry.mode(venue)
@@ -324,6 +346,17 @@ class FullControlService:
             raise FullControlError(
                 "the total exposure cap is reached; no new entries",
                 code="exposure_cap",
+            )
+        # The same position-count cap the agent's own sizing applies. It counts
+        # markets, not outcomes: YES and NO on one market are one position.
+        max_positions = int(self.agent.risk.caps["max_open_positions"])
+        positions = self.store.list_positions(mode=mode, venue=venue)
+        open_markets = {p.market_id for p in positions}
+        already_held = bool(market_id) and market_id in open_markets
+        if len(open_markets) >= max_positions and not already_held:
+            raise FullControlError(
+                f"the limit of {max_positions} open positions is reached; no new entries",
+                code="max_open_positions",
             )
 
     async def place_manual_order(
@@ -349,7 +382,7 @@ class FullControlService:
         target = self._venue_or_active(venue)
         if not self.registry.is_ready(target):
             raise FullControlError(self.registry.reason(target) or "venue not ready", code="venue_not_ready")
-        self._check_order_type(target, order_type, post_only)
+        self._check_order_type(target, order_type, post_only, expires_at)
         market = await self._market_for(target, market_id)
         if market.status is not MarketStatus.OPEN:
             raise FullControlError(f"market is {market.status.value}", code="market_not_open")
@@ -381,7 +414,7 @@ class FullControlService:
         size = self._size_from_amount(amount_usd, shares, price)
         amount = (size * price).quantize(Decimal("0.01"))
         if not reduce_only:
-            self._check_risk(target, amount)
+            self._check_risk(target, amount, market_id=market_id)
         if size < adapter.caps.min_order_shares:
             raise FullControlError(
                 f"{target.value} needs at least {adapter.caps.min_order_shares} shares",
@@ -410,7 +443,7 @@ class FullControlService:
             expires_at=expires_at,
             post_only=post_only,
         )
-        result, local_id = await self.execution.submit(request, market, client_ref=client_id)
+        result, local_id = await self.execution.submit(request, market)
         self.store.audit(
             actor,
             "order.manual",

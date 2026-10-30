@@ -209,7 +209,6 @@ class OrderRow(Base):
     proposal_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     order_type: Mapped[str] = mapped_column(String(8), default="GTC", nullable=False)
     post_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    client_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
     fee_usd: Mapped[Decimal] = mapped_column(DecimalString(40), default=Decimal("0"), nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_redacted: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)

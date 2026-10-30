@@ -13,15 +13,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -30,11 +34,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import org.json.JSONObject
 import java.math.BigDecimal
 import java.math.RoundingMode
 import com.mainnetwallet.mmagent.data.AppUiState
 import com.mainnetwallet.mmagent.data.Format
-import org.json.JSONObject
 
 /** Portfolio: Positions, Orders, Rules, History. */
 @Composable
@@ -45,6 +49,7 @@ fun PortfolioScreen(
     onSell: (marketId: String, outcome: String, shares: String, venue: String) -> Unit,
     onRedeem: (marketId: String, outcome: String, venue: String) -> Unit,
     onAdvanced: (marketId: String, venue: String, action: String) -> Unit,
+    onAmendOrder: (orderId: String, price: String?, shares: String?) -> Unit,
 ) {
     var tab by remember { mutableIntStateOf(0) }
     val titles = listOf("Positions", "Orders", "Rules", "History")
@@ -61,7 +66,7 @@ fun PortfolioScreen(
         }
         when (tab) {
             0 -> PositionsList(state, onSell, onRedeem, onAdvanced)
-            1 -> OrdersList(state, onCancelOrder, onCancelAll)
+            1 -> OrdersList(state, onCancelOrder, onCancelAll, onAmendOrder)
             2 -> RulesList(state)
             else -> HistoryList(state)
         }
@@ -166,7 +171,10 @@ private fun OrdersList(
     state: AppUiState,
     onCancelOrder: (String) -> Unit,
     onCancelAll: () -> Unit,
+    onAmendOrder: (orderId: String, price: String?, shares: String?) -> Unit,
 ) {
+    val capabilities = state.status.capabilities
+    var amending by remember { mutableStateOf<JSONObject?>(null) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -185,20 +193,35 @@ private fun OrdersList(
         }
         item { SectionHeader("Open orders", "${state.orders.size}") }
         items(state.orders) { order ->
+            val venue = order.optString("venue")
+            val canAmend = capabilities?.optJSONObject("venues")?.optJSONObject(venue)?.optBoolean("amend") == true
             RowCard(
                 title = "${order.optString("side")} ${Format.shares(order.optString("size"))} @ ${Format.cents(order.optString("price"))}",
                 subtitle = "${order.optString("venue")} · ${order.optString("market_id")} · ${order.optString("state")}",
                 detail = "filled ${Format.shares(order.optString("filled"))} · ${order.optString("order_type")}",
                 trailing = {
-                    Text(
-                        "Cancel",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onCancelOrder(order.optString("id")) }
-                            .padding(6.dp),
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (canAmend) {
+                            Text(
+                                "Amend",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { amending = order }
+                                    .padding(6.dp),
+                            )
+                        }
+                        Text(
+                            "Cancel",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onCancelOrder(order.optString("id")) }
+                                .padding(6.dp),
+                        )
+                    }
                 },
             )
         }
@@ -206,6 +229,124 @@ private fun OrdersList(
             item { Text("No open orders.", style = MaterialTheme.typography.bodyMedium) }
         }
     }
+
+    amending?.let { order ->
+        AmendDialog(
+            order = order,
+            onDismiss = { amending = null },
+            onConfirm = { price, shares ->
+                amending = null
+                onAmendOrder(order.optString("id"), price, shares)
+            },
+        )
+    }
+}
+
+/**
+ * Amend a resting order: a new price, a new size, or both. Kalshi's amend count
+ * is the total fillable amount, so the field is labelled as such.
+ */
+@Composable
+private fun AmendDialog(
+    order: JSONObject,
+    onDismiss: () -> Unit,
+    onConfirm: (price: String?, shares: String?) -> Unit,
+) {
+    var price by remember { mutableStateOf(order.optString("price")) }
+    var shares by remember { mutableStateOf(order.optString("size")) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Amend order") },
+        text = {
+            Column {
+                Text(
+                    "${order.optString("side")} on ${order.optString("market_id")}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = price,
+                    onValueChange = { price = it },
+                    label = { Text("New price") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = shares,
+                    onValueChange = { shares = it },
+                    label = { Text("New total size") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                // Blank means "leave it alone"; the server validates the rest.
+                onConfirm(price.trim().ifBlank { null }, shares.trim().ifBlank { null })
+            }) { Text("Amend") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** The amend sheet: a new price and/or size for a resting order. */
+@Composable
+fun AmendSheet(
+    orderId: String,
+    currentPrice: String,
+    currentSize: String,
+    onAmend: (orderId: String, price: String?, shares: String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var price by remember { mutableStateOf("") }
+    var shares by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Amend order") },
+        text = {
+            Column {
+                Text(
+                    "Currently ${Format.shares(currentSize)} @ ${Format.cents(currentPrice)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = price,
+                    onValueChange = { price = it },
+                    label = { Text("New price (0–1)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = shares,
+                    onValueChange = { shares = it },
+                    label = { Text("New size") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Leave a field empty to keep it. The venue decides whether the change is allowed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onAmend(orderId, price.ifBlank { null }, shares.ifBlank { null })
+                },
+                enabled = price.isNotBlank() || shares.isNotBlank(),
+            ) { Text("Amend") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable

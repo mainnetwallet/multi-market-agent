@@ -24,7 +24,6 @@ def upgrade() -> None:
     """Upgrade schema."""
     op.add_column("orders", sa.Column("order_type", sa.String(length=8), nullable=False, server_default="GTC"))
     op.add_column("orders", sa.Column("post_only", sa.Boolean(), nullable=False, server_default=sa.false()))
-    op.add_column("orders", sa.Column("client_ref", sa.String(length=120), nullable=True))
     op.add_column("fills", sa.Column("market_title", sa.Text(), nullable=True))
 
     op.create_table(
@@ -102,6 +101,5 @@ def downgrade() -> None:
     op.drop_index("ix_idempotency_created", table_name="idempotency_keys")
     op.drop_table("idempotency_keys")
     op.drop_column("fills", "market_title")
-    op.drop_column("orders", "client_ref")
     op.drop_column("orders", "post_only")
     op.drop_column("orders", "order_type")
