@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/action_server"
+        android:title="@string/menu_server"
+        android:showAsAction="never" />
+    <item
+        android:id="@+id/action_reload"
+        android:title="@string/menu_reload"
+        android:showAsAction="ifRoom" />
+    <item
+        android:id="@+id/action_browser"
+        android:title="@string/menu_browser"
+        android:showAsAction="never" />
+    <item
+        android:id="@+id/action_clear_session"
+        android:title="@string/menu_clear_session"
+        android:showAsAction="never" />
+</menu>

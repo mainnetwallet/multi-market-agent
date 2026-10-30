@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mm_bg">#0B0F14</color>
+    <color name="mm_panel">#111821</color>
+    <color name="mm_text">#E8EEF6</color>
+    <color name="mm_muted">#8BA0B5</color>
+    <color name="mm_accent">#59D3A0</color>
+    <color name="mm_danger">#FF6B73</color>
+</resources>

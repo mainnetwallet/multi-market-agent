@@ -5,7 +5,8 @@ and **Limitless**, switchable at runtime. One asyncio process runs the scanner,
 background book feed/cache, research/edge pipeline, risk engine, proposal queue,
 order execution, exit-rule monitor, FastAPI Control API, PWA, Telegram bot and an
 in-process event bus. The book feed refreshes the active venue's candidate books
-and exposes freshness/error counters in `/status`.
+and exposes freshness/error counters in `/status`. A native Android WebView shell
+is included in `android/` and connects to the Render HTTPS deployment.
 
 **Paper by default. No real order is ever sent without an operator-set live flag
 and a human action.** The build was completed and tested without live
@@ -273,8 +274,8 @@ reconciled.
 1. `/status` shows `UNKNOWN orders`. `/orders` shows the local order.
 2. Check the venue directly (web UI/API) by client id, venue order id, asset and
    timestamp.
-3. The reconciler checks open orders; it only resolves when it can prove a
-   match. Absence from open orders is not proof of no fill.
+3. The reconciler checks open orders, then terminal trade history; it only
+   resolves when it can prove a match. Absence from both is not proof of no fill.
 4. If the order actually filled, the local position may need manual adjustment;
    do not place a replacement. If it was never accepted, mark/reconcile with the
    operator's evidence.
@@ -287,9 +288,15 @@ reconciled.
 - **Docker:** `docker build -t mm-agent .` then
   `docker run --env-file .env -p 127.0.0.1:8080:8080 -v mm_data:/app/data mm-agent`.
 - **Compose:** `docker compose up -d --build`.
-- **Render:** `render.yaml` is a starter always-on blueprint. A free instance
-  that sleeps is not acceptable for a trading loop; use an always-on plan and
-  keep an external uptime ping on `HEAD /health`.
+- **Render:** `render.yaml` is a starter always-on blueprint. Deploy the Docker
+  service, set the `sync:false` secrets in the Render dashboard, use the
+  **HTTPS** URL, and check `HEAD /health`. A free instance that sleeps is not
+  acceptable for a trading loop; use an always-on plan and keep an external
+  uptime ping on `HEAD /health`. The blueprint already sets `APP_ENV=production`,
+  `HOST=0.0.0.0`, `PORT=10000`, a 1 GB persistent disk and SQLite.
+- **Android:** see [android/README.md](android/README.md). The app asks for the
+  Render HTTPS URL on first launch; GitHub Actions builds the installable debug
+  APK at `.github/workflows/android.yml` → **Actions → Android APK**.
 - **Database:** SQLite is the dev default. Use Postgres for production by setting
   `DATABASE_URL=postgresql+psycopg://...`, installing `.[postgres]`, and running
   `alembic upgrade head`.
@@ -351,6 +358,9 @@ trade history. See `src/mm_agent/store/repo.py`.
 - **Venue-native WebSockets:** the book feed currently uses short-interval REST
   refreshes through the adapter `subscribe_books` contract, not each venue's
   native stream. Native WS can replace the feed without changing the pipeline.
+- **Android push notifications** are not implemented; background alerts rely on
+  Telegram/email/uptime monitoring. The app is a secure WebView shell and works
+  with the Render HTTPS deployment and the responsive PWA.
 - Cross-venue market matching (optional P8) is not built. No automatic arbitrage.
 
 ---
@@ -366,6 +376,7 @@ src/mm_agent/
   venues/{base,registry,fake,polymarket,kalshi,limitless,*_signing}.py
   store/{models,repo}.py
 alembic/  tests/  scripts/doctor.py  deploy/  Dockerfile  docker-compose.yml
+android/  (native WebView shell, Gradle, APK CI)
 DOCS_FINDINGS.md  PLAN.md  SECURITY.md  .env.example
 ```
 

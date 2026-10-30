@@ -1,0 +1,51 @@
+plugins {
+    id "com.android.application"
+}
+
+def mmBaseUrl = (project.findProperty("mmBaseUrl") ?: "")
+        .toString()
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+
+android {
+    namespace "com.mainnetwallet.mmagent"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.mainnetwallet.mmagent"
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "1.0.0"
+        buildConfigField "String", "DEFAULT_BASE_URL", "\"${mmBaseUrl}\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
+}

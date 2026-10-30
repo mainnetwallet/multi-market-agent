@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MM Agent</string>
+    <string name="menu_server">Server URL</string>
+    <string name="menu_reload">Reload</string>
+    <string name="menu_browser">Open in browser</string>
+    <string name="menu_clear_session">Clear session</string>
+    <string name="offline_hint">Cannot reach the Render server. Check the server URL and connection.</string>
+    <string name="server_title">Connect to Render</string>
+    <string name="server_message">Enter the HTTPS URL of your deployed multi-market-agent Render service. Example: https://multi-market-agent.onrender.com</string>
+    <string name="server_hint">https://your-service.onrender.com</string>
+    <string name="connect">Connect</string>
+    <string name="cancel">Cancel</string>
+    <string name="invalid_url">Enter a valid https:// URL.</string>
+    <string name="clear_session_title">Clear session?</string>
+    <string name="clear_session_message">This removes the agent login cookie and local web storage from this phone.</string>
+</resources>
