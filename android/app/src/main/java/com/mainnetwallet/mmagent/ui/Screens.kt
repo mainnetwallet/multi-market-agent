@@ -45,6 +45,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -448,6 +451,16 @@ fun LoginScreen(
     var editServer by remember { mutableStateOf(baseUrl.isBlank()) }
     val focus = LocalFocusManager.current
 
+    // A server that was asleep can take a while: count the seconds and say so.
+    var waited by remember { mutableIntStateOf(0) }
+    LaunchedEffect(busy) {
+        waited = 0
+        while (busy) {
+            delay(1000)
+            waited++
+        }
+    }
+
     val filled = url.isNotBlank() && username.isNotBlank() && password.isNotBlank()
     val submit: () -> Unit = {
         if (filled && !busy) {
@@ -607,6 +620,14 @@ fun LoginScreen(
                         busy = busy,
                         onClick = submit,
                     )
+                    if (busy && waited >= 4) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "Waiting for the server (${waited}s). If it was asleep, the first sign-in can take up to a minute.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
 

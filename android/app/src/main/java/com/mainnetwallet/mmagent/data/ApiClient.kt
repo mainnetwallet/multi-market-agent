@@ -2,6 +2,7 @@ package com.mainnetwallet.mmagent.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Dispatcher
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -23,6 +24,8 @@ class ApiClient(
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        // OkHttp allows only 5 calls per host at once; the refresh sends 12 together.
+        .dispatcher(Dispatcher().apply { maxRequests = 32; maxRequestsPerHost = 16 })
         .build()
 
     /**

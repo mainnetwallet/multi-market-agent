@@ -5,6 +5,9 @@ import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -116,6 +119,16 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         // A 401 that means "the session is gone" sends the operator back to login.
         api.onUnauthorized = { expireSession() }
         loadSession()
+        if (token.isNullOrBlank()) warmUp()
+    }
+
+    /**
+     * Wake the server and open the connection while the operator types, so "Sign in" is not
+     * the first request to a server that may be asleep. Failures are ignored.
+     */
+    private fun warmUp() {
+        if (baseUrl.isBlank()) return
+        viewModelScope.launch { runCatching { api.get("/health") } }
     }
 
     /** The saved URL, or the one baked into the build when nothing is saved yet. */
@@ -187,7 +200,8 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             try {
                 val response = api.post(
                     "/v1/auth/login",
-                    ApiClient.jsonOf("username" to username, "password" to password)
+                    ApiClient.jsonOf("username" to username, "password" to password),
+                    readTimeoutSeconds = 90,
                 )
                 val newToken = response.optString("token")
                 if (newToken.isBlank()) {
@@ -253,18 +267,36 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             try {
                 val status = api.get("/v1/status")
                 val previous = _state.value
-                val balance = runCatching { api.get("/v1/balance") }.getOrNull()
-                val markets = runCatching { api.get("/v1/markets?limit=60") }.getOrNull()
-                val positions = runCatching { api.get("/v1/positions") }.getOrNull()
-                val orders = runCatching { api.get("/v1/orders?status=open&limit=100") }.getOrNull()
-                val proposals = runCatching { api.get("/v1/proposals?limit=20") }.getOrNull()
-                val rules = runCatching { api.get("/v1/rules") }.getOrNull()
-                val trades = runCatching { api.get("/v1/trades?limit=50") }.getOrNull()
-                val pnl = runCatching { api.get("/v1/pnl/daily?days=30") }.getOrNull()
-                val allowlist = runCatching { api.get("/v1/funds/allowlist") }.getOrNull()
-                val approvals = runCatching { api.get("/v1/approvals") }.getOrNull()
-                val fundsHistory = runCatching { api.get("/v1/funds/history") }.getOrNull()
-                val withdrawals = runCatching { api.get("/v1/funds/withdrawals") }.getOrNull()
+                // Everything except /status goes out at once. One request after another meant
+                // twelve round trips to a remote server before Home had its data.
+                val extras = coroutineScope {
+                    listOf(
+                        "/v1/balance",
+                        "/v1/markets?limit=60",
+                        "/v1/positions",
+                        "/v1/orders?status=open&limit=100",
+                        "/v1/proposals?limit=20",
+                        "/v1/rules",
+                        "/v1/trades?limit=50",
+                        "/v1/pnl/daily?days=30",
+                        "/v1/funds/allowlist",
+                        "/v1/approvals",
+                        "/v1/funds/history",
+                        "/v1/funds/withdrawals",
+                    ).map { path -> async { runCatching { api.get(path) }.getOrNull() } }.awaitAll()
+                }
+                val balance = extras[0]
+                val markets = extras[1]
+                val positions = extras[2]
+                val orders = extras[3]
+                val proposals = extras[4]
+                val rules = extras[5]
+                val trades = extras[6]
+                val pnl = extras[7]
+                val allowlist = extras[8]
+                val approvals = extras[9]
+                val fundsHistory = extras[10]
+                val withdrawals = extras[11]
 
                 // The session may have been cleared while we were waiting.
                 if (token.isNullOrBlank()) return@launch
