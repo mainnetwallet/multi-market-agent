@@ -123,6 +123,13 @@ class FullControlService:
                     "withdraw": caps.withdraw,
                     "redeem": caps.redeem,
                     "history": caps.funds_history,
+                    # The bridge address and the transfer are separate steps; say so.
+                    "withdraw_note": (
+                        "The withdrawal sends the collateral to a bridge address; the bridge "
+                        "then delivers it to the recipient."
+                        if caps.withdraw
+                        else ""
+                    ),
                     "reason": (
                         "Paper mode has no real funds."
                         if mode == Mode.PAPER.value

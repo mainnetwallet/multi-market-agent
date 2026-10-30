@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     funds_enabled: bool = False
     funds_signer_private_key: str = ""
     funds_signer_address: str = ""
-    funds_rpc_url: str = "https://mainnet.base.org"
+    funds_rpc_url: str = "https://polygon-rpc.com"
     funds_relayer_api_key: str = ""
     funds_relayer_api_key_address: str = ""
     funds_withdrawal_daily_limit_usd: Decimal = Decimal("25")

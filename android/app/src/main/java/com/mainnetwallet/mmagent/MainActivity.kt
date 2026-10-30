@@ -225,6 +225,7 @@ class MainActivity : FragmentActivity() {
                                 allowlist = state.allowlist,
                                 approvals = state.approvals,
                                 fundsHistory = state.fundsHistory,
+                                withdrawals = state.withdrawals,
                                 onDeposit = { venue ->
                                     selectedVenue = venue
                                     depositInfo = null
@@ -247,6 +248,9 @@ class MainActivity : FragmentActivity() {
                                     overlay = "allowlist"
                                 },
                                 onRemoveAllowlist = { id -> withdrawVm.removeAllowlistEntry(id) },
+                                onCancelWithdrawal = { id ->
+                                    appViewModel.cancelWithdrawal(id) { message -> toast = message }
+                                },
                             )
 
                             Tab.SETTINGS -> com.mainnetwallet.mmagent.ui.SettingsScreen(

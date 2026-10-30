@@ -49,11 +49,13 @@ fun WalletScreen(
     allowlist: List<JSONObject>,
     approvals: List<JSONObject>,
     fundsHistory: List<JSONObject>,
+    withdrawals: List<JSONObject>,
     onDeposit: (venue: String) -> Unit,
     onWithdraw: (venue: String) -> Unit,
     onOpenVenue: (venue: String, url: String) -> Unit,
     onAddAllowlist: () -> Unit,
     onRemoveAllowlist: (String) -> Unit,
+    onCancelWithdrawal: (String) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -128,6 +130,40 @@ fun WalletScreen(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
                                         .clickable { onOpenVenue(venue, approval.optString("official_url")) }
+                                        .padding(6.dp),
+                                )
+                            }
+                        },
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
+        }
+
+        item {
+            SectionHeader("Withdrawals", "${withdrawals.size}")
+            Spacer(Modifier.height(6.dp))
+            if (withdrawals.isEmpty()) {
+                Text("No withdrawals yet.", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                withdrawals.forEach { withdrawal ->
+                    val status = withdrawal.optString("status")
+                    val txHash = withdrawal.optString("tx_hash").takeIf { it.isNotBlank() && it != "null" }
+                    RowCard(
+                        title = "${Format.money(withdrawal.optString("amount_usd"))} · $status",
+                        subtitle = "${withdrawal.optString("venue")} · ${withdrawal.optString("network")} · ${withdrawal.optString("asset")}",
+                        detail = "recipient ${Format.groupAddress(withdrawal.optString("recipient"))}" +
+                            (txHash?.let { "\ntx $it" } ?: ""),
+                        trailing = {
+                            // Cancellable only while it is still in the hold window.
+                            if (status == "PENDING_HOLD") {
+                                Text(
+                                    "Cancel",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { onCancelWithdrawal(withdrawal.optString("id")) }
                                         .padding(6.dp),
                                 )
                             }
@@ -486,7 +522,8 @@ fun WithdrawReviewScreen(
                         ValueRow("Amount", Format.money(amount))
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "It can be cancelled during the hold window. Nothing is sent until then.",
+                            "Nothing is sent yet: the withdrawal waits out its hold window first. " +
+                                "It can be cancelled until then.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

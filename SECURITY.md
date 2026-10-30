@@ -45,7 +45,10 @@ What it can do when enabled:
   sending anything.
 - Create a withdrawal in a hold window, then submit it exactly once when the hold
   ends. `PENDING_HOLD → SUBMITTED → CONFIRMED`, or `FAILED` / `CANCELLED` / `UNKNOWN`.
-  UNKNOWN keeps the transaction hash and asks the operator to look; nothing resends.
+  The collateral transfer to the bridge address is signed by the funds signer and
+  sent once; the bridge's status endpoint moves the withdrawal to `CONFIRMED`.
+  UNKNOWN keeps the transaction hash and asks the operator to look; nothing
+  resends.
 
 What it deliberately does **not** do:
 

@@ -1315,7 +1315,13 @@ class Store:
     def create_withdrawal(self, **fields: Any) -> str:
         from ..domain import stable_id
 
-        wid = stable_id("withdrawal", fields["venue"], fields["amount_usd"], fields["recipient"], utcnow().isoformat())
+        wid = stable_id(
+            "withdrawal",
+            fields["venue"],
+            str(fields["amount_usd"]),
+            fields["recipient"],
+            utcnow().isoformat(),
+        )
         with self.session() as s:
             s.add(
                 WithdrawalRow(

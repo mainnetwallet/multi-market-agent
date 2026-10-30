@@ -79,9 +79,12 @@ class AgentService:
         self.paused = False
         # Set by the API once the full-control layer exists; optional by design.
         self.full_control: Any = None
+        # Set by the API once the funds service exists; optional by design.
+        self.funds: Any = None
         self._tasks: list[asyncio.Task[None]] = []
         self._expiry_task: asyncio.Task[None] | None = None
         self._auto_task: asyncio.Task[None] | None = None
+        self._funds_task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
 
     async def start(self) -> None:
@@ -95,15 +98,18 @@ class AgentService:
         self._expiry_task = asyncio.create_task(self._expiry_loop(), name="proposal-expiry")
         if self.settings.auto_propose:
             self._auto_task = asyncio.create_task(self._auto_loop(), name="auto-propose")
+        if self.settings.funds_enabled:
+            self._funds_task = asyncio.create_task(self._funds_loop(), name="funds-lifecycle")
 
     async def stop(self) -> None:
         self._stop.set()
         await self.book_feed.stop()
-        for task in (self._expiry_task, self._auto_task):
+        for task in (self._expiry_task, self._auto_task, self._funds_task):
             if task:
                 task.cancel()
         await asyncio.gather(
-            *(t for t in (self._expiry_task, self._auto_task) if t is not None), return_exceptions=True
+            *(t for t in (self._expiry_task, self._auto_task, self._funds_task) if t is not None),
+            return_exceptions=True,
         )
 
     # ---------------------------------------------------------------- status
@@ -756,6 +762,19 @@ class AgentService:
             except Exception:
                 logger.exception("expiry_loop_error")
             await asyncio.sleep(10)
+
+    async def _funds_loop(self) -> None:
+        """Drive the funds lifecycle: submit what is out of hold, then poll for
+        confirmation. A withdrawal is submitted exactly once and never retried."""
+
+        while not self._stop.is_set():
+            try:
+                if self.funds is not None and self.funds.enabled:
+                    await self.funds.submit_due_withdrawals()
+                    await self.funds.refresh_submitted()
+            except Exception:
+                logger.exception("funds_loop_error")
+            await asyncio.sleep(30)
 
     async def reconcile_pending_unknown(self) -> None:
         for order in self.store.orders_needing_reconcile():

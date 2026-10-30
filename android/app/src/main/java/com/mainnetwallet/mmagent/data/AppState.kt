@@ -42,6 +42,7 @@ data class AppUiState(
     val allowlist: List<JSONObject> = emptyList(),
     val approvals: List<JSONObject> = emptyList(),
     val fundsHistory: List<JSONObject> = emptyList(),
+    val withdrawals: List<JSONObject> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
     val loggedIn: Boolean = false,
@@ -143,6 +144,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 val allowlist = runCatching { api.get("/v1/funds/allowlist") }.getOrNull()
                 val approvals = runCatching { api.get("/v1/approvals") }.getOrNull()
                 val fundsHistory = runCatching { api.get("/v1/funds/history") }.getOrNull()
+                val withdrawals = runCatching { api.get("/v1/funds/withdrawals") }.getOrNull()
 
                 val capabilities = status.optJSONObject("capabilities")
                 val limits = status.optJSONObject("limits")
@@ -183,6 +185,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                     allowlist = ApiClient.arrayOf(allowlist, "entries").objects(),
                     approvals = ApiClient.arrayOf(approvals, "approvals").objects(),
                     fundsHistory = ApiClient.arrayOf(fundsHistory, "history").objects(),
+                    withdrawals = ApiClient.arrayOf(withdrawals, "withdrawals").objects(),
                     loading = false,
                     loggedIn = true,
                 )
@@ -325,6 +328,21 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 onDone(e.message ?: "${action.replaceFirstChar { it.uppercase() }} failed.")
             } catch (e: Exception) {
                 onDone(e.message ?: "${action.replaceFirstChar { it.uppercase() }} failed.")
+            }
+        }
+    }
+
+    /** Cancel a withdrawal while it is still in its hold window. */
+    fun cancelWithdrawal(withdrawalId: String, onDone: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                api.post("/v1/funds/withdrawals/$withdrawalId/cancel", JSONObject())
+                onDone("Withdrawal cancelled.")
+                refresh()
+            } catch (e: ApiClient.ApiException) {
+                onDone(e.message ?: "Cancel failed.")
+            } catch (e: Exception) {
+                onDone(e.message ?: "Cancel failed.")
             }
         }
     }

@@ -320,6 +320,38 @@ def test_allowlist_add_and_cooling(harness: Harness) -> None:
     assert len(entries) == 1
 
 
+def test_a_withdrawal_records_a_decimal_amount(harness: Harness) -> None:
+    # The amount is a Decimal and the id is derived from it: it must not reach
+    # json.dumps as a Decimal.
+    harness.settings.__dict__["funds_enabled"] = True
+    harness.settings.__dict__["funds_allowlist_cooling_hours"] = 0
+    client = make_client(harness)
+    token = client.post("/v1/auth/stepup", json={"password": "test-password", "action": "allowlist_add"}).json()[
+        "stepup_token"
+    ]
+    entry_id = client.post(
+        "/v1/funds/allowlist",
+        json={
+            "label": "cold",
+            "address": "0x1234567890abcdef1234567890abcdef12345678",
+            "network": "base",
+            "asset": "USDC",
+        },
+        headers={"X-Stepup-Token": token},
+    ).json()["id"]
+    withdraw_token = client.post("/v1/auth/stepup", json={"password": "test-password", "action": "withdraw"}).json()[
+        "stepup_token"
+    ]
+    response = client.post(
+        "/v1/funds/withdraw",
+        json={"venue": "polymarket", "amount": "1.00", "address_id": entry_id},
+        headers={"Idempotency-Key": "wd-1", "X-Stepup-Token": withdraw_token},
+    )
+    # In PAPER mode the withdrawal is refused, but it must be refused cleanly:
+    # the request must never crash on the Decimal amount.
+    assert response.status_code in (200, 400), response.text
+
+
 # ── history and market data ─────────────────────────────────────────────────
 
 

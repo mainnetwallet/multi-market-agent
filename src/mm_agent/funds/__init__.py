@@ -22,6 +22,12 @@ from ..config import Settings
 from ..domain import VenueId, utcnow
 from ..store import Store
 from ..util import get_logger
+from .signer import (
+    POLYGON_CHAIN_ID,
+    SignerError,
+    send_erc20_transfer,
+    to_base_units,
+)
 
 logger = get_logger(__name__)
 
@@ -463,12 +469,10 @@ class FundsService:
         return out
 
     async def _submit_one(self, record: dict[str, Any]) -> dict[str, Any]:
-        """Request the destination-scoped bridge address and mark the withdrawal submitted.
+        """Request the destination-scoped bridge address, then send the collateral to it.
 
-        shortcut: the pUSD transfer to the bridge address is not signed or sent here.
-        The withdrawal reaches SUBMITTED with the bridge address recorded, and the
-        operator sends the funds from the venue's own UI. Build the on-chain transfer
-        before treating this module as moving real money.
+        Exactly one transfer is sent. An uncertain outcome is UNKNOWN and is never
+        retried; the transaction hash is kept so the operator can look.
         """
 
         withdrawal_id = record["id"]
@@ -490,14 +494,56 @@ class FundsService:
             self.store.transition_withdrawal(withdrawal_id, "UNKNOWN", error=f"uncertain: {type(exc).__name__}")
             self.store.audit("funds", "funds.withdraw.unknown", {"id": withdrawal_id})
             return {"id": withdrawal_id, "status": "UNKNOWN", "error": str(exc)}
+
+        # The bridge address is now known. Send the collateral exactly once.
+        try:
+            receipt = await send_erc20_transfer(
+                rpc_url=self.settings.funds_rpc_url,
+                to_address=bridge_address,
+                amount_base_units=to_base_units(Decimal(str(record["amount_usd"]))),
+                token_address=POLYMARKET_PUSD,
+                chain_id=POLYGON_CHAIN_ID,
+            )
+        except SignerError as exc:
+            # The transfer was never accepted: nothing moved, so it is safe to retry
+            # by hand once the operator has read the reason.
+            self.store.transition_withdrawal(
+                withdrawal_id,
+                "FAILED",
+                bridge_address=bridge_address,
+                error=str(exc),
+            )
+            self.store.audit("funds", "funds.withdraw.failed", {"id": withdrawal_id, "error": str(exc)})
+            return {"id": withdrawal_id, "status": "FAILED", "bridge_address": bridge_address, "error": str(exc)}
+        except Exception as exc:
+            # The RPC may have accepted it. UNKNOWN keeps the address for the operator.
+            self.store.transition_withdrawal(
+                withdrawal_id,
+                "UNKNOWN",
+                bridge_address=bridge_address,
+                error=f"transfer outcome uncertain: {type(exc).__name__}",
+            )
+            self.store.audit("funds", "funds.withdraw.unknown", {"id": withdrawal_id})
+            return {"id": withdrawal_id, "status": "UNKNOWN", "bridge_address": bridge_address, "error": str(exc)}
+
         self.store.transition_withdrawal(
             withdrawal_id,
             "SUBMITTED",
             bridge_address=bridge_address,
-            error="bridge address ready; the pUSD transfer still has to be sent from the venue wallet",
+            tx_hash=receipt.tx_hash,
+            error=None,
         )
-        self.store.audit("funds", "funds.withdraw.submitted", {"id": withdrawal_id})
-        return {"id": withdrawal_id, "status": "SUBMITTED", "bridge_address": bridge_address}
+        self.store.audit(
+            "funds",
+            "funds.withdraw.submitted",
+            {"id": withdrawal_id, "tx_hash": receipt.tx_hash, "bridge_address": bridge_address},
+        )
+        return {
+            "id": withdrawal_id,
+            "status": "SUBMITTED",
+            "bridge_address": bridge_address,
+            "tx_hash": receipt.tx_hash,
+        }
 
     async def _polymarket_withdraw_address(self, record: dict[str, Any]) -> str:
         """Ask the bridge for the address tied to this exact destination.
@@ -531,6 +577,55 @@ class FundsService:
 
     def list_withdrawals(self, *, venue: VenueId | None = None) -> dict[str, Any]:
         return {"withdrawals": self.store.list_withdrawals(venue=venue)}
+
+    async def refresh_submitted(self) -> list[dict[str, Any]]:
+        """Poll the bridge so a submitted withdrawal can reach CONFIRMED.
+
+        The bridge tracks a withdrawal by its address, so the bridge address
+        recorded at submission time is what is asked about.
+        """
+        self.require_enabled()
+        out: list[dict[str, Any]] = []
+        for record in self.store.list_withdrawals(limit=200):
+            if record["status"] != "SUBMITTED":
+                continue
+            venue = VenueId(record["venue"])
+            if venue is not VenueId.POLYMARKET:
+                continue
+            bridge_address = record.get("bridge_address")
+            if not bridge_address:
+                continue
+            try:
+                confirmed = await self._bridge_status(bridge_address, record)
+            except Exception as exc:
+                # A failed poll leaves the withdrawal SUBMITTED; it is not a failure.
+                logger.warning("withdrawal status poll failed", withdrawal_id=record["id"], error=str(exc)[:120])
+                continue
+            if confirmed:
+                self.store.transition_withdrawal(record["id"], "CONFIRMED", error=None)
+                self.store.audit("funds", "funds.withdraw.confirmed", {"id": record["id"]})
+                out.append({"id": record["id"], "status": "CONFIRMED"})
+            else:
+                out.append({"id": record["id"], "status": "SUBMITTED"})
+        return out
+
+    async def _bridge_status(self, bridge_address: str, record: dict[str, Any]) -> bool:
+        """True when the bridge shows this withdrawal completed."""
+
+        base = self.settings.funds_polymarket_bridge_url.rstrip("/")
+        client = await self.client()
+        response = await client.get(f"{base}/status/{bridge_address}")
+        response.raise_for_status()
+        body = response.json()
+        rows = body.get("transactions") or body.get("data") or body.get("history") or []
+        if isinstance(rows, dict):
+            rows = rows.get("transactions") or []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("status") or "").lower() in {"completed", "confirmed", "success", "delivered"}:
+                return True
+        return False
 
 
 # pUSD on Polygon, the Polymarket collateral the bridge unwraps from.

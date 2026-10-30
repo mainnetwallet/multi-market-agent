@@ -194,6 +194,7 @@ def create_app(
     full.restore_ceilings()
     agent.full_control = full
     funds = FundsService(settings, agent.store)
+    agent.funds = funds
     start = started_at or utcnow()
     del start
     app = FastAPI(

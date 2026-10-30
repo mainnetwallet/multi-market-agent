@@ -420,7 +420,10 @@ A withdrawal goes `PENDING_HOLD` → `SUBMITTED` → `CONFIRMED`, or `FAILED` /
 `CANCELLED` / `UNKNOWN`. It is submitted exactly once and never auto-retried;
 UNKNOWN keeps the transaction hash and asks the operator to look. The bridge
 address is requested only when the hold ends, and is checked against the
-withdrawal record before anything is sent.
+withdrawal record before anything is sent. The collateral transfer to that
+address is signed by the funds signer and sent once; the bridge then delivers
+it to the recipient, and the bridge's status endpoint moves the withdrawal to
+`CONFIRMED`.
 
 **Read [SECURITY.md](SECURITY.md) before enabling this.** Polymarket withdrawals
 need the wallet owner's signature, so if you point the funds signer at your
@@ -473,11 +476,13 @@ visible rather than making it for you.
   Limitless, so nothing is automated there.
 - **Limitless price history has no documented endpoint**, so the market chart is
   not available for that venue.
-- **The withdraw flow submits the withdrawal but does not sign the on-chain
-  transfer.** `FUNDS_SIGNER_PRIVATE_KEY` is read and checked, but the actual
-  pUSD transfer to the bridge address is not yet built; a withdrawal reaches
-  `SUBMITTED` with the bridge address recorded and the operator sends the funds.
-  Treat the funds module as unverified for real money until that step exists.
+- **The withdraw flow signs and sends the on-chain transfer, but the whole path
+  is unverified against a live venue.** The ERC-20 transfer is built, signed and
+  sent through the configured RPC, and the bridge's status endpoint moves the
+  withdrawal to `CONFIRMED` — but no real transfer has been made, so the gas,
+  the bridge's own behaviour and the pUSD contract are unproven. Treat the funds
+  module as unverified for real money until one small withdrawal completes
+  end to end.
 - **Kalshi deposit and withdrawal initiation** do not exist in the API; the app
   shows the read-only history and deep-links to Kalshi.
 - **Limitless withdrawal, redeem, split and merge** are partner server-wallet
