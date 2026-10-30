@@ -43,6 +43,14 @@ data class ChatUiState(
     val busy: Boolean = false,
 )
 
+/** The two read-only server documents Settings can show. */
+data class InfoUiState(
+    val report: String? = null,
+    val audit: List<JSONObject> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
 data class AppUiState(
     val status: AgentStatus = AgentStatus(),
     val balances: List<JSONObject> = emptyList(),
@@ -93,6 +101,9 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     val chat: StateFlow<ChatUiState> = _chat.asStateFlow()
 
     /** One-shot messages for the snackbar: the server's own words, never paraphrased. */
+    private val _info = MutableStateFlow(InfoUiState())
+    val info: StateFlow<InfoUiState> = _info.asStateFlow()
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
@@ -383,6 +394,35 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             _chat.value = ChatUiState(_chat.value.messages + reply, busy = false)
             // A slash command may have changed orders, proposals or the venue.
             if (message.startsWith("/")) refresh()
+        }
+    }
+
+    /** Today's report, rendered by the server as plain text. */
+    fun loadReport() {
+        viewModelScope.launch {
+            _info.value = _info.value.copy(loading = true, error = null)
+            try {
+                val response = api.get("/v1/reports/daily")
+                _info.value = _info.value.copy(report = response.optString("text"), loading = false)
+            } catch (e: Exception) {
+                _info.value = _info.value.copy(loading = false, error = e.message ?: "Could not load the report.")
+            }
+        }
+    }
+
+    /** The newest audit entries, secrets already redacted by the server. */
+    fun loadAudit() {
+        viewModelScope.launch {
+            _info.value = _info.value.copy(loading = true, error = null)
+            try {
+                val response = api.get("/v1/audit")
+                _info.value = _info.value.copy(
+                    audit = ApiClient.arrayOf(response, "entries").objects(),
+                    loading = false,
+                )
+            } catch (e: Exception) {
+                _info.value = _info.value.copy(loading = false, error = e.message ?: "Could not load the audit log.")
+            }
         }
     }
 
