@@ -15,8 +15,9 @@ directly — no WebView.
   confirmation. Paper: one tap. Live: press and hold.
 - **Portfolio** — tabs for Positions, Orders, Rules and History. Positions offer
   Sell 25/50/100%, Redeem (when the venue supports it) and Split/Merge on
-  Polymarket. Open orders can be cancelled one at a time or all at once. History
-  shows trade rows and a daily PnL chart.
+  Polymarket. Open orders can be cancelled one at a time or all at once; the
+  order card's Cancel is a single tap plus a normal dialog, because cancelling
+  reduces risk. History shows trade rows and a daily PnL chart.
 - **Wallet** — per-venue balances in the venue's own collateral asset (pUSD,
   USD, USDC — never hardcoded), Deposit and Withdraw, Allowlist, Approvals and
   withdrawal/deposit history. Where a venue has no API for something, a card
