@@ -123,6 +123,7 @@ Last run 2026-10-30 after the audit fixes:
 - `alembic upgrade head` + `alembic check` — pass
 - Public doctor — Polymarket OK / Kalshi OK / Limitless OK (auth/order checks skipped, no credentials)
 - GitHub CI — pass (after setuptools upgrade)
+- Docker build + PAPER smoke — pass, container runs as UID 10001
 - Android APK CI — pass; release `v1.0.0-android`
 - Real order sent — **none**
 

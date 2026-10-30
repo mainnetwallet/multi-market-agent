@@ -15,7 +15,8 @@ Repository: **private** `mainnetwallet/multi-market-agent`
 | Wheel build | pass, static PWA assets included |
 | `pip-audit` | no known vulnerabilities in runtime deps; local project skipped as not-on-PyPI |
 | Docker compose config | valid |
-| Docker image build | **not run** — Docker daemon was not running on the build host |
+| Docker image build | pass in GitHub Actions (`docker-smoke` job) |
+| Docker Render-like smoke | pass: entrypoint drops to UID 10001, migrations apply, `/health` HEAD 200 |
 | GitHub CI (Python) | pass after setuptools upgrade |
 | Android APK CI | **pass** — unit tests + debug APK built and uploaded |
 | Android APK | 22,937 bytes, debug-signed, released as `v1.0.0-android` |
