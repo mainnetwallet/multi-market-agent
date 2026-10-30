@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.MMAgent" parent="@android:style/Theme.Material">
+    <style name="Theme.MMAgent" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:colorPrimary">@color/mm_bg</item>
         <item name="android:colorPrimaryDark">@color/mm_bg</item>
         <item name="android:colorAccent">@color/mm_accent</item>
@@ -8,19 +8,5 @@
         <item name="android:statusBarColor">@color/mm_bg</item>
         <item name="android:navigationBarColor">@color/mm_bg</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:actionBarStyle">@style/MMActionBar</item>
-        <item name="android:actionMenuTextColor">@color/mm_text</item>
-    </style>
-
-    <style name="MMActionBar" parent="@android:style/Widget.Material.ActionBar.Solid">
-        <item name="android:background">@color/mm_bg</item>
-        <item name="android:titleTextStyle">@style/MMActionBarTitle</item>
-        <item name="android:height">48dp</item>
-    </style>
-
-    <style name="MMActionBarTitle" parent="@android:style/TextAppearance.Material.Widget.ActionBar.Title">
-        <item name="android:textColor">@color/mm_text</item>
-        <item name="android:textSize">16sp</item>
-        <item name="android:fontFamily">sans-serif-medium</item>
     </style>
 </resources>

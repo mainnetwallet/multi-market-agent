@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.material3.SnackbarHostState
@@ -67,6 +68,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Draw behind the system bars and let Compose pad for them (the bottom nav sits above the
+        // phone's own navigation buttons; the venue badge sits below the status bar).
+        enableEdgeToEdge()
         appLock = AppLock(this)
         applyScreenshotPolicy(appLock.blockScreenshots)
 
