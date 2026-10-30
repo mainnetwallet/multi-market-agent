@@ -28,6 +28,7 @@ from ..domain import (
     MarketStatus,
     OrderRequest,
     OrderResult,
+    OrderType,
     Outcome,
     OutcomeInfo,
     Position,
@@ -66,8 +67,22 @@ CATEGORY_FEE_RATES: dict[str, Decimal] = {
 }
 
 
+def _handle_summary(handle: Any) -> dict[str, Any]:
+    """Reduce a SDK transaction handle to the few fields the operator needs."""
+
+    if handle is None:
+        return {}
+    out: dict[str, Any] = {"type": type(handle).__name__}
+    for field in ("transaction_hash", "transaction_id", "state", "status"):
+        value = getattr(handle, field, None)
+        if value is not None:
+            out[field] = str(value)
+    return out
+
+
 class PolymarketVenue(HttpVenue):
     id = VenueId.POLYMARKET
+    # Capabilities verified against docs.polymarket.com on 2026-10-30.
     caps = VenueCaps(
         realtime=True,
         sandbox=False,
@@ -75,6 +90,19 @@ class PolymarketVenue(HttpVenue):
         min_order_shares=Decimal("5"),
         min_notional_usd=Decimal("1"),
         default_tick=Decimal("0.01"),
+        order_types=(OrderType.GTC, OrderType.GTD, OrderType.FAK, OrderType.FOK),
+        post_only=True,
+        amend=False,
+        batch_orders=True,
+        approvals_needed=True,
+        collateral_asset="pUSD",
+        deposit=True,
+        withdraw=True,
+        redeem=True,
+        funds_history=True,
+        unsupported_reason={
+            "amend": "Polymarket has no amend endpoint; cancel and place a new order instead.",
+        },
     )
 
     def __init__(self, settings: Settings) -> None:
@@ -363,7 +391,26 @@ class PolymarketVenue(HttpVenue):
         price = quantize_price(req.price, market.tick_size)
         size = quantize_shares(req.size, 4)
         try:
-            accepted = await client.place_limit_order(asset_id=asset_id, price=price, size=size, side=req.side.value)
+            if req.order_type in (OrderType.FOK, OrderType.FAK):
+                # A market order is a limit order whose price bound rides in the signed
+                # amounts; the SDK takes that bound as max_price / min_price.
+                accepted = await client.place_market_order(
+                    asset_id=asset_id,
+                    side=req.side.value,
+                    shares=size,
+                    order_type="FOK" if req.order_type is OrderType.FOK else "FAK",
+                    **({"max_price": price} if req.side is Side.BUY else {"min_price": price}),
+                )
+            else:
+                expiration = int(req.expires_at.timestamp()) if req.expires_at else None
+                accepted = await client.place_limit_order(
+                    asset_id=asset_id,
+                    price=price,
+                    size=size,
+                    side=req.side.value,
+                    post_only=req.post_only,
+                    expiration=expiration,
+                )
         except httpx.TimeoutException:
             return self._unknown(req, "timeout")
         except Exception as exc:
@@ -459,6 +506,55 @@ class PolymarketVenue(HttpVenue):
             )
         except Exception as exc:
             return CancelResult(venue=self.id, ok=False, message=f"{type(exc).__name__}: {str(exc)[:160]}")
+
+    async def redeem_positions(self, *, market_id: str, outcome: Any = None) -> dict[str, Any]:
+        """Redeem resolved positions through the official SDK (Relayer or EOA path)."""
+
+        client = await self._secure()
+        market = await self.get_market(MarketRef(venue=self.id, market_id=market_id))
+        condition_id = self._condition_index.get(market_id)
+        handle = await client.redeem_positions(
+            condition_id=condition_id,
+            market_id=market_id,
+            position_id=market.outcome(outcome or Outcome.YES).native_id if outcome else None,
+        )
+        return {"supported": True, "handle": _handle_summary(handle)}
+
+    async def split_merge(self, *, market_id: str, action: str) -> dict[str, Any]:
+        """Split a full outcome set or merge it back into collateral."""
+
+        client = await self._secure()
+        market = await self.get_market(MarketRef(venue=self.id, market_id=market_id))
+        condition_id = self._condition_index.get(market_id)
+        legs = [info.native_id for info in market.outcomes]
+        if action == "split":
+            handle = await client.split_position(condition_id=condition_id, legs=legs, amount=0)
+        else:
+            handle = await client.merge_positions(condition_id=condition_id, legs=legs, amount="max")
+        return {"supported": True, "action": action, "handle": _handle_summary(handle)}
+
+    async def get_price_history(self, market_id: str, *, interval: str = "1d") -> list[dict[str, Any]]:
+        """CLOB /prices-history for the market's YES asset."""
+
+        market = await self.get_market(MarketRef(venue=self.id, market_id=market_id))
+        asset_id = market.outcome(Outcome.YES).native_id
+        data = await self.get_json(CLOB + "/prices-history", params={"token_id": asset_id, "interval": interval})
+        out: list[dict[str, Any]] = []
+        for row in data.get("history") or []:
+            try:
+                out.append(
+                    {
+                        "at": datetime.fromtimestamp(int(row["t"]), tz=UTC).isoformat(),
+                        "open": str(to_decimal(row.get("p") or 0)),
+                        "high": str(to_decimal(row.get("p") or 0)),
+                        "low": str(to_decimal(row.get("p") or 0)),
+                        "close": str(to_decimal(row.get("p") or 0)),
+                        "volume": str(to_decimal(row.get("v") or 0)),
+                    }
+                )
+            except Exception:
+                continue
+        return out
 
     # ------------------------------------------------------------------- fee
     def fee(self, price: Decimal, size: Decimal, side: Side, market: Market) -> FeeQuote:

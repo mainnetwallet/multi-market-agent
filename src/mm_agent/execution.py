@@ -18,6 +18,7 @@ from .domain import (
     Mode,
     OrderRequest,
     OrderResult,
+    OrderType,
     Outcome,
     Position,
     Side,
@@ -59,6 +60,7 @@ class ExecutionGateway:
         market: Market,
         *,
         proposal_id: str | None = None,
+        client_ref: str | None = None,
     ) -> tuple[OrderResult, str]:
         adapter = self.registry.get(req.venue)
         local_id = self.store.create_order(
@@ -72,6 +74,9 @@ class ExecutionGateway:
             client_order_id=req.client_order_id,
             proposal_id=proposal_id,
             reduce_only=req.reduce_only,
+            order_type=req.order_type.value,
+            post_only=req.post_only,
+            client_ref=client_ref,
         )
         venue_lock = await self.locks.venue(req.venue)
         async with venue_lock:
@@ -386,7 +391,7 @@ class ExecutionGateway:
             size=quantize_shares(position.shares, 2),
             client_order_id=f"{position.venue.value[:3]}-exit-{uuid.uuid4().hex[:20]}",
             reduce_only=True,
-            order_type="FAK",
+            order_type=OrderType.FAK,
             mode=self.registry.mode(position.venue),
         )
         self.store.audit(

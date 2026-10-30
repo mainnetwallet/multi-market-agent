@@ -1,0 +1,468 @@
+package com.mainnetwallet.mmagent.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import com.mainnetwallet.mmagent.data.AllowlistEntry
+import com.mainnetwallet.mmagent.data.Format
+import com.mainnetwallet.mmagent.data.WithdrawPreview
+import com.mainnetwallet.mmagent.data.WithdrawStep
+import org.json.JSONObject
+
+/**
+ * The Wallet screen: per-venue balances with the venue's own collateral asset
+ * name, deposit and withdraw entries, allowlist, approvals and history.
+ */
+@Composable
+fun WalletScreen(
+    balances: List<JSONObject>,
+    capabilities: JSONObject?,
+    onDeposit: (venue: String) -> Unit,
+    onWithdraw: (venue: String) -> Unit,
+    onOpenVenue: (venue: String, url: String) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item { SectionHeader("Balances", "Per venue, in the venue's own asset") }
+        items(balances) { balance ->
+            WalletCard(balance, capabilities, onDeposit, onWithdraw, onOpenVenue)
+        }
+        if (balances.isEmpty()) {
+            item { Text("No venue balances available.", style = MaterialTheme.typography.bodyMedium) }
+        }
+    }
+}
+
+@Composable
+private fun WalletCard(
+    balance: JSONObject,
+    capabilities: JSONObject?,
+    onDeposit: (String) -> Unit,
+    onWithdraw: (String) -> Unit,
+    onOpenVenue: (String, String) -> Unit,
+) {
+    val venue = balance.optString("venue")
+    val venueCaps = capabilities?.optJSONObject("venues")?.optJSONObject(venue)
+    val funds = venueCaps?.optJSONObject("funds")
+    val asset = balance.optString("collateral_asset", "USD")
+    val mode = balance.optString("mode", "PAPER")
+    val unavailable = balance.optString("reason").takeIf { it.isNotBlank() && it != "null" }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(venue.uppercase(), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (mode == "LIVE") "LIVE" else "PAPER",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (mode == "LIVE") Palette.Danger else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            ValueRow("Available", Format.withAsset(balance.optString("available"), asset), emphasise = true)
+            ValueRow("In orders", Format.withAsset(balance.optString("in_orders"), asset))
+            ValueRow("Positions", Format.withAsset(balance.optString("positions_value"), asset))
+            ValueRow("Total", Format.withAsset(balance.optString("total"), asset))
+            if (!unavailable.isNullOrBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(unavailable, style = MaterialTheme.typography.bodySmall, color = Palette.Alert)
+            }
+
+            Spacer(Modifier.height(12.dp))
+            val canDeposit = funds?.optBoolean("deposit") == true
+            val canWithdraw = funds?.optBoolean("withdraw") == true
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (canDeposit) {
+                    ConfirmButton("Deposit", enabled = true, onClick = { onDeposit(venue) }, modifier = Modifier.weight(1f))
+                }
+                if (canWithdraw) {
+                    ConfirmButton("Withdraw", enabled = true, onClick = { onWithdraw(venue) }, modifier = Modifier.weight(1f))
+                }
+            }
+            if (!canDeposit && !canWithdraw) {
+                val reason = funds?.optString("reason")?.takeIf { it.isNotBlank() && it != "null" }
+                    ?: venueCaps?.optJSONObject("unsupported")?.optString("deposit")
+                        ?.takeIf { it.isNotBlank() && it != "null" }
+                    ?: "This venue has no deposit or withdrawal API."
+                Spacer(Modifier.height(10.dp))
+                UnsupportedCard(
+                    title = "Not available through the API",
+                    reason = reason,
+                    actionLabel = "Open ${venue.replaceFirstChar { it.uppercase() }} in browser",
+                    onAction = {
+                        val url = venueCaps?.optString("official_url") ?: "https://docs.kalshi.com"
+                        onOpenVenue(venue, url)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** The withdraw review sheet: everything the operator must see before sending. */
+@Composable
+fun WithdrawReviewScreen(
+    venue: String,
+    amount: String,
+    entries: List<AllowlistEntry>,
+    preview: WithdrawPreview,
+    step: WithdrawStep,
+    error: String?,
+    submitting: Boolean,
+    onAmountChange: (String) -> Unit,
+    onSelectAddress: (AllowlistEntry) -> Unit,
+    onPreview: () -> Unit,
+    onStepUp: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    val isLive = venue.isNotBlank()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(16.dp),
+    ) {
+        SectionHeader("Withdraw", venue.uppercase())
+        ErrorNote(error)
+
+        when (step) {
+            WithdrawStep.AMOUNT -> {
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = onAmountChange,
+                    label = { Text("Amount") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                SectionHeader("Recipient", "Must already be on the allowlist")
+                if (entries.isEmpty()) {
+                    Text(
+                        "No allowlisted address yet. Add one in Settings first; a new address waits out a cooling period.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    entries.forEach { entry ->
+                        val selected = entry.id == entries.firstOrNull { it.id == entry.id }?.id
+                        RowCard(
+                            title = entry.label,
+                            subtitle = "${entry.network} · ${entry.asset}",
+                            detail = Format.groupAddress(entry.address),
+                            accent = if (selected) MaterialTheme.colorScheme.primary else null,
+                            onClick = { onSelectAddress(entry) },
+                        )
+                        Spacer(Modifier.height(6.dp))
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                ConfirmButton(
+                    label = "Preview withdrawal",
+                    enabled = amount.isNotBlank() && entries.isNotEmpty(),
+                    busy = submitting,
+                    onClick = onPreview,
+                )
+            }
+
+            WithdrawStep.PREVIEW -> {
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        ValueRow("Venue", venue.uppercase())
+                        ValueRow("Amount", Format.money(amount), emphasise = true)
+                        ValueRow("Network", preview.network)
+                        ValueRow("Token", preview.asset)
+                        ValueRow("Fee", Format.money(preview.feeUsd))
+                        ValueRow("ETA", "${preview.etaSeconds} s")
+                        ValueRow("Hold window", "${preview.holdMinutes} min")
+                        ValueRow("Daily limit left", Format.money(preview.dailyRemainingUsd))
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "Recipient (${preview.label})",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            Format.groupAddress(preview.recipient),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password (never stored)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                ConfirmButton(
+                    label = "Step up",
+                    enabled = password.isNotBlank(),
+                    busy = submitting,
+                    onClick = { onStepUp(password) },
+                )
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onCancel) { Text("Back") }
+            }
+
+            WithdrawStep.STEP_UP, WithdrawStep.CONFIRMING -> {
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        ValueRow("Amount", Format.money(amount), emphasise = true)
+                        ValueRow("Network", preview.network)
+                        ValueRow("Token", preview.asset)
+                        ValueRow("Fee", Format.money(preview.feeUsd))
+                        ValueRow("Recipient", Format.groupAddress(preview.recipient))
+                        ValueRow("Hold window", "${preview.holdMinutes} min")
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                if (isLive) {
+                    HoldToConfirmButton(
+                        label = "Hold to send",
+                        enabled = !submitting,
+                        busy = submitting,
+                        danger = true,
+                        onConfirmed = onConfirm,
+                    )
+                } else {
+                    ConfirmButton(
+                        label = "Send",
+                        enabled = !submitting,
+                        busy = submitting,
+                        danger = true,
+                        onClick = onConfirm,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Nothing is sent yet: the withdrawal waits out its hold window first.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            WithdrawStep.DONE -> {
+                Spacer(Modifier.height(20.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Withdrawal created", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(8.dp))
+                        ValueRow("Status", "PENDING_HOLD")
+                        ValueRow("Amount", Format.money(amount))
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "It can be cancelled during the hold window. Nothing is sent until then.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                ConfirmButton("Done", enabled = true, onClick = onCancel)
+            }
+        }
+    }
+}
+
+/** The trade sheet: side, outcome, order-type chips, price, size, and the estimate. */
+@Composable
+fun TradeSheetScreen(
+    draft: com.mainnetwallet.mmagent.data.TradeDraft,
+    estimate: com.mainnetwallet.mmagent.data.TradeEstimate,
+    submitting: Boolean,
+    error: String?,
+    result: String?,
+    onSide: (String) -> Unit,
+    onOutcome: (String) -> Unit,
+    onOrderType: (String) -> Unit,
+    onPostOnly: (Boolean) -> Unit,
+    onPrice: (String) -> Unit,
+    onShares: (String) -> Unit,
+    onAmount: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val isLive = draft.mode.equals("LIVE", ignoreCase = true)
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(16.dp),
+    ) {
+        SectionHeader("Trade", draft.venue.uppercase())
+        Text(
+            draft.title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ChoiceChip(
+                label = "BUY",
+                selected = draft.side == "BUY",
+                accent = Palette.Long,
+                onClick = { onSide("BUY") },
+            )
+            ChoiceChip(
+                label = "SELL",
+                selected = draft.side == "SELL",
+                accent = Palette.Short,
+                onClick = { onSide("SELL") },
+            )
+            Spacer(Modifier.width(4.dp))
+            ChoiceChip("YES", selected = draft.outcome == "YES", onClick = { onOutcome("YES") })
+            ChoiceChip("NO", selected = draft.outcome == "NO", onClick = { onOutcome("NO") })
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            draft.orderTypeChips.forEach { chip ->
+                ChoiceChip(chip, selected = draft.orderType == chip, onClick = { onOrderType(chip) })
+            }
+        }
+        if (draft.postOnlySupported) {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onPostOnly(!draft.postOnly) }
+                    .padding(vertical = 6.dp),
+            ) {
+                Text(
+                    if (draft.postOnly) "☑" else "☐",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Post-only", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = draft.price,
+            onValueChange = onPrice,
+            label = { Text(if (draft.isMarketOrder) "Worst price" else "Price (0–1)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = draft.shares,
+            onValueChange = onShares,
+            label = { Text("Shares") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = draft.amountUsd,
+            onValueChange = onAmount,
+            label = { Text("Or amount (${draft.collateralAsset})") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Spacer(Modifier.height(14.dp))
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                ValueRow("Shares", estimate.shares)
+                ValueRow("Cost", Format.money(estimate.costUsd), emphasise = true)
+                ValueRow("Fee", Format.money(estimate.feeUsd))
+                ValueRow("Max loss", Format.money(estimate.maxLossUsd))
+                ValueRow("Payout if right", Format.money(estimate.payoutUsd))
+                if (estimate.problem != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(estimate.problem, style = MaterialTheme.typography.bodySmall, color = Palette.Alert)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        ErrorNote(error)
+        if (result != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(result, style = MaterialTheme.typography.bodyMedium, color = Palette.Long)
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (isLive) {
+            HoldToConfirmButton(
+                label = "Hold to ${draft.side.lowercase()}",
+                enabled = estimate.valid && !submitting,
+                busy = submitting,
+                onConfirmed = onSubmit,
+            )
+        } else {
+            ConfirmButton(
+                label = "${draft.side.lowercase().replaceFirstChar { it.uppercase() }} (paper)",
+                enabled = estimate.valid && !submitting,
+                busy = submitting,
+                onClick = onSubmit,
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        TextButton(onClick = onCancel) { Text("Cancel") }
+    }
+}

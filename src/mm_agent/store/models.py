@@ -207,6 +207,9 @@ class OrderRow(Base):
     venue_order_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     reduce_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     proposal_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    order_type: Mapped[str] = mapped_column(String(8), default="GTC", nullable=False)
+    post_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    client_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
     fee_usd: Mapped[Decimal] = mapped_column(DecimalString(40), default=Decimal("0"), nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_redacted: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
@@ -234,6 +237,7 @@ class FillRow(Base):
     size: Mapped[Decimal] = mapped_column(DecimalString(40), nullable=False)
     fee_usd: Mapped[Decimal] = mapped_column(DecimalString(40), default=Decimal("0"), nullable=False)
     venue_fill_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    market_title: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
     __table_args__ = (
@@ -330,4 +334,85 @@ class KvRow(Base):
 
     key: Mapped[str] = mapped_column(String(160), primary_key=True)
     value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+
+class IdempotencyRow(Base):
+    """Replay store for money-moving POSTs: key -> the first response."""
+
+    __tablename__ = "idempotency_keys"
+
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(120), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+    __table_args__ = (Index("ix_idempotency_created", "created_at"),)
+
+
+class StepupRow(Base):
+    """A single-use step-up token bound to one session and one action kind."""
+
+    __tablename__ = "stepup_tokens"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+    __table_args__ = (Index("ix_stepup_session", "session_id", "action"),)
+
+
+class AllowlistRow(Base):
+    """A final withdrawal recipient. Cooling applies before first use."""
+
+    __tablename__ = "withdrawal_allowlist"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    label: Mapped[str] = mapped_column(String(80), nullable=False)
+    address: Mapped[str] = mapped_column(String(120), nullable=False)
+    network: Mapped[str] = mapped_column(String(40), nullable=False)
+    asset: Mapped[str] = mapped_column(String(40), nullable=False)
+    added_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    usable_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    removed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
+class WithdrawalRow(Base):
+    """Funds lifecycle. Submitted exactly once; never auto-retried."""
+
+    __tablename__ = "withdrawals"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    venue: Mapped[str] = mapped_column(String(32), nullable=False)
+    amount_usd: Mapped[Decimal] = mapped_column(DecimalString(40), nullable=False)
+    address_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    recipient: Mapped[str] = mapped_column(String(120), nullable=False)
+    network: Mapped[str] = mapped_column(String(40), nullable=False)
+    asset: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="PENDING_HOLD", nullable=False)
+    hold_until: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    bridge_address: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tx_hash: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    fee_usd: Mapped[Decimal] = mapped_column(DecimalString(40), default=Decimal("0"), nullable=False)
+    eta_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    submitted_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+    __table_args__ = (Index("ix_withdrawals_venue_created", "venue", "created_at"),)
+
+
+class HardCeilingRow(Base):
+    """A stored hard ceiling. Only max_trade_usd is operator-raisable."""
+
+    __tablename__ = "hard_ceilings"
+
+    name: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[Decimal] = mapped_column(DecimalString(40), nullable=False)
+    actor: Mapped[str] = mapped_column(String(80), default="", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)

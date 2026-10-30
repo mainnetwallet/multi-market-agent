@@ -34,13 +34,21 @@ def test_redacts_mapping_keys() -> None:
 
 
 def test_repo_has_no_secret_patterns() -> None:
+    import os
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
     offenders: list[str] = []
     allowed_suffixes = {".py", ".toml", ".md", ".example", ".yml", ".yaml", ".json", ".html", ".js", ".ini"}
-    for path in root.rglob("*"):
-        if not path.is_file() or ".venv" in path.parts or ".git" in path.parts:
+    # Build output is not source, and its paths can break mid-build, so prune it
+    # before walking rather than filtering files afterwards.
+    skip_dirs = {".venv", ".git", "build", ".gradle", "node_modules", ".pytest_cache", ".mypy_cache"}
+    paths: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        paths.extend(Path(dirpath) / name for name in filenames)
+    for path in paths:
+        if not path.is_file():
             continue
         if "fixtures" in path.parts:
             continue

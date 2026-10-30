@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
 from decimal import ROUND_CEILING, Decimal
 from typing import Any
 from urllib.parse import urlparse
@@ -27,6 +28,7 @@ from ..domain import (
     MarketStatus,
     OrderRequest,
     OrderResult,
+    OrderType,
     Outcome,
     OutcomeInfo,
     Position,
@@ -52,6 +54,7 @@ CENT = Decimal("0.01")
 
 class KalshiVenue(HttpVenue):
     id = VenueId.KALSHI
+    # Capabilities verified against docs.kalshi.com openapi.yaml on 2026-10-30.
     caps = VenueCaps(
         realtime=True,
         sandbox=True,
@@ -59,6 +62,22 @@ class KalshiVenue(HttpVenue):
         min_order_shares=Decimal("1"),
         min_notional_usd=Decimal("0.01"),
         default_tick=CENT,
+        order_types=(OrderType.GTC, OrderType.FAK, OrderType.FOK, OrderType.IOC),
+        post_only=True,
+        amend=True,
+        batch_orders=True,
+        approvals_needed=False,
+        collateral_asset="USD",
+        deposit=False,
+        withdraw=False,
+        redeem=False,
+        funds_history=True,
+        unsupported_reason={
+            "deposit": "Kalshi exposes deposit history only; there is no deposit endpoint.",
+            "withdraw": "Kalshi exposes withdrawal history only; there is no withdrawal endpoint.",
+            "redeem": "Kalshi settles automatically; a settled position needs no redemption.",
+            "gtd": "The Kalshi V2 order schema has no good-till-date time in force.",
+        },
     )
 
     def __init__(self, settings: Settings, *, base_url: str | None = None) -> None:
@@ -432,11 +451,19 @@ class KalshiVenue(HttpVenue):
                 message="price out of range after tick alignment",
             )
         tif = {
-            "GTC": "good_till_canceled",
-            "FAK": "immediate_or_cancel",
-            "IOC": "immediate_or_cancel",
-            "FOK": "fill_or_kill",
-        }[req.order_type]
+            OrderType.GTC: "good_till_canceled",
+            OrderType.FAK: "immediate_or_cancel",
+            OrderType.IOC: "immediate_or_cancel",
+            OrderType.FOK: "fill_or_kill",
+        }.get(req.order_type)
+        if tif is None:
+            return OrderResult(
+                venue=self.id,
+                client_order_id=req.client_order_id,
+                status=ExecutionStatus.FAILED,
+                requested_size=req.size,
+                message=f"Kalshi does not support {req.order_type.value} orders",
+            )
         payload: dict[str, Any] = {
             "ticker": req.market_id,
             "side": venue_side,
@@ -446,6 +473,8 @@ class KalshiVenue(HttpVenue):
             "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": req.client_order_id,
         }
+        if req.post_only:
+            payload["post_only"] = True
         if req.reduce_only:
             if tif != "immediate_or_cancel":
                 return OrderResult(
@@ -555,6 +584,142 @@ class KalshiVenue(HttpVenue):
         except Exception as exc:
             return CancelResult(venue=self.id, ok=False, message=f"{type(exc).__name__}: {exc}")
 
+    # ------------------------------------------------------------------- amend
+    async def amend_order(self, order_id: str, *, price: Decimal | None, size: Decimal | None) -> OrderResult:
+        """Kalshi V2 amend: POST /portfolio/events/orders/{order_id}/amend.
+
+        The request count is the order's total max-fillable count (filled + desired
+        resting). The response reports the resulting resting quantity and any fills.
+        """
+        self._ensure_signer()
+        order = next((o for o in await self.get_open_orders() if o.order_id == order_id), None)
+        if order is None:
+            return OrderResult(
+                venue=self.id,
+                client_order_id="",
+                status=ExecutionStatus.FAILED,
+                requested_size=Decimal("0"),
+                message=f"order {order_id} is not open",
+            )
+        market = await self.get_market(MarketRef(venue=self.id, market_id=order.market_id))
+        venue_side = "bid" if order.side is Side.BUY else "ask"
+        venue_price = price if price is not None else order.price
+        if order.outcome is Outcome.NO:
+            venue_price = ONE - venue_price
+            venue_side = "ask" if venue_side == "bid" else "bid"
+        venue_price = quantize_price(venue_price, self._tick_for_price(market, venue_price))
+        if not (ZERO < venue_price < ONE):
+            return OrderResult(
+                venue=self.id,
+                client_order_id=order.client_order_id or "",
+                status=ExecutionStatus.FAILED,
+                requested_size=Decimal("0"),
+                message="amend price out of range after tick alignment",
+            )
+        total = size if size is not None else order.size
+        payload = {
+            "ticker": order.market_id,
+            "side": venue_side,
+            "price": f"{venue_price:.4f}",
+            "count": f"{quantize_shares(total, 2):.2f}",
+        }
+        try:
+            response = await self._signed("POST", f"/portfolio/events/orders/{order_id}/amend", json=payload)
+        except VenueHTTPError as exc:
+            return OrderResult(
+                venue=self.id,
+                client_order_id=order.client_order_id or "",
+                status=ExecutionStatus.FAILED,
+                requested_size=total,
+                message=f"venue rejected the amend ({exc.status_code}): {exc.body[:200]}",
+            )
+        except Exception as exc:
+            return OrderResult(
+                venue=self.id,
+                client_order_id=order.client_order_id or "",
+                status=ExecutionStatus.UNKNOWN,
+                requested_size=total,
+                remaining_size=total,
+                message=f"amend outcome uncertain {type(exc).__name__}; do not resend",
+            )
+        remaining = to_decimal(response.get("remaining_count") or 0)
+        filled = to_decimal(response.get("fill_count") or 0)
+        avg = response.get("average_fill_price")
+        return OrderResult(
+            venue=self.id,
+            client_order_id=order.client_order_id or "",
+            venue_order_id=str(response.get("order_id") or order_id),
+            status=ExecutionStatus.FILLED
+            if filled > 0 and remaining <= 0
+            else ExecutionStatus.PARTIAL
+            if filled > 0
+            else ExecutionStatus.RESTING,
+            requested_size=total,
+            filled_size=filled,
+            remaining_size=remaining,
+            average_price=to_decimal(avg) if avg else None,
+            message="amended",
+            raw_redacted={"remaining_count": str(remaining), "fill_count": str(filled)},
+        )
+
+    async def get_price_history(self, market_id: str, *, interval: str = "1d") -> list[dict[str, Any]]:
+        """Public candlesticks: GET /markets/candlesticks (batch, up to 100 tickers)."""
+
+        minutes = {"1m": 1, "1h": 60, "1d": 1440}.get(interval)
+        if minutes is None:
+            raise ValueError(f"unsupported interval {interval}; use 1m, 1h or 1d")
+        end = int(utcnow().timestamp())
+        start = end - 7 * 86400
+        data = await self.get_json(
+            self.base_url + "/markets/candlesticks",
+            params={
+                "market_tickers": market_id,
+                "start_ts": start,
+                "end_ts": end,
+                "period_interval": minutes,
+            },
+        )
+        rows = data.get("candlesticks") or []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                out.append(
+                    {
+                        "at": datetime.fromtimestamp(int(row["timestamp"]), tz=UTC).isoformat(),
+                        "open": str(to_decimal(row.get("open"))),
+                        "high": str(to_decimal(row.get("high"))),
+                        "low": str(to_decimal(row.get("low"))),
+                        "close": str(to_decimal(row.get("close"))),
+                        "volume": str(to_decimal(row.get("volume") or 0)),
+                    }
+                )
+            except Exception:
+                continue
+        return out
+
+    async def get_funds_history(self) -> list[dict[str, Any]]:
+        """Kalshi exposes deposit and withdrawal *history* only; both are read-only."""
+
+        out: list[dict[str, Any]] = []
+        for kind, path in (("deposit", "/portfolio/deposits"), ("withdrawal", "/portfolio/withdrawals")):
+            try:
+                data = await self._signed("GET", path, params={"limit": 100})
+            except Exception:
+                continue
+            for row in data.get(f"{kind}s", []) or []:
+                out.append(
+                    {
+                        "kind": kind,
+                        "id": str(row.get("id") or ""),
+                        "status": str(row.get("status") or ""),
+                        "type": str(row.get("type") or ""),
+                        "amount_usd": str(Decimal(str(row.get("amount_cents") or 0)) / Decimal("100")),
+                        "fee_usd": str(Decimal(str(row.get("fee_cents") or 0)) / Decimal("100")),
+                        "at": row.get("created_ts"),
+                    }
+                )
+        return out
+
     # ------------------------------------------------------------------- fee
     def fee(self, price: Decimal, size: Decimal, side: Side, market: Market) -> FeeQuote:
         del market, side  # the agent only sends crossing/taker orders
@@ -654,7 +819,7 @@ class KalshiVenue(HttpVenue):
                 price=market.tick_size,
                 size=Decimal("1"),
                 client_order_id="doctor-" + uuid.uuid4().hex,
-                order_type="GTC",
+                order_type=OrderType.GTC,
             )
             result = await self.place_order(request)
             if result.venue_order_id:

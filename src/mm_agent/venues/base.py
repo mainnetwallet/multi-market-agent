@@ -22,6 +22,7 @@ from ..domain import (
     BookSnapshot,
     CancelResult,
     DoctorReport,
+    ExecutionStatus,
     FeeQuote,
     Market,
     MarketRef,
@@ -100,6 +101,41 @@ class Venue(ABC):
 
     @abstractmethod
     def fee(self, price: Decimal, size: Decimal, side: Side, market: Market) -> FeeQuote: ...
+
+    async def amend_order(self, order_id: str, *, price: Decimal | None, size: Decimal | None) -> OrderResult:
+        """Amend a resting order. Venues without amend keep the default refusal."""
+
+        del order_id, price, size
+        return OrderResult(
+            venue=self.id,
+            client_order_id="",
+            status=ExecutionStatus.FAILED,
+            requested_size=Decimal("0"),
+            message="this venue does not support amending orders",
+        )
+
+    async def get_price_history(self, market_id: str, *, interval: str = "1d") -> list[dict[str, Any]]:
+        """Venue price history. Venues without one return an empty list."""
+
+        del market_id, interval
+        return []
+
+    async def get_funds_history(self) -> list[dict[str, Any]]:
+        """Deposits and withdrawals the venue reports. Empty when unsupported."""
+
+        return []
+
+    async def redeem_positions(self, *, market_id: str, outcome: Any = None) -> dict[str, Any]:
+        """Redeem a resolved position. Venues without a route refuse clearly."""
+
+        del market_id, outcome
+        return {"supported": False, "reason": "this venue has no redeem route"}
+
+    async def split_merge(self, *, market_id: str, action: str) -> dict[str, Any]:
+        """Split a full outcome set or merge it back. Advanced; venues only."""
+
+        del market_id, action
+        return {"supported": False, "reason": "this venue has no split/merge route"}
 
     async def start(self) -> None:  # pragma: no cover - default no-op
         return None

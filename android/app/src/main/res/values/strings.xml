@@ -1,17 +1,125 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MM Agent</string>
-    <string name="menu_server">Server URL</string>
-    <string name="menu_reload">Reload</string>
-    <string name="menu_browser">Open in browser</string>
-    <string name="menu_clear_session">Clear session</string>
-    <string name="offline_hint">Cannot reach the Render server. Check the server URL and connection.</string>
-    <string name="server_title">Connect to Render</string>
-    <string name="server_message">Enter the HTTPS URL of your deployed multi-market-agent Render service. Example: https://multi-market-agent.onrender.com</string>
-    <string name="server_hint">https://your-service.onrender.com</string>
-    <string name="connect">Connect</string>
-    <string name="cancel">Cancel</string>
-    <string name="invalid_url">Enter a valid https:// URL.</string>
-    <string name="clear_session_title">Clear session?</string>
-    <string name="clear_session_message">This removes the agent login cookie and local web storage from this phone.</string>
+
+    <!-- Tabs -->
+    <string name="tab_home">Home</string>
+    <string name="tab_markets">Markets</string>
+    <string name="tab_portfolio">Portfolio</string>
+    <string name="tab_wallet">Wallet</string>
+    <string name="tab_settings">Settings</string>
+
+    <!-- Home -->
+    <string name="home_cash_available">Cash available</string>
+    <string name="home_open_wallet">Open wallet</string>
+    <string name="home_today_pnl">Today\'s PnL</string>
+    <string name="home_pause">Pause</string>
+    <string name="home_resume">Resume</string>
+    <string name="home_cancel_all">Cancel all</string>
+    <string name="home_decisions_waiting">Decisions waiting</string>
+    <string name="home_open_proposals">Open proposals</string>
+    <string name="home_limits">Limits</string>
+    <string name="home_per_trade_cap">Per-trade cap</string>
+    <string name="home_hard_ceiling">Hard ceiling</string>
+    <string name="home_cancel_all_title">Cancel all orders?</string>
+    <string name="home_cancel_all_message">Every open order on every venue is cancelled. This reduces risk and cannot be undone.</string>
+    <string name="home_cancel_all_confirm">Cancel all</string>
+    <string name="home_cancel_all_keep">Keep them</string>
+
+    <!-- Login -->
+    <string name="login_server_url">Server URL</string>
+    <string name="login_username">Username</string>
+    <string name="login_password">Password</string>
+    <string name="login_sign_in">Sign in</string>
+    <string name="login_subtitle">Polymarket · Kalshi · Limitless</string>
+
+    <!-- Markets -->
+    <string name="markets_search">Search markets</string>
+    <string name="markets_empty">No markets yet. The scanner may still be running.</string>
+
+    <!-- Trade sheet -->
+    <string name="trade_title">Trade</string>
+    <string name="trade_side_buy">BUY</string>
+    <string name="trade_side_sell">SELL</string>
+    <string name="trade_outcome_yes">YES</string>
+    <string name="trade_outcome_no">NO</string>
+    <string name="trade_post_only">Post-only</string>
+    <string name="trade_worst_price">Worst price</string>
+    <string name="trade_price">Price (0–1)</string>
+    <string name="trade_shares">Shares</string>
+    <string name="trade_amount">Or amount</string>
+    <string name="trade_shares_label">Shares</string>
+    <string name="trade_cost">Cost</string>
+    <string name="trade_fee">Fee</string>
+    <string name="trade_max_loss">Max loss</string>
+    <string name="trade_payout">Payout if right</string>
+    <string name="trade_cancel">Cancel</string>
+
+    <!-- Portfolio -->
+    <string name="portfolio_positions">Positions</string>
+    <string name="portfolio_orders">Orders</string>
+    <string name="portfolio_rules">Rules</string>
+    <string name="portfolio_history">History</string>
+    <string name="portfolio_sell">Sell</string>
+    <string name="portfolio_sell_percent">Sell %%</string>
+    <string name="portfolio_redeem">Redeem</string>
+    <string name="portfolio_split_merge">Split / Merge</string>
+    <string name="portfolio_cancel">Cancel</string>
+    <string name="portfolio_daily_pnl">Daily PnL</string>
+    <string name="portfolio_trades">Trades</string>
+
+    <!-- Wallet -->
+    <string name="wallet_balances">Balances</string>
+    <string name="wallet_balances_note">Per venue, in the venue\'s own asset</string>
+    <string name="wallet_available">Available</string>
+    <string name="wallet_in_orders">In orders</string>
+    <string name="wallet_positions">Positions</string>
+    <string name="wallet_total">Total</string>
+    <string name="wallet_deposit">Deposit</string>
+    <string name="wallet_withdraw">Withdraw</string>
+    <string name="wallet_not_available">Not available through the API</string>
+    <string name="wallet_open_in_browser">Open in browser</string>
+
+    <!-- Withdraw -->
+    <string name="withdraw_title">Withdraw</string>
+    <string name="withdraw_amount">Amount</string>
+    <string name="withdraw_recipient">Recipient</string>
+    <string name="withdraw_recipient_note">Must already be on the allowlist</string>
+    <string name="withdraw_preview">Preview withdrawal</string>
+    <string name="withdraw_network">Network</string>
+    <string name="withdraw_token">Token</string>
+    <string name="withdraw_fee">Fee</string>
+    <string name="withdraw_eta">ETA</string>
+    <string name="withdraw_hold_window">Hold window</string>
+    <string name="withdraw_daily_left">Daily limit left</string>
+    <string name="withdraw_password">Password (never stored)</string>
+    <string name="withdraw_step_up">Step up</string>
+    <string name="withdraw_hold_to_send">Hold to send</string>
+    <string name="withdraw_send">Send</string>
+    <string name="withdraw_created">Withdrawal created</string>
+    <string name="withdraw_done">Done</string>
+    <string name="withdraw_back">Back</string>
+
+    <!-- Settings -->
+    <string name="settings_security">Security</string>
+    <string name="settings_mode">Mode</string>
+    <string name="settings_app_lock">App lock</string>
+    <string name="settings_withdrawal_daily_limit">Withdrawal daily limit</string>
+    <string name="settings_hold_window">Hold window</string>
+    <string name="settings_raise_ceiling">Raise the hard ceiling</string>
+    <string name="settings_raise_ceiling_note">Step-up required</string>
+    <string name="settings_new_cap">New per-trade cap (USD)</string>
+    <string name="settings_request_stepup">Request step-up and raise</string>
+    <string name="settings_lowering_note">Lowering a cap never needs a step-up.</string>
+    <string name="settings_funds_capability">Funds capability</string>
+    <string name="settings_session">Session</string>
+    <string name="settings_sign_out">Sign out</string>
+
+    <!-- Shared -->
+    <string name="shared_venue">Venue</string>
+    <string name="shared_yes">Yes</string>
+    <string name="shared_no">No</string>
+    <string name="shared_bids">Bids</string>
+    <string name="shared_asks">Asks</string>
+    <string name="shared_depth">Depth</string>
 </resources>

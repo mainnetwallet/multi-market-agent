@@ -25,6 +25,7 @@ from ..domain import (
     MarketStatus,
     OrderRequest,
     OrderResult,
+    OrderType,
     Outcome,
     OutcomeInfo,
     Position,
@@ -50,6 +51,16 @@ class FakeVenue(Venue):
         min_order_shares=Decimal("1"),
         min_notional_usd=Decimal("1"),
         default_tick=Decimal("0.01"),
+        order_types=(OrderType.GTC, OrderType.GTD, OrderType.FAK, OrderType.FOK),
+        post_only=True,
+        amend=True,
+        batch_orders=True,
+        approvals_needed=False,
+        collateral_asset="USD",
+        deposit=True,
+        withdraw=True,
+        redeem=True,
+        funds_history=True,
     )
 
     def __init__(self, settings: Settings | None = None) -> None:
@@ -373,3 +384,24 @@ class FakeVenue(Venue):
             rate=rate,
             source="fake taker formula",
         )
+
+    async def get_price_history(self, market_id: str, *, interval: str = "1d") -> list[dict[str, Any]]:
+        """A short synthetic series so the history route can be exercised."""
+
+        from ..domain import utcnow
+
+        now = utcnow()
+        points: list[dict[str, Any]] = []
+        for offset in range(5):
+            price = Decimal("0.43") + Decimal(offset) / Decimal("100")
+            points.append(
+                {
+                    "at": (now - timedelta(minutes=5 * (5 - offset))).isoformat(),
+                    "open": str(price),
+                    "high": str(price),
+                    "low": str(price),
+                    "close": str(price),
+                    "volume": "0",
+                }
+            )
+        return points

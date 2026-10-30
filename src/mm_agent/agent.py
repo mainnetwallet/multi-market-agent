@@ -19,6 +19,7 @@ from .domain import (
     MarketStatus,
     Mode,
     OrderRequest,
+    OrderType,
     Outcome,
     Position,
     Proposal,
@@ -76,6 +77,8 @@ class AgentService:
         self.locks = LockRegistry()
         self.execution = ExecutionGateway(settings, store, registry, books, self.locks, bus)
         self.paused = False
+        # Set by the API once the full-control layer exists; optional by design.
+        self.full_control: Any = None
         self._tasks: list[asyncio.Task[None]] = []
         self._expiry_task: asyncio.Task[None] | None = None
         self._auto_task: asyncio.Task[None] | None = None
@@ -107,7 +110,7 @@ class AgentService:
     def status(self) -> dict[str, Any]:
         venue_summary = self.registry.summary()
         active = self.registry.active_or_none
-        return {
+        payload = {
             "active_venue": active.value if active else None,
             "badge": f"{(active.value if active else 'none').upper()} | "
             f"{self.registry.mode(active).value if active else 'PAPER'}",
@@ -125,10 +128,15 @@ class AgentService:
             "today_pnl_usd": str(self.store.today_pnl()),
             "server_time_dhaka": fmt_dhaka(utcnow()),
         }
+        # The full-control layer is attached by the API once it exists; the field is
+        # optional so existing clients keep working.
+        if self.full_control is not None:
+            payload["capabilities"] = self.full_control.capabilities()
+        return payload
 
     def limits_dict(self) -> dict[str, Any]:
         lim = self.settings.limits
-        return {
+        limits: dict[str, Any] = {
             "bankroll_usd": str(lim.bankroll_usd),
             "max_trade_usd": str(self.risk.caps["max_trade_usd"]),
             "max_event_pct": str(self.risk.caps["max_event_pct"]),
@@ -143,14 +151,9 @@ class AgentService:
             "per_venue_bankroll_usd": {
                 venue.value: str(self.settings.limit_bankroll(venue)) for venue in self.registry.enabled()
             },
-            "hard_ceilings": {
-                "max_trade_usd": "2",
-                "max_event_pct": "4",
-                "max_total_exposure_pct": "15",
-                "max_daily_loss_pct": "5",
-                "max_open_positions": 8,
-            },
+            "hard_ceilings": self.risk.ceilings_dict(),
         }
+        return limits
 
     # --------------------------------------------------------------- markets
     async def get_market(self, market_id: str, venue: VenueId | None = None) -> Market:
@@ -522,7 +525,7 @@ class AgentService:
                 size=shares,
                 client_order_id=f"{proposal.venue.value[:3]}-{uuid.uuid4().hex[:22]}",
                 reduce_only=False,
-                order_type="FAK",
+                order_type=OrderType.FAK,
                 mode=proposal.mode,
             )
             result, local_id = await self.execution.submit(request, market, proposal_id=proposal.id)
