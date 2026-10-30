@@ -50,24 +50,29 @@ fun PortfolioScreen(
     onRedeem: (marketId: String, outcome: String, venue: String) -> Unit,
     onAdvanced: (marketId: String, venue: String, action: String) -> Unit,
     onAmendOrder: (orderId: String, price: String?, shares: String?) -> Unit,
+    onApprove: (id: String, done: () -> Unit) -> Unit,
+    onReject: (id: String, done: () -> Unit) -> Unit,
+    selectedTab: Int,
+    onSelectTab: (Int) -> Unit,
 ) {
-    var tab by remember { mutableIntStateOf(0) }
-    val titles = listOf("Positions", "Orders", "Rules", "History")
+    val tab = selectedTab
+    val titles = listOf("Positions", "Orders", "Proposals", "Rules", "History")
 
     Column(modifier = Modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = tab) {
             titles.forEachIndexed { index, title ->
                 Tab(
                     selected = tab == index,
-                    onClick = { tab = index },
-                    text = { Text(title) },
+                    onClick = { onSelectTab(index) },
+                    text = { Text(title, maxLines = 1, style = MaterialTheme.typography.labelMedium) },
                 )
             }
         }
         when (tab) {
             0 -> PositionsList(state, onSell, onRedeem, onAdvanced)
             1 -> OrdersList(state, onCancelOrder, onCancelAll, onAmendOrder)
-            2 -> RulesList(state)
+            2 -> ProposalsList(state, onApprove, onReject)
+            3 -> RulesList(state)
             else -> HistoryList(state)
         }
     }

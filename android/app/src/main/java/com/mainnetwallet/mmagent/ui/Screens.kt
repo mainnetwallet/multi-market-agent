@@ -13,6 +13,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import java.math.BigDecimal
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,65 +61,186 @@ import com.mainnetwallet.mmagent.data.AppUiState
 import com.mainnetwallet.mmagent.data.Format
 import org.json.JSONObject
 
-/** The five tabs: Home, Markets, Trade, Portfolio, Settings. */
+/** The five bottom tabs. Settings opens from the gear in the top bar. */
 enum class Tab(val label: String) {
     HOME("Home"),
     MARKETS("Markets"),
+    CHAT("Chat"),
     PORTFOLIO("Portfolio"),
     WALLET("Wallet"),
-    SETTINGS("Settings"),
 }
 
+/**
+ * The shell: venue badge and gear on top, snackbar above the bottom bar, five tabs.
+ * The badge opens the venue switcher.
+ */
 @Composable
 fun AppScaffold(
     state: AppUiState,
-    tab: Tab,
+    tab: Tab?,
     onTab: (Tab) -> Unit,
-    onRefresh: () -> Unit,
+    onVenueClick: () -> Unit,
+    onSettings: () -> Unit,
+    snackbar: SnackbarHostState,
     content: @Composable () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        ModeFrame(venue = state.status.venue.ifBlank { "no venue" }, mode = state.status.mode, paused = state.status.paused) {
-            Column(modifier = Modifier.weight(1f)) { content() }
-        }
-        NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-            Tab.entries.forEach { entry ->
-                NavigationBarItem(
-                    selected = tab == entry,
-                    onClick = { onTab(entry) },
-                    icon = {
-                        Icon(
-                            imageVector = when (entry) {
-                                Tab.HOME -> Icons.Filled.Home
-                                Tab.MARKETS -> Icons.Filled.ShowChart
-                                Tab.PORTFOLIO -> Icons.Filled.Warning
-                                Tab.WALLET -> Icons.Filled.AccountBalanceWallet
-                                Tab.SETTINGS -> Icons.Filled.Tune
-                            },
-                            contentDescription = entry.label,
-                        )
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = { SnackbarHost(snackbar) },
+        topBar = {
+            Column {
+                ModeFrame(
+                    venue = state.status.venue.ifBlank { "no venue" },
+                    mode = state.status.mode,
+                    paused = state.status.paused,
+                    onBadgeClick = onVenueClick,
+                    trailing = {
+                        IconButton(onClick = onSettings) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
                     },
-                    label = { Text(entry.label) },
-                )
+                ) {}
+                if (state.loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (state.unreachable) {
+                    // Last data stays on screen; the money buttons are off until it is fresh.
+                    AlertCard(
+                        text = "Server unreachable: showing the last data. Buying and withdrawing are off. ${state.error.orEmpty()}",
+                        color = Palette.Alert,
+                        marker = "⚠",
+                    )
+                }
             }
-        }
+        },
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                Tab.entries.forEach { entry ->
+                    NavigationBarItem(
+                        selected = tab == entry,
+                        onClick = { onTab(entry) },
+                        icon = {
+                            Icon(
+                                imageVector = when (entry) {
+                                    Tab.HOME -> Icons.Filled.Home
+                                    Tab.MARKETS -> Icons.Filled.ShowChart
+                                    Tab.CHAT -> Icons.Filled.ChatBubble
+                                    Tab.PORTFOLIO -> Icons.Filled.PieChart
+                                    Tab.WALLET -> Icons.Filled.AccountBalanceWallet
+                                },
+                                contentDescription = entry.label,
+                            )
+                        },
+                        label = { Text(entry.label) },
+                    )
+                }
+            }
+        },
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) { content() }
     }
 }
 
-/** Home: cash line, today's PnL, one-tap pause and cancel-all. */
+/**
+ * Pick the active venue. A venue that is not ready is shown with the server's
+ * reason and cannot be picked: the server would refuse it anyway (409).
+ */
+@Composable
+fun VenueSwitcherDialog(
+    venues: List<JSONObject>,
+    active: String,
+    onPick: (venue: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Switch venue") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (venues.isEmpty()) {
+                    Text("No venue information yet. Pull to refresh from Home.", style = MaterialTheme.typography.bodyMedium)
+                }
+                venues.filter { it.optBoolean("enabled", true) }.forEach { venue ->
+                    val id = venue.optString("venue")
+                    val isActive = id == active
+                    val ready = venue.optBoolean("ready")
+                    val mode = venue.optString("mode", "PAPER")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable(enabled = ready && !isActive) { onPick(id) }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                venue.optString("display_name").ifBlank { id.replaceFirstChar { it.uppercase() } },
+                                style = MaterialTheme.typography.titleSmall,
+                            )
+                            Text(
+                                when {
+                                    isActive -> "Active · $mode"
+                                    ready -> "Ready · $mode"
+                                    else -> "Not ready: ${venue.optString("reason").ifBlank { "the server gave no reason" }}"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (ready || isActive) MaterialTheme.colorScheme.onSurfaceVariant else Palette.Alert,
+                            )
+                        }
+                        if (isActive) Text("✓", style = MaterialTheme.typography.titleMedium, color = Palette.Long)
+                    }
+                }
+                Text(
+                    "Positions and orders on the other venues stay alive. LIVE is set on the server, not here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+/**
+ * Home: money, risk and decisions at a glance. Pause and cancel-all reduce risk,
+ * so they are a tap plus a normal dialog, never hold-to-confirm.
+ */
 @Composable
 fun HomeScreen(
     state: AppUiState,
     onOpenWallet: () -> Unit,
     onPauseToggle: () -> Unit,
     onCancelAll: () -> Unit,
+    onOpenMarkets: () -> Unit,
+    onOpenChat: () -> Unit,
     onOpenProposals: () -> Unit,
+    onOpenPositions: () -> Unit,
+    onApprove: (id: String, done: () -> Unit) -> Unit,
+    onReject: (id: String, done: () -> Unit) -> Unit,
 ) {
     var confirmCancelAll by remember { mutableStateOf(false) }
+    val pending = pendingProposals(state.proposals)
+    val live = state.status.mode.equals("LIVE", ignoreCase = true)
+    val pnl = state.status.todayPnlUsd.toBigDecimalOrNull() ?: BigDecimal.ZERO
+    val pnlColor = when {
+        pnl.signum() > 0 -> Palette.Long
+        pnl.signum() < 0 -> Palette.Short
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val pnlArrow = when {
+        pnl.signum() > 0 -> "▲"
+        pnl.signum() < 0 -> "▼"
+        else -> "–"
+    }
+    val unknown = state.status.counts["unknown_orders"] ?: 0
+    val topPositions = state.positions
+        .sortedByDescending { it.optString("unrealized_pnl").toBigDecimalOrNull()?.abs() ?: BigDecimal.ZERO }
+        .take(3)
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+        contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
@@ -121,86 +254,112 @@ fun HomeScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = Format.withAsset(state.status.availableUsd, state.status.collateralAsset),
-                            style = MaterialTheme.typography.headlineSmall,
+                            style = MaterialTheme.typography.headlineMedium,
                         )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            "Open wallet",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onOpenWallet() }
-                                .padding(6.dp),
-                        )
+                        Spacer(Modifier.weight(1f))
+                        LinkText("Wallet", onOpenWallet)
                     }
                     Spacer(Modifier.height(6.dp))
+                    // Sign, arrow and colour together: never colour alone.
                     ValueRow(
                         label = "Today's PnL",
-                        value = Format.signedMoney(state.status.todayPnlUsd),
-                        valueColor = if (state.status.todayPnlUsd.toBigDecimalOrNull()?.signum() ?: 0 >= 0) Palette.Long else Palette.Short,
+                        value = "$pnlArrow ${Format.signedMoney(state.status.todayPnlUsd)}",
+                        valueColor = pnlColor,
+                        emphasise = true,
                     )
                 }
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                // Pause and cancel-all reduce risk: one tap plus a normal dialog.
-                ConfirmButton(
-                    label = if (state.status.paused) "Resume" else "Pause",
-                    enabled = true,
-                    onClick = onPauseToggle,
-                    modifier = Modifier.weight(1f),
+            EvenRow {
+                StatTile("Positions", "${state.positions.size}", onClick = onOpenPositions)
+                StatTile("Open orders", "${state.orders.size}", onClick = onOpenPositions)
+                StatTile(
+                    "To decide",
+                    "${pending.size}",
+                    valueColor = if (pending.isNotEmpty()) Palette.Alert else MaterialTheme.colorScheme.onSurface,
+                    onClick = onOpenProposals,
                 )
-                ConfirmButton(
-                    label = "Cancel all",
-                    enabled = true,
-                    danger = true,
-                    onClick = { confirmCancelAll = true },
-                    modifier = Modifier.weight(1f),
+                StatTile(
+                    "UNKNOWN",
+                    "$unknown",
+                    valueColor = if (unknown > 0) Palette.Danger else MaterialTheme.colorScheme.onSurface,
                 )
             }
         }
         if (!state.status.unitGuardOk) {
             item {
-                ErrorNote("Trading is halted: ${state.status.unitGuardReason}")
+                AlertCard("Trading is halted: ${state.status.unitGuardReason}", Palette.Danger, "⛔")
+            }
+        }
+        if (unknown > 0) {
+            item {
+                AlertCard(
+                    "$unknown order(s) are UNKNOWN. They are never resent and block their market until reconciled; check the venue directly.",
+                    Palette.Danger,
+                )
+            }
+        }
+        if (state.status.paused) {
+            item { AlertCard("The agent is paused: no new entries until you resume.", Palette.Alert, "⏸") }
+        }
+        if (pending.isNotEmpty()) {
+            item { SectionHeader("Needs your decision", "${pending.size}") }
+            items(pending.take(2), key = { "p" + it.optString("id") }) { proposal ->
+                ProposalCard(proposal, live, state.online, onApprove, onReject)
+            }
+            if (pending.size > 2) {
+                item { LinkText("See all ${pending.size} proposals", onOpenProposals) }
             }
         }
         item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    SectionHeader("Decisions waiting")
-                    Text(
-                        "Proposals: ${state.status.counts["pending_proposals"] ?: 0} · " +
-                            "UNKNOWN orders: ${state.status.counts["unknown_orders"] ?: 0}",
-                        style = MaterialTheme.typography.bodyMedium,
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionHeader("Quick actions")
+                EvenRow {
+                    ConfirmButton(
+                        label = if (state.status.paused) "Resume" else "Pause",
+                        enabled = true,
+                        onClick = onPauseToggle,
+                        modifier = Modifier.weight(1f),
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Open proposals",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onOpenProposals() }
-                            .padding(6.dp),
+                    ConfirmButton(
+                        label = "Cancel all",
+                        enabled = true,
+                        danger = true,
+                        onClick = { confirmCancelAll = true },
+                        modifier = Modifier.weight(1f),
                     )
+                }
+                EvenRow {
+                    OutlinedButton(onClick = onOpenMarkets, modifier = Modifier.weight(1f)) { Text("Browse markets") }
+                    OutlinedButton(onClick = onOpenChat, modifier = Modifier.weight(1f)) { Text("Ask the agent") }
                 }
             }
         }
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    SectionHeader("Limits")
-                    ValueRow("Per-trade cap", Format.money(state.status.maxTradeUsd))
-                    ValueRow("Hard ceiling", Format.money(state.status.hardCeilingMaxTrade))
+        if (state.pnlDays.isNotEmpty()) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        SectionHeader("Daily PnL")
+                        PnlChart(state.pnlDays)
+                    }
                 }
+            }
+        }
+        if (topPositions.isNotEmpty()) {
+            item { SectionHeader("Top positions", "by open PnL") }
+            items(topPositions, key = { "t" + it.optString("venue") + it.optString("market_id") + it.optString("outcome") }) { position ->
+                val upnl = position.optString("unrealized_pnl")
+                RowCard(
+                    title = "${position.optString("outcome")} · ${Format.shares(position.optString("shares"))} shares",
+                    subtitle = position.optString("market_title").ifBlank { position.optString("market_id") },
+                    detail = "avg ${Format.cents(position.optString("avg_price"))} · open PnL ${Format.signedMoney(upnl)}",
+                    accent = if (position.optString("outcome") == "YES") Palette.Long else Palette.Short,
+                    onClick = onOpenPositions,
+                )
             }
         }
     }

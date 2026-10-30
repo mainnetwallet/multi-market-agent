@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,35 +44,47 @@ fun ModeFrame(
     mode: String,
     paused: Boolean,
     modifier: Modifier = Modifier,
+    onBadgeClick: (() -> Unit)? = null,
+    trailing: @Composable (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val isLive = mode.equals("LIVE", ignoreCase = true)
     val badgeColor = if (isLive) Palette.Danger else Palette.Long
     Column(modifier = modifier) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            modifier = Modifier
+                .statusBarsPadding()
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Tap the badge to switch venue. The mode text stays in the badge, so it is
+            // never colour-only and never ambiguous.
             Text(
-                text = "${venue.uppercase()} | $mode",
+                text = "${venue.uppercase()} | $mode" + if (onBadgeClick != null) "  ▾" else "",
                 color = Color.White,
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
                     .background(badgeColor)
+                    .then(if (onBadgeClick != null) Modifier.clickable { onBadgeClick() } else Modifier)
                     .padding(horizontal = 12.dp, vertical = 6.dp),
             )
-            if (paused) {
-                Text(
-                    text = "PAUSED",
-                    color = Palette.Alert,
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .border(1.dp, Palette.Alert, RoundedCornerShape(999.dp))
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (paused) {
+                    Text(
+                        text = "PAUSED",
+                        color = Palette.Alert,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .border(1.dp, Palette.Alert, RoundedCornerShape(999.dp))
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                trailing?.invoke()
             }
         }
         content()
