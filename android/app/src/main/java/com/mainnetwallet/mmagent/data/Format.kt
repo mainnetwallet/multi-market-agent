@@ -99,6 +99,20 @@ object Format {
         return s.stripTrailingZeros().toPlainString()
     }
 
+    /** "251.8M" / "12.3k" / "340" — a contract count (not money), so no dollar sign. */
+    fun count(value: String?): String {
+        val v = value?.toBigDecimalOrNull() ?: return "—"
+        val billion = BigDecimal(1_000_000_000)
+        val million = BigDecimal(1_000_000)
+        val thousand = BigDecimal(1_000)
+        return when {
+            v >= billion -> v.divide(billion, 1, RoundingMode.HALF_UP).toPlainString() + "B"
+            v >= million -> v.divide(million, 1, RoundingMode.HALF_UP).toPlainString() + "M"
+            v >= thousand -> v.divide(thousand, 1, RoundingMode.HALF_UP).toPlainString() + "k"
+            else -> v.setScale(0, RoundingMode.HALF_UP).toPlainString()
+        }
+    }
+
     /** "30 Oct 14:05" in Dhaka time. */
     fun dhaka(isoTimestamp: String?): String {
         if (isoTimestamp.isNullOrBlank()) return "—"

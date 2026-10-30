@@ -100,4 +100,13 @@ class FormatTest {
         assertEquals(null, Format.move("0.001"))
         assertEquals(null, Format.move(null))
     }
+
+    @Test
+    fun countScalesToMillionsWithoutADollarSign() {
+        assertEquals("251.8M", Format.count("251775400"))
+        assertEquals("12.3k", Format.count("12345"))
+        assertEquals("340", Format.count("340.4"))
+        assertEquals("1.2B", Format.count("1200000000"))
+        assertEquals("—", Format.count(null))
+    }
 }

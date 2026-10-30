@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -113,6 +114,36 @@ private fun tabsFor(venue: String): List<Pair<String, String>> = when (venue) {
 /** org.json turns a JSON null into the string "null"; the server sends null for missing values. */
 private fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(key)
 
+/**
+ * Pages already fetched per venue, tab and search, so going Trending -> New -> Trending shows the
+ * old list at once instead of a spinner. A page older than [FRESH_MS] is shown and then refreshed
+ * quietly. Held in memory only; nothing here is private or money data.
+ */
+private object DiscoverCache {
+    class Entry(val items: List<JSONObject>, val nextOffset: Int?, val note: String, val at: Long)
+
+    const val FRESH_MS = 60_000L
+    private const val MAX_ENTRIES = 40
+    private val map = LinkedHashMap<String, Entry>()
+
+    fun key(venue: String, tab: String, query: String): String = "$venue|$tab|$query"
+
+    @Synchronized
+    fun get(key: String): Entry? = map[key]
+
+    @Synchronized
+    fun put(key: String, entry: Entry) {
+        map.remove(key)
+        map[key] = entry
+        while (map.size > MAX_ENTRIES) map.remove(map.keys.first())
+    }
+
+    @Synchronized
+    fun drop(key: String) {
+        map.remove(key)
+    }
+}
+
 /** A card shows at most this many outcomes of a multi-market event. */
 private const val CARD_ROWS = 3
 
@@ -155,6 +186,12 @@ fun DiscoverScreen(
             note = body.optString("note")
             nextOffset = if (body.isNull("next_offset")) null else body.optInt("next_offset")
             error = null
+            val cacheKey = DiscoverCache.key(venue, tabId, text)
+            val firstFetched = if (offset == 0) System.currentTimeMillis() else DiscoverCache.get(cacheKey)?.at
+            DiscoverCache.put(
+                cacheKey,
+                DiscoverCache.Entry(items, nextOffset, note, firstFetched ?: System.currentTimeMillis()),
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -167,13 +204,27 @@ fun DiscoverScreen(
     LaunchedEffect(tab, query, reloadKey) {
         generation += 1
         val gen = generation
-        items = emptyList()
-        nextOffset = null
-        note = ""
+        val cached = DiscoverCache.get(DiscoverCache.key(venue, tab, query.trim()))
         error = null
-        if (query.isNotBlank()) delay(400)
+        if (cached != null) {
+            items = cached.items
+            nextOffset = cached.nextOffset
+            note = cached.note
+            loading = false
+            if (System.currentTimeMillis() - cached.at < DiscoverCache.FRESH_MS) return@LaunchedEffect
+            // Older than a minute: keep showing it and replace it when the fresh page arrives.
+        } else {
+            items = emptyList()
+            nextOffset = null
+            note = ""
+            if (query.isNotBlank()) delay(400)
+        }
         load(0, gen, tab, query.trim())
     }
+
+    // A different tab or search starts at the top of its own list.
+    val listState = rememberLazyListState()
+    LaunchedEffect(tab, query) { listState.scrollToItem(0) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
@@ -189,7 +240,12 @@ fun DiscoverScreen(
         ) {
             items(tabs, key = { it.first }) { (id, label) ->
                 DiscoverTab(label, selected = tab == id && query.isBlank(), onClick = {
-                    if (tab == id) reloadKey += 1 else tab = id
+                    if (tab == id) {
+                        DiscoverCache.drop(DiscoverCache.key(venue, id, ""))
+                        reloadKey += 1
+                    } else {
+                        tab = id
+                    }
                     query = ""
                 })
             }
@@ -198,6 +254,7 @@ fun DiscoverScreen(
             Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
         )
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -210,7 +267,10 @@ fun DiscoverScreen(
                     error != null -> Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(error ?: "", style = MaterialTheme.typography.bodyMedium, color = Palette.Alert)
                         Spacer(Modifier.height(8.dp))
-                        LinkText("Retry", onClick = { reloadKey += 1 })
+                        LinkText("Retry", onClick = {
+                            DiscoverCache.drop(DiscoverCache.key(venue, tab, query.trim()))
+                            reloadKey += 1
+                        })
                     }
                     loading && items.isEmpty() -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
@@ -269,7 +329,7 @@ private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Un
     val first = markets.first()
     val footer = buildList {
         if (event.text("volume_unit") == "contracts") {
-            add(Format.compact(event.optString("volume")) + " contracts")
+            add(Format.count(event.optString("volume")) + " contracts")
         } else {
             add(Format.volume(event.optString("volume")) + " Vol")
         }
