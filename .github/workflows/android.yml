@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      ANDROID_BASE_URL: ${{ vars.ANDROID_BASE_URL }}
+      ANDROID_BASE_URL: ${{ vars.ANDROID_BASE_URL || 'https://multi-market-agent.onrender.com' }}
     steps:
       - uses: actions/checkout@v4
 
