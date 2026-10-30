@@ -32,9 +32,14 @@ jobs:
       - name: Install SDK packages
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          sdkmanager --version
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found" >&2
+            exit 1
+          fi
+          "$SDKMANAGER" --version
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
