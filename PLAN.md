@@ -79,16 +79,40 @@ the build record; tests/quality gate status is at the bottom.
 - [x] Final secret scan of tree and git history.
 - [x] Private GitHub repo `mainnetwallet/multi-market-agent` created and `main` pushed using the operator's existing authenticated GitHub CLI keyring; no token was written to the repo or remote URL.
 
+## Post-build audit corrections
+
+The operator asked for a second audit. These concrete gaps were closed:
+
+- [x] Normalized `venues`, `events`, `outcomes` tables and migration, in addition to the JSON market snapshot.
+- [x] Per-venue bankroll overrides (`BANKROLL_<VENUE>`), used by sizing, daily-loss pause and status.
+- [x] Background book-feed loop with freshness/error counters; `/status` and the PWA show it.
+- [x] Startup unit guard now samples every ready venue, not just the active one.
+- [x] Reconciliation checks open orders **and** terminal trade history (Polymarket/Kalshi/Limitless/Fake adapters).
+- [x] Approval refuses when a market has an UNKNOWN/SUBMITTING order.
+- [x] Missing fee info is an explicit veto at analysis and approval.
+- [x] Telegram alerts for daily-loss cap, venue auth failure and venue unavailability.
+- [x] Bengali/Banglish summaries on server-side chat replies.
+- [x] Brier calibration from resolved markets, refreshed by the scanner for held positions.
+- [x] Kalshi order prices snap to the exact per-price tick band.
+- [x] Current Limitless fee docs wired: collateral 5% × (1−price), legacy curves approximated.
+- [x] `scripts/bootstrap_env.py` generates a private local `.env` with fresh admin/session secrets.
+- [x] Tests for normalized tables, per-venue bankroll, book feed, fee-missing veto, UNKNOWN approval block, trade-history reconciliation, Bengali summary and Brier calibration.
+- [x] Local PAPER instance started; login, HEAD `/health`, `/status`, markets and PWA verified over HTTP.
+
+Remaining honest gaps are listed in README and BUILD_REPORT; the most important are
+no live credentials/order proof, Kalshi sub-cent tick bands, Limitless fee
+estimate, resting take-profit exits, and native venue WebSockets.
+
 ## Quality gate
 
-Last run 2026-10-30:
+Last run 2026-10-30 after the audit fixes:
 
 - `ruff check` — pass
 - `ruff format --check` — pass
 - `mypy src` strict — pass
-- `pytest -q` — pass
+- `pytest` — 48 passed
 - `alembic upgrade head` + `alembic check` — pass
-- Public doctor — Polymarket OK / Limitless OK / Kalshi DEGRADED (no credentials; public + market read pass)
+- Public doctor — Polymarket OK / Kalshi OK / Limitless OK (auth/order checks skipped, no credentials)
 - Real order sent — **none**
 
 ## Deliberate v1 limitations

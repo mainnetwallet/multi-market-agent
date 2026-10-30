@@ -6,7 +6,7 @@ import asyncio
 from collections import Counter
 
 from .config import Settings
-from .domain import FeedDiag, FeedVenueDiag, MarketStatus, VenueId, utcnow
+from .domain import FeedDiag, FeedVenueDiag, MarketRef, MarketStatus, VenueId, utcnow
 from .events import EventBus
 from .store import Store
 from .util import get_logger
@@ -66,12 +66,26 @@ class Scanner:
                 await self._scan_venue(venue)
 
         await asyncio.gather(*(scan(v) for v in venues))
+        await self._refresh_known_markets()
         await self.bus.publish(
             "scanner.tick",
             feed_diag=self.feed_diag().model_dump(mode="json"),
             markets=self.store.market_count(),
         )
         return self.feed_diag()
+
+    async def _refresh_known_markets(self) -> None:
+        """Refresh markets with open positions so resolution/calibration is seen."""
+
+        pairs = {(position.venue, position.market_id) for position in self.store.list_positions()}
+        for venue, market_id in pairs:
+            if not self.registry.is_ready(venue):
+                continue
+            try:
+                market = await self.registry.get(venue).get_market(MarketRef(venue=venue, market_id=market_id))
+                self.store.upsert_market(market)
+            except Exception as exc:
+                logger.warning("market_refresh_failed", venue=venue.value, market=market_id, error=str(exc)[:120])
 
     async def _scan_venue(self, venue: VenueId) -> None:
         diag = self.diag.setdefault(venue, FeedVenueDiag())

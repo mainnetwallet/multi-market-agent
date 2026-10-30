@@ -34,6 +34,7 @@ from ..domain import (
     VenueCaps,
     VenueId,
     VenueOrder,
+    VenueTrade,
     normalize_probability,
     parse_iso,
     quantize_price,
@@ -158,6 +159,13 @@ class KalshiVenue(HttpVenue):
             OutcomeInfo(outcome=Outcome.NO, native_id=ticker, label="No"),
         )
         end = parse_iso(raw.get("close_time") or raw.get("expiration_time"))
+        result_raw = str(raw.get("result") or "").strip().lower()
+        resolution = None
+        if status in {MarketStatus.CLOSED, MarketStatus.RESOLVED}:
+            if result_raw == "yes":
+                resolution = Outcome.YES
+            elif result_raw == "no":
+                resolution = Outcome.NO
         return Market(
             venue=self.id,
             native_id=ticker,
@@ -177,6 +185,7 @@ class KalshiVenue(HttpVenue):
             },
             url=f"https://kalshi.com/markets/{ticker.lower()}",
             raw_updated_at=parse_iso(raw.get("updated_time")),
+            resolution_outcome=resolution,
         )
 
     @staticmethod
@@ -192,6 +201,21 @@ class KalshiVenue(HttpVenue):
                 return Decimal(str(band.get("step")))
         ranges = [Decimal(str(b.get("step"))) for b in ranges if b.get("step")]
         return min(ranges) if ranges else CENT
+
+    @staticmethod
+    def _tick_for_price(market: Market, price: Decimal) -> Decimal:
+        """Use the exact per-price tick band before sending an order."""
+
+        for band in market.fee_info.get("price_ranges") or []:
+            try:
+                start = Decimal(str(band.get("start")))
+                end = Decimal(str(band.get("end")))
+                step = Decimal(str(band.get("step")))
+            except Exception:
+                continue
+            if start <= price < end or price == end == ONE:
+                return step if step > 0 else market.tick_size
+        return market.tick_size
 
     async def get_market(self, ref: MarketRef) -> Market:
         data = await self.get_json(self.base_url + f"/markets/{ref.market_id}")
@@ -342,6 +366,51 @@ class KalshiVenue(HttpVenue):
             )
         return out
 
+    async def get_recent_trades(self, ref: MarketRef) -> list[VenueTrade]:
+        data = await self._signed("GET", "/portfolio/fills", params={"ticker": ref.market_id, "limit": 200})
+        rows = data.get("fills", [])
+        out: list[VenueTrade] = []
+        for row in rows:
+            ticker = row.get("ticker") or row.get("market_ticker")
+            if ticker != ref.market_id:
+                continue
+            side_raw = str(row.get("side") or row.get("outcome_side") or "yes").lower()
+            action = str(row.get("action") or row.get("book_side") or "buy").lower()
+            if side_raw in {"bid", "ask"}:
+                outcome = Outcome.YES
+                side = Side.BUY if side_raw == "bid" else Side.SELL
+            else:
+                outcome = Outcome.YES if side_raw in {"yes", "buy"} else Outcome.NO
+                side = Side.BUY if action in {"buy", "bid"} else Side.SELL
+            price_raw = row.get("yes_price_dollars") or row.get("price_dollars") or row.get("price") or "0"
+            price = to_decimal(price_raw)
+            if price > 1:
+                price /= Decimal("100")
+            size = to_decimal(row.get("count_fp") or row.get("count") or row.get("fill_count") or "0")
+            if size <= 0:
+                continue
+            fee = to_decimal(row.get("fee_cost_dollars") or 0)
+            if row.get("fee_cost_dollars") is None and row.get("fee_cost") is not None:
+                fee = to_decimal(row.get("fee_cost")) / Decimal("100")
+            trade_id = str(row.get("fill_id") or row.get("trade_id") or row.get("id") or f"{ticker}-{len(out)}")
+            self._order_markets[str(row.get("order_id") or "")] = ticker
+            out.append(
+                VenueTrade(
+                    venue=self.id,
+                    market_id=ticker,
+                    trade_id=trade_id,
+                    order_id=str(row.get("order_id") or "") or None,
+                    client_order_id=row.get("client_order_id"),
+                    outcome=outcome,
+                    side=side,
+                    price=price,
+                    size=size,
+                    fee_usd=fee,
+                    created_at=parse_iso(row.get("created_time") or row.get("ts")),
+                )
+            )
+        return out
+
     # ---------------------------------------------------------------- trading
     async def place_order(self, req: OrderRequest) -> OrderResult:
         self._ensure_signer()
@@ -353,7 +422,7 @@ class KalshiVenue(HttpVenue):
             # V2 orders quote the YES book only: buying NO == selling YES at 1-p.
             venue_price = ONE - req.price
             venue_side = "ask" if req.side is Side.BUY else "bid"
-        venue_price = quantize_price(venue_price, market.tick_size)
+        venue_price = quantize_price(venue_price, self._tick_for_price(market, venue_price))
         if not (ZERO < venue_price < ONE):
             return OrderResult(
                 venue=self.id,

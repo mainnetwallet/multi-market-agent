@@ -35,6 +35,7 @@ from ..domain import (
     VenueCaps,
     VenueId,
     VenueOrder,
+    VenueTrade,
     normalize_probability,
     parse_iso,
     quantize_price,
@@ -170,6 +171,16 @@ class PolymarketVenue(HttpVenue):
         condition_id = str(raw.get("conditionId") or "")
         if condition_id:
             self._condition_index[market_id] = condition_id
+        resolution = None
+        if closed:
+            prices = self._json_list(raw.get("outcomePrices"))
+            try:
+                if len(prices) >= 2 and Decimal(str(prices[0])) >= Decimal("0.999"):
+                    resolution = Outcome.YES
+                elif len(prices) >= 2 and Decimal(str(prices[1])) >= Decimal("0.999"):
+                    resolution = Outcome.NO
+            except Exception:
+                resolution = None
         return Market(
             venue=self.id,
             native_id=market_id,
@@ -185,6 +196,7 @@ class PolymarketVenue(HttpVenue):
             fee_info=fee_info,
             url=f"https://polymarket.com/event/{event.get('slug') or raw.get('slug') or market_id}",
             raw_updated_at=parse_iso(raw.get("updatedAt")),
+            resolution_outcome=resolution,
         )
 
     def _remember(self, market: Market) -> None:
@@ -305,6 +317,31 @@ class PolymarketVenue(HttpVenue):
                     filled=order.size_matched,
                     status=str(order.status),
                     created_at=order.created_at,
+                )
+            )
+        return out
+
+    async def get_recent_trades(self, ref: MarketRef) -> list[VenueTrade]:
+        client = await self._secure()
+        market = await self.get_market(ref)
+        asset_id = market.outcome(ref.outcome or Outcome.YES).native_id
+        page = await client.list_account_trades(asset_id=asset_id).first_page()
+        mapping = self._asset_index.get(asset_id)
+        out: list[VenueTrade] = []
+        for trade in page.items:
+            if str(trade.asset_id) != asset_id:
+                continue
+            out.append(
+                VenueTrade(
+                    venue=self.id,
+                    market_id=mapping[0] if mapping else ref.market_id,
+                    trade_id=str(trade.id),
+                    order_id=str(trade.taker_order_id) if trade.taker_order_id else None,
+                    outcome=mapping[1] if mapping else ref.outcome,
+                    side=Side(trade.side),
+                    price=trade.price,
+                    size=trade.size,
+                    created_at=trade.matched_at,
                 )
             )
         return out

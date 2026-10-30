@@ -44,20 +44,96 @@ class ChatService:
         text = text.strip()
         if not text:
             return {"reply": "Send /help for commands.", "data": {}}
+        lang = self._language(text)
         if text.startswith("/"):
             try:
-                return await self._slash(text, actor=actor, source=source)
+                result = await self._slash(text, actor=actor, source=source)
+                return self._with_local_summary(result, lang)
             except ChatError as exc:
                 body = exc.message
                 if exc.options:
                     body += "\n" + "\n".join(f"• {x}" for x in exc.options[:8])
-                return {"reply": body, "data": {"error": True}}
+                return self._with_local_summary({"reply": body, "data": {"error": True}}, lang, error=True)
             except Exception as exc:
-                return {
-                    "reply": f"Command failed safely: {type(exc).__name__}: {str(exc)[:200]}",
-                    "data": {"error": True},
-                }
+                return self._with_local_summary(
+                    {
+                        "reply": f"Command failed safely: {type(exc).__name__}: {str(exc)[:200]}",
+                        "data": {"error": True},
+                    },
+                    lang,
+                    error=True,
+                )
         return await self._llm_chat(text, actor=actor, source=source)
+
+    @staticmethod
+    def _language(text: str) -> str:
+        if BENGALI_RE.search(text):
+            return "bn"
+        tokens = set(text.lower().split())
+        banglish = {
+            "ki",
+            "kemon",
+            "koro",
+            "korbo",
+            "dao",
+            "dekho",
+            "koto",
+            "kine",
+            "becha",
+            "bondho",
+            "cholche",
+            "ache",
+            "nai",
+            "bhalo",
+            "taka",
+        }
+        if tokens & banglish:
+            return "banglish"
+        return "en"
+
+    def _with_local_summary(self, result: dict[str, Any], lang: str, *, error: bool = False) -> dict[str, Any]:
+        if lang == "en":
+            return result
+        data = result.get("data") or {}
+        if error:
+            summary = (
+                "কমান্ডটি নিরাপদে ব্যর্থ হয়েছে; বিস্তারিত ইংরেজি বার্তায় আছে।"
+                if lang == "bn"
+                else "Command safely failed; details are in the English text above."
+            )
+        elif "badge" in data:
+            counts = data.get("counts") or {}
+            if lang == "bn":
+                summary = (
+                    f"ভেন্যু {data.get('badge')} · পজিশন {counts.get('open_positions', 0)} · "
+                    f"পেন্ডিং {counts.get('pending_proposals', 0)} · UNKNOWN {counts.get('unknown_orders', 0)} · "
+                    f"সময় {data.get('server_time_dhaka', '')}।"
+                )
+            else:
+                summary = (
+                    f"Venue {data.get('badge')} · positions {counts.get('open_positions', 0)} · "
+                    f"pending {counts.get('pending_proposals', 0)} · UNKNOWN {counts.get('unknown_orders', 0)}."
+                )
+        elif "status" in data:
+            if lang == "bn":
+                summary = (
+                    f"অর্ডার স্ট্যাটাস: {data.get('status')} (ভেন্যু {data.get('venue', '')}), "
+                    f"ফিল {data.get('filled', '0')}, বাকি {data.get('remaining', '0')}।"
+                )
+            else:
+                summary = (
+                    f"Order status: {data.get('status')} on {data.get('venue', '')}, "
+                    f"filled {data.get('filled', '0')}, remaining {data.get('remaining', '0')}."
+                )
+        elif data.get("ok"):
+            summary = "কমান্ড সফল হয়েছে।" if lang == "bn" else "Command completed."
+        elif "ok" in data:
+            summary = "কমান্ড সফল হয়নি; বিস্তারিত উপরে।" if lang == "bn" else "Command did not complete; see above."
+        else:
+            summary = "বিস্তারিত উপরের বার্তায়।" if lang == "bn" else "See the English details above."
+        prefix = "[বাংলা সারসংক্ষেপ]" if lang == "bn" else "[Banglish]"
+        result["reply"] = f"{result.get('reply', '')}\n\n{prefix} {summary}"
+        return result
 
     # ------------------------------------------------------------------ slash
     async def _slash(self, text: str, *, actor: str, source: str) -> dict[str, Any]:
@@ -118,6 +194,8 @@ class ChatService:
         lines = [
             f"Venue: {status['badge']}   Paused: {status['paused']}",
             f"Unit check: {'OK' if status['unit_guard']['ok'] else 'HALTED — ' + status['unit_guard']['reason']}",
+            f"Book feed: {status.get('book_feed', {}).get('updates', 0)} updates · "
+            f"{status.get('book_feed', {}).get('errors', 0)} errors",
             f"Time: {status['server_time_dhaka']} (Asia/Dhaka)",
             f"Markets: {status['counts']['markets']}  Positions: {status['counts']['open_positions']}",
             f"Pending proposals: {status['counts']['pending_proposals']}  "

@@ -31,6 +31,7 @@ from ..domain import (
     VenueCaps,
     VenueId,
     VenueOrder,
+    VenueTrade,
 )
 
 T = TypeVar("T")
@@ -81,6 +82,12 @@ class Venue(ABC):
 
     @abstractmethod
     async def get_open_orders(self, ref: MarketRef | None = None) -> list[VenueOrder]: ...
+
+    async def get_recent_trades(self, ref: MarketRef) -> list[VenueTrade]:
+        """Terminal fills for reconciliation. Adapters override when supported."""
+
+        del ref
+        return []
 
     @abstractmethod
     async def place_order(self, req: OrderRequest) -> OrderResult: ...

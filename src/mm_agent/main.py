@@ -94,16 +94,19 @@ def build_runtime(settings: Settings, *, bind_database: bool = True) -> Runtime:
             logger.exception("doctor_refresh_failed")
         try:
             guard.check_math()
-            active = registry.active_or_none
-            if active is not None:
-                adapter = registry.get(active)
+            checked = 0
+            for venue in registry.enabled():
+                if not registry.is_ready(venue):
+                    continue
+                adapter = registry.get(venue)
                 markets = await adapter.list_markets(MarketQuery(limit=1))
-                if markets.items:
-                    await guard.run(adapter, markets.items[0])
-                else:
-                    guard.halt("no market available for startup unit check")
-            else:
-                guard.halt("no ready venue")
+                if not markets.items:
+                    guard.halt(f"{venue.value}: no market available for startup unit check")
+                    break
+                await guard.run(adapter, markets.items[0])
+                checked += 1
+            if checked == 0:
+                guard.halt("no ready venue for startup unit check")
         except Exception as exc:
             guard.halt(f"{type(exc).__name__}: {str(exc)[:200]}")
             await bus.publish("feed.down", reason=guard.reason)

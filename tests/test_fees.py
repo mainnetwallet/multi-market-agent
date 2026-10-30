@@ -30,6 +30,27 @@ def test_kalshi_fee_rounds_up_to_cent(tmp_path) -> None:
     assert sell.fee_usd == Decimal("0.06")  # marketable exits are taker too
 
 
+def test_limitless_collateral_fee_matches_documented_formula(tmp_path) -> None:
+    from mm_agent.venues.limitless import LimitlessVenue
+
+    venue = LimitlessVenue(make_settings(tmp_path))
+    m = market().model_copy(
+        update={
+            "venue": VenueId.LIMITLESS,
+            "fee_info": {
+                "fee_enabled": True,
+                "fee_model": "limitless_collateral",
+                "fee_module_type": "COLLATERAL",
+            },
+        }
+    )
+    quote = venue.fee(Decimal("0.40"), Decimal("100"), Side.BUY, m)
+    # 100 shares x $0.40 x 5% x (1-0.40) = $1.20
+    assert quote.fee_usd == Decimal("1.200000")
+    sell = venue.fee(Decimal("0.40"), Decimal("100"), Side.SELL, m)
+    assert sell.fee_usd == quote.fee_usd
+
+
 def test_fake_fee_is_charged_both_sides(tmp_path) -> None:
     venue = FakeVenue(make_settings(tmp_path))
     m = market().model_copy(update={"venue": VenueId.FAKE, "fee_info": {"taker_rate": "0.05"}})

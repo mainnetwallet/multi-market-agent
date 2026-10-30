@@ -9,7 +9,7 @@ from datetime import timedelta
 from decimal import ROUND_CEILING, Decimal
 from typing import Any
 
-from .books import BookCache, UnitGuard
+from .books import BookCache, BookFeed, UnitGuard
 from .config import Settings
 from .domain import (
     BookSnapshot,
@@ -69,6 +69,7 @@ class AgentService:
         self.scanner = scanner
         self.books = books
         self.unit_guard = unit_guard
+        self.book_feed = BookFeed(settings, registry, store, books, bus)
         self.research_service = research or ResearchService(settings)
         self.strategy = StrategyEngine(settings)
         self.risk = RiskEngine(settings)
@@ -87,12 +88,14 @@ class AgentService:
         if isinstance(overrides, dict):
             self.risk.restore({str(k): str(v) for k, v in overrides.items()})
         self._stop.clear()
+        self.book_feed.start()
         self._expiry_task = asyncio.create_task(self._expiry_loop(), name="proposal-expiry")
         if self.settings.auto_propose:
             self._auto_task = asyncio.create_task(self._auto_loop(), name="auto-propose")
 
     async def stop(self) -> None:
         self._stop.set()
+        await self.book_feed.stop()
         for task in (self._expiry_task, self._auto_task):
             if task:
                 task.cancel()
@@ -111,6 +114,7 @@ class AgentService:
             "paused": self.paused,
             "unit_guard": {"ok": self.unit_guard.ok, "reason": self.unit_guard.reason},
             "feed_diag": self.scanner.feed_diag().model_dump(mode="json"),
+            "book_feed": self.book_feed.status(),
             "venues": venue_summary["venues"],
             "limits": self.limits_dict(),
             "counts": self.store.status_counts(),
@@ -132,6 +136,9 @@ class AgentService:
             "min_depth_multiple": str(lim.min_depth_multiple),
             "proposal_ttl_seconds": lim.proposal_ttl_seconds,
             "advisory_mode": lim.advisory_mode,
+            "per_venue_bankroll_usd": {
+                venue.value: str(self.settings.limit_bankroll(venue)) for venue in self.registry.enabled()
+            },
             "hard_ceilings": {
                 "max_trade_usd": "2",
                 "max_event_pct": "4",
@@ -219,7 +226,7 @@ class AgentService:
         if market.venue != self.registry.active_or_none:
             return {"ok": False, "reasons": ["NOT_ACTIVE_VENUE"]}
         mode = self.registry.mode(market.venue)
-        loss_cap = self.settings.bankroll_usd * self.risk.caps["max_daily_loss_pct"] / Decimal("100")
+        loss_cap = self.settings.limit_bankroll(market.venue) * self.risk.caps["max_daily_loss_pct"] / Decimal("100")
         if self.store.today_pnl(mode) <= -loss_cap:
             await self.set_paused(True, actor="risk:daily-loss")
             await self.bus.publish(
@@ -238,7 +245,7 @@ class AgentService:
             for o in self.store.list_orders(venue=market.venue, states={"UNKNOWN", "SUBMITTING"}, limit=200)
         ):
             return {"ok": False, "reasons": ["UNKNOWN_ORDER_BLOCKS_MARKET"]}
-        books = await self.books_for(market, force=True)
+        books = await self.books_for(market, force=False)
         yes_book = books.get(Outcome.YES)
         if yes_book is None or yes_book.mid is None:
             return {"ok": False, "reasons": ["NO_MID"]}
@@ -428,6 +435,16 @@ class AgentService:
             return {"ok": False, "error": "proposal not found"}
         if self.paused:
             return {"ok": False, "error": "agent is paused; no new entries"}
+        unknown = [
+            order
+            for order in self.store.list_orders(venue=proposal.venue, states={"UNKNOWN", "SUBMITTING"}, limit=200)
+            if order["market_id"] == proposal.market_id
+        ]
+        if unknown:
+            return {
+                "ok": False,
+                "error": "UNKNOWN/SUBMITTING order exists on this market; reconcile before approving",
+            }
         if proposal.status is not ProposalStatus.PENDING:
             return {"ok": False, "error": f"proposal is {proposal.status.value}"}
         if proposal.is_expired():
@@ -452,6 +469,8 @@ class AgentService:
                 return await self._fail_proposal(proposal, "MARKET_CLOSES_SOON")
             if not self.unit_guard.ok:
                 return await self._fail_proposal(proposal, "UNIT_CHECK_FAILED")
+            if not market.fee_info or "taker_rate" not in market.fee_info:
+                return await self._fail_proposal(proposal, "FEE_INFO_MISSING")
             if proposal.mode is Mode.LIVE and not self.settings.live_for(proposal.venue):
                 return await self._fail_proposal(proposal, "LIVE_FLAG_DISABLED")
             adapter = self.registry.get(proposal.venue)
@@ -549,19 +568,18 @@ class AgentService:
 
     def _risk_blocked(self, proposal: Proposal, amount: Decimal) -> bool:
         mode = proposal.mode
-        if self.store.today_pnl(mode) <= -(
-            self.settings.bankroll_usd * self.risk.caps["max_daily_loss_pct"] / Decimal("100")
-        ):
+        bankroll = self.settings.limit_bankroll(proposal.venue)
+        if self.store.today_pnl(mode) <= -(bankroll * self.risk.caps["max_daily_loss_pct"] / Decimal("100")):
             return True
         if amount > self.risk.caps["max_trade_usd"]:
             return True
-        if self.store.total_exposure(mode, proposal.venue) + amount > self.settings.bankroll_usd * self.risk.caps[
+        if self.store.total_exposure(mode, proposal.venue) + amount > bankroll * self.risk.caps[
             "max_total_exposure_pct"
         ] / Decimal("100"):
             return True
         market = self.store.get_market(proposal.venue, proposal.market_id)
         event_exposure = self.store.event_exposure(proposal.venue, mode, market.event_id if market else None)
-        if event_exposure + amount > self.settings.bankroll_usd * self.risk.caps["max_event_pct"] / Decimal("100"):
+        if event_exposure + amount > bankroll * self.risk.caps["max_event_pct"] / Decimal("100"):
             return True
         positions = self.store.list_positions(mode=mode)
         return bool(

@@ -306,10 +306,58 @@ class ExecutionGateway:
                 "venue_order_id": match.order_id,
                 "filled_delta": str(delta),
             }
-        # No open order. The absence is not proof of no fill, so leave UNKNOWN
-        # until a trade-history adapter confirms or a human resolves it.
+        # No open order. Check terminal trade history before leaving UNKNOWN.
+        try:
+            trades = await self.registry.get(ref.venue).get_recent_trades(ref)
+        except Exception as exc:
+            return {"resolved": False, "reason": f"trade-history lookup failed: {type(exc).__name__}"}
+        matches = [
+            trade
+            for trade in trades
+            if (local.get("venue_order_id") and trade.order_id and trade.order_id == local["venue_order_id"])
+            or (trade.client_order_id and trade.client_order_id == local["client_order_id"])
+        ]
+        if matches:
+            total = sum((trade.size for trade in matches), start=Decimal("0"))
+            notional = sum((trade.size * trade.price for trade in matches), start=Decimal("0"))
+            fees = sum((trade.fee_usd for trade in matches), start=Decimal("0"))
+            requested = Decimal(str(local["size"]))
+            local_filled = Decimal(str(local.get("filled") or "0"))
+            delta = max(Decimal("0"), total - local_filled)
+            if delta > 0:
+                self.store.apply_fill(
+                    order_id=local["id"],
+                    venue=ref.venue,
+                    mode=Mode(local["mode"]),
+                    market_id=local["market_id"],
+                    outcome=Outcome(local["outcome"]),
+                    side=matches[0].side,
+                    price=notional / total,
+                    size=delta,
+                    fee_usd=fees,
+                    venue_fill_id=f"history-{matches[0].trade_id}-{total}",
+                )
+            state = "FILLED" if total >= requested else "PARTIAL"
+            if local["state"] == "UNKNOWN":
+                self.store.transition_order(local["id"], state, reconciled=True, error=None)
+            self.store.audit(
+                actor,
+                "order.reconciled",
+                {"order_id": local["id"], "source": "trade_history", "state": state},
+            )
+            return {
+                "resolved": True,
+                "state": state,
+                "source": "trade_history",
+                "filled_total": str(total),
+            }
+        # Absence from both open orders and trade history is still not proof of
+        # no fill; leave UNKNOWN and block the market pending human evidence.
         self.store.audit(actor, "order.reconcile_unresolved", {"order_id": local["id"]})
-        return {"resolved": False, "reason": "not found in open orders; trade history review required"}
+        return {
+            "resolved": False,
+            "reason": "not found in open orders or trade history; human review required",
+        }
 
     async def exit_position(
         self,

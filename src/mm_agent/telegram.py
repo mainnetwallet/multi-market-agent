@@ -184,6 +184,18 @@ class TelegramBot:
                 await self._send_proposal(proposal)
         elif event.topic == "rule.blocked":
             await self._send(f"⚠ Exit rule blocked: {event.payload.get('reason')} on {event.payload.get('venue')}")
+        elif event.topic == "risk.daily_loss_cap":
+            await self._send(
+                f"🚨 Daily loss cap reached on {event.payload.get('venue')} "
+                f"(PnL {event.payload.get('pnl')}). New entries are paused; exits keep running."
+            )
+        elif event.topic == "venue.auth_failure":
+            await self._send(
+                f"🚨 Venue authentication failed on {event.payload.get('venue')}: "
+                f"{event.payload.get('detail')}. No orders will be placed there."
+            )
+        elif event.topic == "venue.unavailable":
+            await self._send(f"⚠ Venue unavailable: {event.payload.get('venue')} — {event.payload.get('reason')}")
         elif event.topic == "agent.panic":
             await self._send(
                 "🚨 PANIC executed. All open orders cancelled; rules cancelled. Positions are not auto-sold."

@@ -81,6 +81,8 @@ class StrategyEngine:
         reasons: list[str] = []
         if not unit_guard_ok:
             return SignalEvaluation(None, ["UNIT_CHECK_FAILED"], reasons)
+        if not market.fee_info or "taker_rate" not in market.fee_info:
+            return SignalEvaluation(None, ["FEE_INFO_MISSING"], reasons)
         if not used_research:
             vetoes.append("NO_USABLE_RESEARCH")
             vetoes.extend(research_reasons)

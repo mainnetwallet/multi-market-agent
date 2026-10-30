@@ -124,6 +124,20 @@ class VenueRegistry:
                 )
             self._ingest(report)
         await self._choose_active(initial=True)
+        for venue, report in self.doctors.items():
+            auth = next((c for c in report.checks if c.name == "authenticated_read"), None)
+            if auth is not None and auth.status is DoctorStatus.UNAVAILABLE:
+                await self.bus.publish(
+                    "venue.auth_failure",
+                    venue=venue.value,
+                    detail=auth.detail[:240],
+                )
+            if report.status is DoctorStatus.UNAVAILABLE:
+                await self.bus.publish(
+                    "venue.unavailable",
+                    venue=venue.value,
+                    reason=report.reason[:240],
+                )
         await self.bus.publish(
             "venues.refreshed",
             venues=[
@@ -158,6 +172,8 @@ class VenueRegistry:
             doctor_status=report.status.value,
             doctor_json=report.model_dump(mode="json"),
             checked_at=report.checked_at,
+            display_name=self.adapters[venue].display_name,
+            enabled=venue in self.settings.enabled_venues,
         )
 
     async def _choose_active(self, *, initial: bool = False) -> None:

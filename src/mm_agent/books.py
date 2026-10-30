@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING, Any
 
 from .domain import (
     BookSnapshot,
     Market,
     MarketRef,
+    MarketStatus,
     Outcome,
     UnitMismatchError,
     normalize_probability,
@@ -17,6 +20,12 @@ from .domain import (
 )
 from .util import get_logger
 from .venues.base import Venue
+
+if TYPE_CHECKING:
+    from .config import Settings
+    from .events import EventBus
+    from .store import Store
+    from .venues.registry import VenueRegistry
 
 logger = get_logger(__name__)
 
@@ -79,6 +88,94 @@ class BookCache:
             synthetic=book.synthetic_flag(),
             age_seconds=book.age_seconds(),
         )
+
+
+@dataclass
+class BookFeed:
+    """Background book refresher for the active venue's tradable candidates.
+
+    Adapters may later replace polling with native WebSockets without changing
+    the cache or the pipeline. Feed freshness/errors are exposed in /status.
+    """
+
+    settings: Settings
+    registry: VenueRegistry
+    store: Store
+    cache: BookCache
+    bus: EventBus
+    updates: int = 0
+    errors: int = 0
+    last_error: str | None = None
+    last_update: datetime | None = None
+    venues: dict[str, int] = field(default_factory=dict)
+    _task: asyncio.Task[None] | None = None
+    _stop: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "running": bool(self._task and not self._task.done()),
+            "updates": self.updates,
+            "errors": self.errors,
+            "last_error": self.last_error,
+            "last_update": self.last_update.isoformat() if self.last_update else None,
+            "venues": dict(self.venues),
+        }
+
+    def start(self) -> None:
+        if self._task is None or self._task.done():
+            self._stop = asyncio.Event()
+            self._task = asyncio.create_task(self._loop(), name="book-feed")
+
+    async def stop(self) -> None:
+        self._stop.set()
+        if self._task:
+            await self._task
+            self._task = None
+
+    async def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                await self.run_once()
+            except Exception as exc:
+                self.errors += 1
+                self.last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=self.settings.book_feed_interval_seconds)
+            except TimeoutError:
+                continue
+
+    async def run_once(self) -> int:
+        venue = self.registry.active_or_none
+        if venue is None or not self.registry.is_ready(venue):
+            return 0
+        adapter = self.registry.get(venue)
+        markets = self.store.list_markets(venue=venue, status=MarketStatus.OPEN, limit=self.settings.book_feed_markets)
+        refs = [
+            MarketRef(venue=venue, market_id=market.native_id, outcome=outcome)
+            for market in markets
+            for outcome in (Outcome.YES, Outcome.NO)
+        ]
+        if not refs:
+            return 0
+
+        async def fetch(ref: MarketRef) -> BookSnapshot:
+            return await asyncio.wait_for(adapter.get_book(ref), timeout=12)
+
+        results = await asyncio.gather(*(fetch(ref) for ref in refs), return_exceptions=True)
+        count = 0
+        for result in results:
+            if isinstance(result, BaseException):
+                self.errors += 1
+                self.last_error = f"{type(result).__name__}: {str(result)[:160]}"
+                continue
+            self.cache.put(result)
+            count += 1
+        self.updates += count
+        self.venues[venue.value] = self.venues.get(venue.value, 0) + count
+        if count:
+            self.last_update = utcnow()
+        await self.bus.publish("books.refreshed", venue=venue.value, count=count, errors=self.errors)
+        return count
 
 
 class UnitGuard:

@@ -65,15 +65,28 @@ def _uuid() -> str:
 
 
 class VenueStateRow(Base):
-    __tablename__ = "venue_states"
+    __tablename__ = "venues"
 
     venue: Mapped[str] = mapped_column(String(32), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     ready: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
     live: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     doctor_status: Mapped[str] = mapped_column(String(24), default="UNAVAILABLE", nullable=False)
     doctor_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+
+class EventRow(Base):
+    __tablename__ = "events"
+
+    venue: Mapped[str] = mapped_column(String(32), primary_key=True)
+    native_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    title: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    category: Mapped[str] = mapped_column(String(80), default="Other", nullable=False)
+    end_time: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
 
@@ -94,9 +107,23 @@ class MarketRow(Base):
     fee_info: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    resolution_outcome: Mapped[str | None] = mapped_column(String(8), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
     __table_args__ = (Index("ix_markets_venue_status", "venue", "status"),)
+
+
+class OutcomeRow(Base):
+    __tablename__ = "outcomes"
+
+    venue: Mapped[str] = mapped_column(String(32), primary_key=True)
+    market_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    outcome: Mapped[str] = mapped_column(String(8), primary_key=True)
+    native_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    label: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+    __table_args__ = (Index("ix_outcomes_market", "venue", "market_id"),)
 
 
 class ResearchRow(Base):

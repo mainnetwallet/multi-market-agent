@@ -108,3 +108,9 @@ def test_runtime_caps_can_only_lower(tmp_path) -> None:
     with pytest.raises(ValueError):
         engine.set_cap("max_trade_usd", Decimal("2"))
     assert engine.set_cap("max_open_positions", Decimal("3")) == Decimal("3")
+
+
+def test_per_venue_bankroll_override(tmp_path) -> None:
+    settings = make_settings(tmp_path, bankroll_usd=Decimal("100"), bankroll_fake=Decimal("25"))
+    assert settings.limit_bankroll(VenueId.FAKE) == Decimal("25")
+    assert settings.limit_bankroll(VenueId.KALSHI) == Decimal("100")

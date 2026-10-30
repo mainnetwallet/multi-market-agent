@@ -2,9 +2,10 @@
 
 A human-supervised prediction-market trading agent for **Polymarket**, **Kalshi**
 and **Limitless**, switchable at runtime. One asyncio process runs the scanner,
-book cache, research/edge pipeline, risk engine, proposal queue, order execution,
-exit-rule monitor, FastAPI Control API, PWA, Telegram bot and an in-process event
-bus.
+background book feed/cache, research/edge pipeline, risk engine, proposal queue,
+order execution, exit-rule monitor, FastAPI Control API, PWA, Telegram bot and an
+in-process event bus. The book feed refreshes the active venue's candidate books
+and exposes freshness/error counters in `/status`.
 
 **Paper by default. No real order is ever sent without an operator-set live flag
 and a human action.** The build was completed and tested without live
@@ -34,6 +35,9 @@ credentials; public reads for all three venues were verified on 2026-10-30.
 7. Dedicated trading wallets/accounts with small funds only. Eligibility, KYC
    and geo restrictions are the operator's responsibility; the agent never
    bypasses venue rules.
+8. Sizing uses `BANKROLL_USD`, optionally overridden per venue with
+   `BANKROLL_POLYMARKET`, `BANKROLL_KALSHI`, `BANKROLL_LIMITLESS` or
+   `BANKROLL_FAKE`. Caps remain percentage-based and code-capped.
 
 Full security notes and rotation steps: [SECURITY.md](SECURITY.md). Venue
 reconnaissance and current API differences: [DOCS_FINDINGS.md](DOCS_FINDINGS.md).
@@ -88,7 +92,14 @@ ADMIN_PASSWORD=<a long unique password>
 SESSION_SECRET=<a long random stable string>
 ```
 
-Generate a secret: `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+Or generate those two secrets and a local `.env` automatically:
+
+```bash
+python scripts/bootstrap_env.py
+```
+
+The generated admin password is stored in `.env`; the script refuses to
+overwrite an existing file.
 
 Then:
 
@@ -301,9 +312,12 @@ Apply migrations before first run and after upgrades:
 alembic upgrade head
 ```
 
-Every table carries venue (and mode for money rows). Order/fill transitions are
-committed before network side effects; UNKNOWN never transitions back to
-SUBMITTING. See `src/mm_agent/store/repo.py`.
+Normalized `venues`, `events`, `outcomes`, `markets`, research, probabilities,
+proposals, orders, fills, positions, PnL, rules, decisions, audit and kv tables
+are present. Every trading row carries venue (and mode for money rows). Order/fill
+transitions are committed before network side effects; UNKNOWN never transitions
+back to SUBMITTING. Reconciliation checks open orders first and then terminal
+trade history. See `src/mm_agent/store/repo.py`.
 
 ---
 
@@ -312,25 +326,31 @@ SUBMITTING. See `src/mm_agent/store/repo.py`.
 - **No real order has been attempted.** Live executors are implemented and
   tested against FakeVenue/recorded fixtures, but authenticated venue checks and
   real place/cancel remain unverified without operator credentials.
-- **Kalshi sub-cent tick grid:** the adapter stores the central tick and
-  preserves `price_ranges`, but does not yet snap per price band. Do not go LIVE
-  on sub-cent markets.
-- **Limitless fee estimate** is deliberately conservative (2% notional on
-  fee-enabled markets), not a venue quote. Verify before LIVE.
+- **Kalshi sub-cent tick grid:** strategy analysis uses the central-band tick;
+  order placement now snaps against the exact per-price `price_ranges` band.
+  Validate a tiny sub-cent order before scaling.
+- **Limitless fee** now follows the current docs: 5% × (1−price) of USDC value on
+  new collateral-fee venues and the documented legacy buy/sell curves as an
+  approximation. Always compare the first fill's reported fee before scaling.
 - **Polymarket order dedupe:** the SDK does not expose a client id on open
   orders, so a timeout before the response cannot be deduped as strongly as
-  Kalshi/Limitless. Reconciliation is best-effort by asset/price/size/time.
+  Kalshi/Limitless. Reconciliation checks open orders and account trade history,
+  but matching is still best-effort by asset/order/time.
 - **Resting take-profit exits:** v1 exits are marketable FAK reduce-only orders
   with a slippage cap; a resting limit exit that is cancelled before time-exit is
   not implemented. Time/TP/SL rules do exist and fire at most once.
-- **Calibration** is reported as `insufficient_resolved_samples` until settlement
-  outcomes are imported; raw probabilities and realized PnL are still recorded.
+- **Calibration** computes a Brier score from resolved markets with stored
+  probabilities. Coverage depends on the scanner refreshing held markets after
+  resolution; otherwise it reports `insufficient_resolved_samples`.
 - **Telegram single-poller** uses a DB lease (works on SQLite/Postgres). It is not
   a PostgreSQL session advisory lock, though the effective single-owner guarantee
   is the same for this deployment.
-- **Language:** slash-command responses are English; the LLM assistant is
-  instructed to reply in the operator's language (Bengali/Banglish/English).
-  Times are Asia/Dhaka.
+- **Language:** the LLM assistant replies in Bengali/Banglish/English; server-side
+  slash replies are English plus a Bengali or Banglish summary when the command
+  uses that language. Times are Asia/Dhaka.
+- **Venue-native WebSockets:** the book feed currently uses short-interval REST
+  refreshes through the adapter `subscribe_books` contract, not each venue's
+  native stream. Native WS can replace the feed without changing the pipeline.
 - Cross-venue market matching (optional P8) is not built. No automatic arbitrage.
 
 ---

@@ -79,6 +79,32 @@ def test_fill_updates_position_and_is_idempotent(tmp_path) -> None:
     store.close()
 
 
+def test_market_upsert_normalizes_event_and_outcomes(tmp_path) -> None:
+    from mm_agent.domain import Market, MarketStatus, Outcome, OutcomeInfo
+
+    store = Store(f"sqlite:///{tmp_path / 'norm.db'}")
+    store.create_all()
+    market = Market(
+        venue=VenueId.FAKE,
+        native_id="m1",
+        title="Question?",
+        event_id="e1",
+        event_title="Event",
+        category="Test",
+        status=MarketStatus.OPEN,
+        outcomes=(
+            OutcomeInfo(outcome=Outcome.YES, native_id="yes-id", label="Yes"),
+            OutcomeInfo(outcome=Outcome.NO, native_id="no-id", label="No"),
+        ),
+    )
+    store.upsert_market(market)
+    events = store.list_events(venue=VenueId.FAKE)
+    assert events and events[0]["native_id"] == "e1"
+    outcomes = store.list_outcomes(VenueId.FAKE, "m1")
+    assert {o["outcome"] for o in outcomes} == {"YES", "NO"}
+    store.close()
+
+
 def test_runtime_lease_is_single_owner(tmp_path) -> None:
     store = Store(f"sqlite:///{tmp_path / 's.db'}")
     store.create_all()

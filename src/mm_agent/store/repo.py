@@ -40,10 +40,12 @@ from .models import (
     AuditRow,
     Base,
     DecisionRow,
+    EventRow,
     FillRow,
     KvRow,
     MarketRow,
     OrderRow,
+    OutcomeRow,
     PnlRow,
     PositionRow,
     ProbabilityRow,
@@ -205,6 +207,8 @@ class Store:
         doctor_status: str,
         doctor_json: dict[str, Any] | None = None,
         checked_at: datetime | None = None,
+        display_name: str = "",
+        enabled: bool = True,
     ) -> None:
         now = utcnow()
         with self.session() as s:
@@ -212,6 +216,8 @@ class Store:
             if row is None:
                 row = VenueStateRow(venue=venue.value)
                 s.add(row)
+            row.display_name = display_name or row.display_name or venue.value
+            row.enabled = enabled
             row.ready = ready
             row.reason = reason
             row.live = live
@@ -225,6 +231,8 @@ class Store:
             rows = s.scalars(select(VenueStateRow)).all()
             return {
                 r.venue: {
+                    "display_name": r.display_name,
+                    "enabled": r.enabled,
                     "ready": r.ready,
                     "reason": r.reason,
                     "live": r.live,
@@ -237,7 +245,17 @@ class Store:
 
     # --------------------------------------------------------------- markets
     def upsert_market(self, market: Market) -> None:
+        now = utcnow()
         with self.session() as s:
+            if market.event_id:
+                event = s.get(EventRow, (market.venue.value, market.event_id))
+                if event is None:
+                    event = EventRow(venue=market.venue.value, native_id=market.event_id)
+                    s.add(event)
+                event.title = market.event_title or market.title
+                event.category = market.category
+                event.end_time = market.end_time
+                event.updated_at = now
             row = s.get(MarketRow, (market.venue.value, market.native_id))
             if row is None:
                 row = MarketRow(venue=market.venue.value, native_id=market.native_id)
@@ -254,7 +272,20 @@ class Store:
             row.fee_info = redact(market.fee_info)
             row.url = market.url
             row.raw_updated_at = market.raw_updated_at
-            row.updated_at = utcnow()
+            row.resolution_outcome = market.resolution_outcome.value if market.resolution_outcome else None
+            row.updated_at = now
+            for info in market.outcomes:
+                outcome = s.get(OutcomeRow, (market.venue.value, market.native_id, info.outcome.value))
+                if outcome is None:
+                    outcome = OutcomeRow(
+                        venue=market.venue.value,
+                        market_id=market.native_id,
+                        outcome=info.outcome.value,
+                    )
+                    s.add(outcome)
+                outcome.native_id = info.native_id
+                outcome.label = info.label
+                outcome.updated_at = now
 
     def get_market(self, venue: VenueId, market_id: str) -> Market | None:
         with self.session() as s:
@@ -280,6 +311,34 @@ class Store:
         with self.session() as s:
             return [self._market(r) for r in s.scalars(stmt).all()]
 
+    def list_events(self, *, venue: VenueId | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        stmt = select(EventRow).order_by(EventRow.end_time.is_(None), EventRow.end_time).limit(limit)
+        if venue:
+            stmt = stmt.where(EventRow.venue == venue.value)
+        with self.session() as s:
+            return [
+                {
+                    "venue": r.venue,
+                    "native_id": r.native_id,
+                    "title": r.title,
+                    "category": r.category,
+                    "end_time": r.end_time,
+                }
+                for r in s.scalars(stmt).all()
+            ]
+
+    def list_outcomes(self, venue: VenueId, market_id: str) -> list[dict[str, Any]]:
+        stmt = select(OutcomeRow).where(OutcomeRow.venue == venue.value, OutcomeRow.market_id == market_id)
+        with self.session() as s:
+            return [
+                {
+                    "outcome": r.outcome,
+                    "native_id": r.native_id,
+                    "label": r.label,
+                }
+                for r in s.scalars(stmt).all()
+            ]
+
     def market_count(self, venue: VenueId | None = None) -> int:
         stmt = select(func.count()).select_from(MarketRow)
         if venue:
@@ -304,6 +363,7 @@ class Store:
             fee_info=dict(row.fee_info or {}),
             url=row.url,
             raw_updated_at=row.raw_updated_at,
+            resolution_outcome=Outcome(row.resolution_outcome) if row.resolution_outcome else None,
         )
 
     # -------------------------------------------------------------- research

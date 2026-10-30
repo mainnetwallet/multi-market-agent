@@ -164,10 +164,10 @@ an order unless `--i-accept-real-money` (or `--kalshi-demo` for Kalshi) is given
 - `price_ranges` example from a live market:
   `[{start: "0.0000", end: "0.0100", step: "0.0001"}, {start: "0.0100", end:
   "0.9900", step: "0.0010"}, {start: "0.9900", end: "1.0000", step: "0.0001"}]`.
-  The adapter currently stores the central-band tick and preserves all ranges in
-  `fee_info.price_ranges`; a price can be off-grid near the edges until a
-  per-price tick function is wired. **Known gap: do not go LIVE on sub-cent
-  markets until this is hardened.**
+  The adapter stores the central-band tick for strategy maths and snaps live
+  order prices against the exact per-price `price_ranges` band. Strategy edge
+  estimates can still be slightly coarse near the edges; confirm with a tiny
+  order before scaling on sub-cent markets.
 
 ### Eligibility
 
@@ -189,6 +189,7 @@ eligibility. Demo keys are separate from production keys.
 - Orderbook: https://docs.limitless.exchange/api-reference/trading/orderbook
 - User orders: https://docs.limitless.exchange/api-reference/trading/user-orders
 - Cancel order: https://docs.limitless.exchange/api-reference/trading/cancel-order
+- Fees: https://docs.limitless.exchange/user-guide/fees
 - Current profile: https://docs.limitless.exchange/api-reference/portfolio/get-current-profile
 - Positions: https://docs.limitless.exchange/api-reference/portfolio/positions
 - Live probes: `/markets/active`, `/markets/<slug>/orderbook`
@@ -230,10 +231,13 @@ eligibility. Demo keys are separate from production keys.
   authenticated profile read. If RPC is unavailable, balance is unavailable.
 - There is **no demo environment**. The order roundtrip is disabled unless the
   operator passes `--i-accept-real-money`.
-- Fee schedule is not fully specified in the pages used here. The adapter uses a
-  deliberately conservative 2% notional estimate for fee-enabled markets and
-  zero where `metadata.fee` is absent. **This is an estimate, not a venue quote.
-  Do not go LIVE until the operator verifies the fee model against fills.**
+- Current fee docs (https://docs.limitless.exchange/user-guide/fees): legacy CLOB
+  buys range 0.40–3.00% (paid in outcome tokens), legacy sells 0.42–1.50% (USDC),
+  makers free. New trading venues charge **5% × (1 − price) of USDC value on both
+  buys and sells**, still takers only. The adapter computes the collateral-venue
+  fee exactly and approximates the legacy curve (USD-equivalent for buys) because
+  the curve is not published as a closed form. Compare the first fill's
+  `effectiveFeeBps`/`usdFee` before scaling.
 - Wallet mode matters: if `tradeWalletOption` is `smartWallet`, self-signed API
   orders fail; the doctor reports this as unavailable. The operator must switch
   the profile to EOA mode.

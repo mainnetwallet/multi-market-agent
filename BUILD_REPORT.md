@@ -10,7 +10,7 @@ Repository: **private** `mainnetwallet/multi-market-agent`
 | `ruff check src tests scripts` | pass |
 | `ruff format --check` | pass |
 | `mypy src` (strict) | pass, 38 source files |
-| `pytest` | **38 passed** |
+| `pytest` | **48 passed** |
 | `alembic upgrade head` / `alembic check` | pass, no pending schema changes |
 | Wheel build | pass, static PWA assets included |
 | `pip-audit` | no known vulnerabilities in runtime deps; local project skipped as not-on-PyPI |
@@ -22,6 +22,14 @@ Repository: **private** `mainnetwallet/multi-market-agent`
 
 Credentials were not available, so authenticated reads and order roundtrips were
 skipped exactly as designed.
+
+Post-audit corrections added normalized `venues`/`events`/`outcomes` tables,
+per-venue bankroll overrides, a background book-feed loop, trade-history
+reconciliation, approval blocking on UNKNOWN orders, Bengali/Banglish chat
+summaries, Brier calibration from resolved markets, exact Kalshi order tick
+bands, current Limitless fees, and a `.env` bootstrap script. A local PAPER
+instance was started and its login, `/health` HEAD, `/status`, markets, and PWA
+HTML were verified over HTTP.
 
 | Venue | Status | public | book / market | auth | order |
 |---|---|---|---|---|---|
@@ -69,9 +77,10 @@ Follow the README checklist. Do not enable LIVE until:
 ## Known gaps
 
 See README "Known gaps / limitations" and DOCS_FINDINGS.md. The most important:
-live place/cancel is unverified without operator credentials; Kalshi sub-cent
-tick bands; Limitless fee approximation; Polymarket timeout dedupe limitation;
-resting take-profit exits not implemented (FAK reduce-only exits are).
+live place/cancel is unverified without operator credentials; Kalshi strategy
+edge near sub-cent edge bands; legacy Limitless fee curve approximation;
+Polymarket timeout dedupe limitation; resting take-profit exits not implemented
+(FAK reduce-only exits are).
 
 ## Credential note
 

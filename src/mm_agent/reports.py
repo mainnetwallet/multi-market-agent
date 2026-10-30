@@ -13,7 +13,7 @@ from sqlalchemy import select
 from .agent import AgentService
 from .domain import Mode
 from .store import Store
-from .store.models import DecisionRow, FillRow, ProbabilityRow
+from .store.models import DecisionRow, FillRow, MarketRow, ProbabilityRow
 
 DHAKA = ZoneInfo("Asia/Dhaka")
 
@@ -35,6 +35,22 @@ def daily_report(store: Store, agent: AgentService, day: datetime | None = None)
         probabilities = s.scalars(
             select(ProbabilityRow).where(ProbabilityRow.created_at >= start, ProbabilityRow.created_at < end)
         ).all()
+        resolved = s.scalars(
+            select(MarketRow).where(MarketRow.status == "RESOLVED", MarketRow.resolution_outcome.is_not(None))
+        ).all()
+        calibration_samples: list[tuple[Decimal, int]] = []
+        for market_row in resolved:
+            latest = s.scalar(
+                select(ProbabilityRow)
+                .where(
+                    ProbabilityRow.venue == market_row.venue,
+                    ProbabilityRow.market_id == market_row.native_id,
+                )
+                .order_by(ProbabilityRow.created_at.desc())
+                .limit(1)
+            )
+            if latest is not None:
+                calibration_samples.append((latest.p_fair, 1 if market_row.resolution_outcome == "YES" else 0))
     action_counts = Counter(d.action for d in decisions)
     reasons = Counter(code for d in decisions for code in (d.reason_codes or []))
     notional = sum((f.price * f.size for f in fills), start=Decimal("0"))
@@ -52,6 +68,24 @@ def daily_report(store: Store, agent: AgentService, day: datetime | None = None)
             bins["60-80%"] += 1
         else:
             bins["80-100%"] += 1
+    if calibration_samples:
+        brier = sum(
+            ((float(probability) - actual) ** 2 for probability, actual in calibration_samples),
+            start=0.0,
+        ) / len(calibration_samples)
+        calibration = {
+            "status": "ok",
+            "samples": len(calibration_samples),
+            "brier_score": round(brier, 6),
+            "note": "Brier score over latest recorded p_fair for resolved markets (lower is better).",
+        }
+    else:
+        calibration = {
+            "status": "insufficient_resolved_samples",
+            "samples": 0,
+            "brier_score": None,
+            "note": "A resolved market with a stored probability is required.",
+        }
     positions = store.list_positions()
     status = agent.status()
     return {
@@ -73,16 +107,15 @@ def daily_report(store: Store, agent: AgentService, day: datetime | None = None)
         },
         "rules": dict(Counter(r.status.value for r in store.list_rules())),
         "probability_bins": bins,
-        "calibration": {
-            "status": "insufficient_resolved_samples",
-            "note": "Calibration needs settled outcomes. Use PnL ledger and recorded probabilities after resolution.",
-            "samples": 0,
-            "brier_score": None,
-        },
+        "calibration": calibration,
     }
 
 
 def render_report(report: dict[str, Any]) -> str:
+    calibration = report["calibration"]
+    calibration_text = calibration["status"]
+    if calibration.get("brier_score") is not None:
+        calibration_text += f" · Brier {calibration['brier_score']} · n={calibration['samples']}"
     return (
         f"Daily report {report['day_dhaka']} · {report['badge']}\n"
         f"Decisions: {report['decisions']}\n"
@@ -91,5 +124,5 @@ def render_report(report: dict[str, Any]) -> str:
         f"Realized PnL: ${report['realized_pnl_usd']} · open positions: {report['open_positions']}\n"
         f"Exposure: {report['open_exposure_usd_by_mode']}\n"
         f"Rules: {report['rules']}\n"
-        f"Calibration: {report['calibration']['status']}"
+        f"Calibration: {calibration_text}"
     )

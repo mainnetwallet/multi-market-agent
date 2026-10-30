@@ -78,6 +78,26 @@ def test_kalshi_parser_skips_multivariate_and_reads_fixed_point() -> None:
     assert venue._parse_market({**base, "mve_collection_ticker": "KXMVE"}) is None
 
 
+def test_kalshi_exact_tick_band_is_used_at_edges() -> None:
+    venue = KalshiVenue(make_settings(__import__("pathlib").Path(".")))
+    base = {
+        "ticker": "KXTEST-EDGE",
+        "event_ticker": "KXTEST",
+        "title": "Edge?",
+        "status": "active",
+        "market_type": "binary",
+        "price_ranges": [
+            {"start": "0.0000", "end": "0.0100", "step": "0.0001"},
+            {"start": "0.0100", "end": "0.9900", "step": "0.0010"},
+            {"start": "0.9900", "end": "1.0000", "step": "0.0001"},
+        ],
+    }
+    market = venue._parse_market(base)
+    assert market is not None
+    assert venue._tick_for_price(market, Decimal("0.995")) == Decimal("0.0001")
+    assert venue._tick_for_price(market, Decimal("0.500")) == Decimal("0.001")
+
+
 @pytest.mark.asyncio
 async def test_kalshi_book_inverts_no_bids() -> None:
     venue = KalshiVenue(make_settings(__import__("pathlib").Path(".")))

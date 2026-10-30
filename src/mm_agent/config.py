@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .domain import VenueId
@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     parallel_scan: bool = False
 
     bankroll_usd: Decimal = Decimal("100")
+    bankroll_polymarket: Decimal | None = None
+    bankroll_kalshi: Decimal | None = None
+    bankroll_limitless: Decimal | None = None
+    bankroll_fake: Decimal | None = None
     max_trade_usd: Decimal = HARD_MAX_TRADE_USD
     max_event_pct: Decimal = HARD_MAX_EVENT_PCT
     max_total_exposure_pct: Decimal = HARD_MAX_TOTAL_EXPOSURE_PCT
@@ -127,6 +131,8 @@ class Settings(BaseSettings):
 
     scan_interval_seconds: int = 60
     markets_per_scan: int = 40
+    book_feed_markets: int = 5
+    book_feed_interval_seconds: int = 5
     book_fresh_seconds: int = 30
     proposal_ttl_seconds: int = 300
     auto_propose: bool = True
@@ -172,11 +178,32 @@ class Settings(BaseSettings):
     def _cap_adjustment(cls, v: Decimal) -> Decimal:
         return _clamp(v, Decimal("3"), Decimal("0"))
 
-    @field_validator("bankroll_usd")
+    @field_validator(
+        "bankroll_usd",
+        "bankroll_polymarket",
+        "bankroll_kalshi",
+        "bankroll_limitless",
+        "bankroll_fake",
+        mode="before",
+    )
     @classmethod
-    def _bankroll_positive(cls, v: Decimal) -> Decimal:
-        if v <= 0:
-            raise ValueError("BANKROLL_USD must be positive")
+    def _blank_bankroll(cls, v: object, info: ValidationInfo) -> object:
+        if isinstance(v, str) and not v.strip():
+            # Hosting dashboards often deliver blank optional values as "".
+            return Decimal("100") if info.field_name == "bankroll_usd" else None
+        return v
+
+    @field_validator(
+        "bankroll_usd",
+        "bankroll_polymarket",
+        "bankroll_kalshi",
+        "bankroll_limitless",
+        "bankroll_fake",
+    )
+    @classmethod
+    def _bankroll_positive(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and v <= 0:
+            raise ValueError("bankroll values must be positive")
         return v
 
     @property
@@ -208,11 +235,14 @@ class Settings(BaseSettings):
         }[venue]
 
     def limit_bankroll(self, venue: VenueId) -> Decimal:
-        # Per-venue bankrolls are represented by the global bankroll in v1;
-        # venue-specific capital can be lowered with LIMITS but never raised
-        # beyond the hard global ceiling.
-        del venue
-        return self.bankroll_usd
+        """Per-venue paper/live sizing bankroll, falling back to the global one."""
+
+        return {
+            VenueId.POLYMARKET: self.bankroll_polymarket,
+            VenueId.KALSHI: self.bankroll_kalshi,
+            VenueId.LIMITLESS: self.bankroll_limitless,
+            VenueId.FAKE: self.bankroll_fake,
+        }.get(venue) or self.bankroll_usd
 
     @property
     def limits(self) -> Limits:

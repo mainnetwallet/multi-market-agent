@@ -258,6 +258,7 @@ class Market(BaseModel):
     fee_info: dict[str, Any] = Field(default_factory=dict)
     url: str | None = None
     raw_updated_at: datetime | None = None
+    resolution_outcome: Outcome | None = None
 
     @property
     def ref(self) -> str:
@@ -414,6 +415,24 @@ class VenueOrder(BaseModel):
     reduce_only: bool = False
     created_at: datetime | None = None
     raw_redacted: dict[str, Any] = Field(default_factory=dict)
+
+
+class VenueTrade(BaseModel):
+    """A terminal trade reported by a venue, used for UNKNOWN reconciliation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    venue: VenueId
+    market_id: str
+    trade_id: str
+    order_id: str | None = None
+    client_order_id: str | None = None
+    outcome: Outcome | None = None
+    side: Side
+    price: Decimal
+    size: Decimal
+    fee_usd: Decimal = ZERO
+    created_at: datetime | None = None
 
 
 class FeeQuote(BaseModel):

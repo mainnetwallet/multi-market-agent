@@ -51,3 +51,11 @@ def test_no_market_mutation_without_auth(harness: Harness) -> None:
     client = make_client(harness)
     response = client.post("/v1/venues/active", json={"venue": "fake"})
     assert response.status_code == 401
+
+
+def test_bengali_summary_is_appended(harness: Harness) -> None:
+    client = make_client(harness)
+    client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})
+    response = client.post("/v1/chat", json={"message": "/status দেখুন"})
+    assert response.status_code == 200
+    assert "[বাংলা সারসংক্ষেপ]" in response.json()["reply"]

@@ -32,6 +32,7 @@ from ..domain import (
     VenueCaps,
     VenueId,
     VenueOrder,
+    VenueTrade,
     quantize_shares,
     utcnow,
 )
@@ -59,6 +60,7 @@ class FakeVenue(Venue):
         self._orders: dict[str, VenueOrder] = {}
         self._order_requests: dict[str, OrderRequest] = {}
         self._positions: dict[str, tuple[Decimal, Decimal]] = {}
+        self._trades: list[VenueTrade] = []
         self._cash = Decimal("1000")
         self.fail_next = 0
         self.timeout_next = 0
@@ -225,6 +227,9 @@ class FakeVenue(Venue):
             orders = [o for o in orders if o.market_id == ref.market_id]
         return orders
 
+    async def get_recent_trades(self, ref: MarketRef) -> list[VenueTrade]:
+        return [t for t in self._trades if t.market_id == ref.market_id]
+
     async def place_order(self, req: OrderRequest) -> OrderResult:
         self.calls.append(("place_order", req))
         if self.fail_next > 0:
@@ -280,7 +285,7 @@ class FakeVenue(Venue):
             status = ExecutionStatus.PARTIAL
 
         if filled > 0:
-            self._apply_fill(req, filled, avg or req.price)
+            self._apply_fill(req, filled, avg or req.price, venue_order_id)
             self._books[book.key] = book.model_copy(
                 update={
                     "asks": tuple(mutated) if req.side is Side.BUY else book.asks,
@@ -306,7 +311,21 @@ class FakeVenue(Venue):
             raw_redacted={"fake": True},
         )
 
-    def _apply_fill(self, req: OrderRequest, size: Decimal, price: Decimal) -> None:
+    def _apply_fill(self, req: OrderRequest, size: Decimal, price: Decimal, order_id: str) -> None:
+        self._trades.append(
+            VenueTrade(
+                venue=self.id,
+                market_id=req.market_id,
+                trade_id=f"fake-trade-{len(self._trades) + 1}",
+                order_id=order_id,
+                client_order_id=req.client_order_id,
+                outcome=req.outcome,
+                side=req.side,
+                price=price,
+                size=size,
+                created_at=utcnow(),
+            )
+        )
         key = f"{self.id.value}:{req.market_id}:{req.outcome.value}"
         old_shares, old_avg = self._positions.get(key, (ZERO, ZERO))
         if req.side is Side.BUY:

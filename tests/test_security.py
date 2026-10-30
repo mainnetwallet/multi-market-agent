@@ -45,7 +45,10 @@ def test_repo_has_no_secret_patterns() -> None:
         if "fixtures" in path.parts:
             continue
         if path.name == ".env":
-            offenders.append(str(path))
+            # Local, gitignored secrets file; must never be tracked.
+            ignored = (root / ".gitignore").read_text(errors="ignore")
+            if ".env" not in ignored:
+                offenders.append(str(path))
             continue
         if path.suffix not in allowed_suffixes and path.name != ".env.example":
             continue

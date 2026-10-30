@@ -39,6 +39,7 @@ from ..domain import (
     VenueCaps,
     VenueId,
     VenueOrder,
+    VenueTrade,
     normalize_probability,
     parse_iso,
     quantize_shares,
@@ -120,6 +121,13 @@ class LimitlessVenue(HttpVenue):
             status = MarketStatus.RESOLVED
         else:
             status = MarketStatus.UNKNOWN
+        winning = raw.get("winningOutcomeIndex")
+        resolution = None
+        if winning is not None:
+            try:
+                resolution = Outcome.YES if int(winning) == 0 else Outcome.NO
+            except (TypeError, ValueError):
+                resolution = None
         end_ms = raw.get("expirationTimestamp")
         end_time = (
             datetime.fromtimestamp(float(end_ms) / 1000, tz=UTC)
@@ -128,13 +136,16 @@ class LimitlessVenue(HttpVenue):
         )
         categories = raw.get("categories") or []
         metadata = raw.get("metadata") or {}
-        fee_enabled = bool(metadata.get("fee"))
+        venue_raw = raw.get("venue") or {}
+        collateral_fee = str(venue_raw.get("feeModuleType") or "") == "COLLATERAL"
+        fee_enabled = bool(metadata.get("fee")) or collateral_fee
         fee_info = {
-            "taker_rate": "0.02" if fee_enabled else "0",
+            "taker_rate": "0.05" if collateral_fee else "0.03" if fee_enabled else "0",
             "maker_rate": "0",
-            "source": "conservative Limitless estimate; confirm venue fee schedule",
+            "source": "Limitless fees docs 2026-10-30; taker-only",
             "fee_enabled": fee_enabled,
-            "fee_module_type": (raw.get("venue") or {}).get("feeModuleType"),
+            "fee_module_type": venue_raw.get("feeModuleType"),
+            "fee_model": "limitless_collateral" if collateral_fee else "limitless_legacy_curve",
         }
         return Market(
             venue=self.id,
@@ -153,6 +164,7 @@ class LimitlessVenue(HttpVenue):
             fee_info=fee_info,
             url=f"https://limitless.exchange/markets/{slug}",
             raw_updated_at=parse_iso(raw.get("updatedAt")),
+            resolution_outcome=resolution,
         )
 
     def _remember(self, market: Market, raw: dict[str, Any]) -> None:
@@ -336,6 +348,34 @@ class LimitlessVenue(HttpVenue):
             )
         return out
 
+    async def get_recent_trades(self, ref: MarketRef) -> list[VenueTrade]:
+        path = f"/markets/{ref.market_id}/user-orders?statuses=MATCHED&statuses=CANCELED&limit=200"
+        data = await self._signed_json("GET", path)
+        if not isinstance(data, list):
+            return []
+        out: list[VenueTrade] = []
+        for row in data:
+            size = to_decimal(row.get("originalSize") or 0) / Decimal("1000000")
+            remaining = to_decimal(row.get("remainingSize") or 0) / Decimal("1000000")
+            matched = max(ZERO, size - remaining)
+            if matched <= 0:
+                continue
+            out.append(
+                VenueTrade(
+                    venue=self.id,
+                    market_id=ref.market_id,
+                    trade_id=str(row.get("id") or ""),
+                    order_id=str(row.get("id") or "") or None,
+                    client_order_id=row.get("clientOrderId"),
+                    outcome=ref.outcome,
+                    side=Side(str(row.get("side", "BUY")).upper()),
+                    price=to_decimal(row.get("price") or 0),
+                    size=matched,
+                    created_at=parse_iso(row.get("createdAt")),
+                )
+            )
+        return out
+
     # --------------------------------------------------------------- trading
     async def place_order(self, req: OrderRequest) -> OrderResult:
         try:
@@ -504,10 +544,23 @@ class LimitlessVenue(HttpVenue):
 
     # ------------------------------------------------------------------- fee
     def fee(self, price: Decimal, size: Decimal, side: Side, market: Market) -> FeeQuote:
-        del side
-        rate = Decimal(str(market.fee_info.get("taker_rate", "0.02")))
+        model = str(market.fee_info.get("fee_model") or "limitless_legacy_curve")
+        if not market.fee_info.get("fee_enabled", True):
+            return FeeQuote(fee_usd=ZERO, rate=ZERO, source="Limitless fee-disabled market")
+        if model == "limitless_collateral":
+            # New venues: 5% x (1 - price) of USDC value, both sides, takers only.
+            rate = Decimal("0.05") * (ONE - price)
+        elif side is Side.BUY:
+            # Legacy dynamic buy curve: ~3.00% at <=0.50 down to ~0.40% at 0.999.
+            rate = Decimal("0.03")
+            if price > Decimal("0.5"):
+                rate -= Decimal("0.026") * (price - Decimal("0.5")) / Decimal("0.499")
+        else:
+            # Legacy sell curve: ~1.50% at 0.50, ~0.42% at the edges.
+            distance = abs(price - Decimal("0.5")) / Decimal("0.5")
+            rate = Decimal("0.015") - Decimal("0.0108") * distance
         fee = (price * size * rate).quantize(Decimal("0.000001"))
-        return FeeQuote(fee_usd=fee, rate=rate, source="Limitless conservative notional fee")
+        return FeeQuote(fee_usd=fee, rate=rate, source=f"Limitless {model} taker fee")
 
     # ---------------------------------------------------------------- doctor
     async def doctor(self) -> DoctorReport:
