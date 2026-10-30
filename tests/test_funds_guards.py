@@ -12,7 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mm_agent.control_api import create_app
-from mm_agent.domain import Outcome, VenueId
+from mm_agent.domain import OrderType, Outcome, VenueId
+from mm_agent.full_control import FullControlError, FullControlService
 from mm_agent.funds import FundsError, FundsService
 from tests.conftest import Harness
 
@@ -30,7 +31,7 @@ def make_client(harness: Harness) -> TestClient:
 class _BridgeStub:
     """A stub for the bridge: supported assets, a quote, and a withdraw address."""
 
-    def __init__(self, assets: list[dict] | None = None, echo: dict | None = None) -> None:
+    def __init__(self, assets: list[dict] | None = None, status_rows: list[dict] | None = None) -> None:
         self.assets = assets or [
             {
                 "chainId": "8453",
@@ -45,14 +46,14 @@ class _BridgeStub:
                 "minCheckoutUsd": 7,
             },
         ]
-        self.echo = echo
+        self.status_rows = status_rows or []
         self.quotes: list[dict] = []
         self.withdraws: list[dict] = []
 
     async def get(self, url: str, **kwargs: object) -> httpx.Response:
         if str(url).endswith("/supported-assets"):
             return httpx.Response(200, json={"supportedAssets": self.assets}, request=httpx.Request("GET", url))
-        return httpx.Response(200, json={"transactions": []}, request=httpx.Request("GET", url))
+        return httpx.Response(200, json={"transactions": self.status_rows}, request=httpx.Request("GET", url))
 
     async def post(self, url: str, json: dict | None = None, **kwargs: object) -> httpx.Response:
         if str(url).endswith("/quote"):
@@ -64,10 +65,13 @@ class _BridgeStub:
             )
         if str(url).endswith("/withdraw"):
             self.withdraws.append(json or {})
-            body: dict = {"address": {"evm": BRIDGE_ADDRESS}}
-            if self.echo:
-                body.update(self.echo)
+            # The real bridge answers with only these two fields.
+            body = {"address": {"evm": BRIDGE_ADDRESS}, "note": "Send funds to these addresses."}
             return httpx.Response(201, json=body, request=httpx.Request("POST", str(url)))
+        if str(url).endswith("/deposit"):
+            return httpx.Response(
+                201, json={"address": {"evm": BRIDGE_ADDRESS}}, request=httpx.Request("POST", str(url))
+            )
         return httpx.Response(200, json={}, request=httpx.Request("POST", str(url)))
 
 
@@ -145,27 +149,23 @@ async def test_an_unsupported_destination_is_refused(harness: Harness, bridge: _
     assert exc.value.code == "unsupported_destination"
 
 
-async def test_a_bridge_answer_for_another_destination_is_refused(
-    harness: Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The bridge echoed a different chain than the one that was asked for."""
+async def test_a_bridge_routing_to_another_destination_is_caught(harness: Harness, bridge: _BridgeStub) -> None:
+    """The bridge routes the withdrawal somewhere the operator did not pick.
 
-    stub = _BridgeStub(echo={"toChainId": "999"})
+    The bridge's reply carries only an address, so the destination is confirmed
+    from its status rows, which do carry toChainId and toTokenAddress.
+    """
 
-    class _Client:
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:
-            return None
-
-        async def get(self, url: str, **kwargs: object) -> httpx.Response:
-            return await stub.get(url, **kwargs)
-
-        async def post(self, url: str, json: dict | None = None, **kwargs: object) -> httpx.Response:
-            return await stub.post(url, json=json, **kwargs)
-
-    monkeypatch.setattr("mm_agent.funds.httpx.AsyncClient", lambda *a, **k: _Client())
+    bridge.status_rows = [
+        {
+            "fromChainId": "137",
+            "fromTokenAddress": "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB",
+            "fromAmountBaseUnit": "1000000",
+            "toChainId": "999",
+            "toTokenAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "status": "COMPLETED",
+        }
+    ]
     harness.settings.__dict__["funds_enabled"] = True
     harness.settings.__dict__["live_polymarket"] = True
     client = make_client(harness)
@@ -179,9 +179,39 @@ async def test_a_bridge_answer_for_another_destination_is_refused(
         "address_id": entry_id,
         "recipient": "0x1234567890abcdef1234567890abcdef12345678",
     }
-    with pytest.raises(FundsError) as exc:
-        await funds._polymarket_withdraw_address(record)
-    assert exc.value.code == "destination_mismatch"
+    status, detail = await funds._bridge_status(BRIDGE_ADDRESS, record)
+    assert status == "MISMATCH", detail
+    assert "chain" in detail
+
+
+async def test_a_matching_bridge_row_confirms(harness: Harness, bridge: _BridgeStub) -> None:
+    """The status row for our destination and amount confirms the withdrawal."""
+
+    bridge.status_rows = [
+        {
+            "fromChainId": "137",
+            "fromTokenAddress": "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB",
+            "fromAmountBaseUnit": "1000000",
+            "toChainId": "8453",
+            "toTokenAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "status": "COMPLETED",
+        }
+    ]
+    harness.settings.__dict__["funds_enabled"] = True
+    harness.settings.__dict__["live_polymarket"] = True
+    client = make_client(harness)
+    entry_id = _allowlist(client, network="base", asset="USDC")
+
+    funds = FundsService(harness.settings, harness.store)
+    record = {
+        "id": "w-test",
+        "venue": "polymarket",
+        "amount_usd": Decimal("1"),
+        "address_id": entry_id,
+        "recipient": "0x1234567890abcdef1234567890abcdef12345678",
+    }
+    status, detail = await funds._bridge_status(BRIDGE_ADDRESS, record)
+    assert status == "COMPLETED", detail
 
 
 # ── daily limit ─────────────────────────────────────────────────────────────
@@ -326,23 +356,64 @@ def test_the_other_outcome_of_a_held_market_is_not_a_new_position(harness: Harne
 
 
 def test_an_expiry_too_soon_is_refused(harness: Harness) -> None:
-    """Polymarket needs at least three minutes for a GTD order."""
+    """Polymarket needs at least three minutes for a GTD order.
+
+    The floor belongs to the venue, so the fake venue — which documents none —
+    accepts a short expiry.
+    """
 
     from datetime import UTC, datetime, timedelta
 
-    client = make_client(harness)
-    response = client.post(
-        "/v1/orders/limit",
-        json={
-            "market_id": "fed-cut",
-            "outcome": "YES",
-            "side": "BUY",
-            "price": "0.43",
-            "shares": "4",
-            "tif": "GTD",
-            "expires_at": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
-        },
-        headers={"Idempotency-Key": "gtd-1"},
+    make_client(harness)
+    polymarket = FullControlService(
+        harness.settings, harness.store, harness.registry, harness.agent, harness.agent.execution
     )
-    assert response.status_code == 400, response.text
-    assert response.json()["error"]["code"] == "expiry_too_soon"
+    with pytest.raises(FullControlError) as exc:
+        polymarket._check_order_type(
+            VenueId.POLYMARKET,
+            OrderType.GTD,
+            False,
+            datetime.now(UTC) + timedelta(minutes=1),
+        )
+    assert exc.value.code == "expiry_too_soon"
+
+    # A venue with no documented floor accepts it.
+    polymarket._check_order_type(
+        VenueId.FAKE,
+        OrderType.GTD,
+        False,
+        datetime.now(UTC) + timedelta(minutes=1),
+    )
+
+
+def test_withdrawals_are_listed_oldest_first(harness: Harness) -> None:
+    """When two withdrawals finish their hold together, the older one goes first.
+
+    The daily limit refuses the one that does not fit, so the order decides
+    which one the operator actually gets.
+    """
+
+    from datetime import UTC, datetime, timedelta
+
+    harness.store.create_withdrawal(
+        venue="polymarket",
+        amount_usd=Decimal("10"),
+        address_id="a",
+        recipient="0x1234567890abcdef1234567890abcdef12345678",
+        network="base",
+        asset="USDC",
+        status="PENDING_HOLD",
+        hold_until=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    harness.store.create_withdrawal(
+        venue="polymarket",
+        amount_usd=Decimal("20"),
+        address_id="b",
+        recipient="0x2234567890abcdef1234567890abcdef12345678",
+        network="base",
+        asset="USDC",
+        status="PENDING_HOLD",
+        hold_until=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    amounts = [Decimal(str(w["amount_usd"])) for w in harness.store.list_withdrawals()]
+    assert amounts == [Decimal("10"), Decimal("20")]

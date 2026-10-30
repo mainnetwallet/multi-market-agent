@@ -298,15 +298,15 @@ class FullControlService:
                     code="missing_expiry",
                     status=400,
                 )
-            # Polymarket's docs: an expiry must be at least three minutes away,
-            # and the order expires one minute before it.
-            remaining = (expires_at - utcnow()).total_seconds() / 60
-            if remaining < 3:
-                raise FullControlError(
-                    "the expiry must be at least 3 minutes away",
-                    code="expiry_too_soon",
-                    status=400,
-                )
+            floor = caps.min_expiry_minutes
+            if floor:
+                remaining = (expires_at - utcnow()).total_seconds() / 60
+                if remaining < floor:
+                    raise FullControlError(
+                        f"the expiry must be at least {floor} minutes away",
+                        code="expiry_too_soon",
+                        status=400,
+                    )
 
     async def _market_for(self, venue: VenueId, market_id: str) -> Market:
         try:

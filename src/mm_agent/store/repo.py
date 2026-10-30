@@ -1346,7 +1346,8 @@ class Store:
             return self._withdrawal(row) if row else None
 
     def list_withdrawals(self, *, venue: VenueId | None = None, limit: int = 100) -> list[dict[str, Any]]:
-        stmt = select(WithdrawalRow).order_by(WithdrawalRow.created_at.desc()).limit(limit)
+        # Oldest first, so withdrawals are submitted in the order they were made.
+        stmt = select(WithdrawalRow).order_by(WithdrawalRow.created_at.asc(), WithdrawalRow.id.asc()).limit(limit)
         if venue:
             stmt = stmt.where(WithdrawalRow.venue == venue.value)
         with self.session() as s:

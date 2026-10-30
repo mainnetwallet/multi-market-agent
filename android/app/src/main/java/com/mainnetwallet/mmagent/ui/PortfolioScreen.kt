@@ -253,7 +253,16 @@ private fun AmendDialog(
     onConfirm: (price: String?, shares: String?) -> Unit,
 ) {
     var price by remember { mutableStateOf(order.optString("price")) }
-    var shares by remember { mutableStateOf(order.optString("size")) }
+    // Kalshi's amend count is the TOTAL fillable amount: already filled plus
+    // the resting amount wanted. The order's size alone is not that.
+    var shares by remember {
+        mutableStateOf(
+            java.math.BigDecimal(order.optString("size", "0"))
+                .add(java.math.BigDecimal(order.optString("filled", "0")))
+                .stripTrailingZeros()
+                .toPlainString()
+        )
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Amend order") },

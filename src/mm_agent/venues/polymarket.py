@@ -91,6 +91,9 @@ class PolymarketVenue(HttpVenue):
         min_notional_usd=Decimal("1"),
         default_tick=Decimal("0.01"),
         order_types=(OrderType.GTC, OrderType.GTD, OrderType.FAK, OrderType.FOK),
+        # The docs: an expiry must be at least 3 minutes away, and the order
+        # expires one minute before it.
+        min_expiry_minutes=3,
         post_only=True,
         amend=False,
         batch_orders=True,

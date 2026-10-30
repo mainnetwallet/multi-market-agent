@@ -262,6 +262,8 @@ class VenueCaps(BaseModel):
     default_tick: Decimal = CENT
     # Manual-trading capabilities, verified against each venue's docs (2026-10-30).
     order_types: tuple[OrderType, ...] = (OrderType.GTC,)
+    # Minutes an expiry must be at least away, for venues that document a floor.
+    min_expiry_minutes: int = 0
     post_only: bool = False
     amend: bool = False
     batch_orders: bool = False
