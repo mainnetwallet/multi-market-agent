@@ -57,6 +57,28 @@ services:
         sync: false
       - key: TELEGRAM_ALLOWED_USER_ID
         sync: false
+      # Funds module: OFF until you set the secrets below and read SECURITY.md.
+      # The funds signer is a SEPARATE key from every trading key.
+      - key: FUNDS_ENABLED
+        value: "false"
+      - key: FUNDS_SIGNER_PRIVATE_KEY
+        sync: false
+      - key: FUNDS_SIGNER_ADDRESS
+        sync: false
+      - key: FUNDS_RPC_URL   # a Polygon RPC: the Polymarket withdrawal is pUSD on Polygon
+        value: https://polygon-rpc.com
+      - key: FUNDS_RELAYER_API_KEY
+        sync: false
+      - key: FUNDS_RELAYER_API_KEY_ADDRESS
+        sync: false
+      - key: FUNDS_POLYMARKET_BUILDER_CODE
+        sync: false
+      - key: FUNDS_WITHDRAWAL_DAILY_LIMIT_USD
+        value: "25"
+      - key: FUNDS_WITHDRAWAL_HOLD_MINUTES
+        value: "10"
+      - key: FUNDS_ALLOWLIST_COOLING_HOURS
+        value: "24"
     disk:
       name: mm-agent-data
       mountPath: /app/data

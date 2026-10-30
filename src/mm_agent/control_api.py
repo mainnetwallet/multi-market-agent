@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import (
     Depends,
     FastAPI,
+    Header,
     HTTPException,
     Request,
     Response,
@@ -31,8 +32,10 @@ from pydantic import BaseModel, Field
 from .agent import AgentService
 from .chat import ChatService
 from .config import Settings
-from .domain import Outcome, VenueId, utcnow
+from .domain import OrderType, Outcome, Side, VenueId, utcnow
 from .events import EventBus
+from .full_control import FullControlError, FullControlService
+from .funds import FundsError, FundsService
 from .scanner import Scanner
 from .util import get_logger, redact
 from .venues.registry import VenueRegistry
@@ -90,6 +93,91 @@ class PanicBody(BaseModel):
     confirm: bool = False
 
 
+class StepupBody(BaseModel):
+    password: str
+    action: str = "withdraw"
+
+
+class CeilingBody(BaseModel):
+    name: str
+    value: Decimal
+
+
+class LimitOrderBody(BaseModel):
+    venue: VenueId | None = None
+    market_id: str
+    outcome: Outcome
+    side: Side = Side.BUY
+    price: Decimal | None = None
+    shares: Decimal | None = None
+    amount_usd: Decimal | None = None
+    tif: OrderType = OrderType.GTC
+    expires_at: datetime | None = None
+    post_only: bool = False
+    # The venue's client order id; it lands in an 80-character column.
+    client_id: str | None = Field(default=None, max_length=64)
+
+
+class MarketOrderBody(BaseModel):
+    venue: VenueId | None = None
+    market_id: str
+    outcome: Outcome
+    side: Side = Side.BUY
+    shares: Decimal | None = None
+    amount_usd: Decimal | None = None
+    max_slippage_cents: Decimal = Decimal("2")
+    client_id: str | None = Field(default=None, max_length=64)
+
+
+class SellBody(BaseModel):
+    venue: VenueId | None = None
+    market_id: str
+    outcome: Outcome
+    shares: Decimal
+    price: Decimal | None = None
+    client_id: str | None = None
+
+
+class AmendBody(BaseModel):
+    price: Decimal | None = None
+    shares: Decimal | None = None
+
+
+class CancelAllBody(BaseModel):
+    venue: VenueId | None = None
+    market_id: str | None = None
+
+
+class RedeemBody(BaseModel):
+    venue: VenueId | None = None
+    market_id: str
+    outcome: Outcome | None = None
+
+
+class AllowlistBody(BaseModel):
+    label: str
+    address: str
+    network: str
+    asset: str
+
+
+class WithdrawPreviewBody(BaseModel):
+    venue: VenueId
+    amount: Decimal
+    address_id: str
+
+
+class WithdrawBody(BaseModel):
+    venue: VenueId
+    amount: Decimal
+    address_id: str
+
+
+class ApprovalBody(BaseModel):
+    venue: VenueId
+    kind: str
+
+
 def create_app(
     settings: Settings,
     agent: AgentService,
@@ -103,6 +191,11 @@ def create_app(
 ) -> FastAPI:
     serializer = URLSafeTimedSerializer(settings.session_secret or "unset-secret", salt="mm-session")
     login_attempts: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=10))
+    full = FullControlService(settings, agent.store, registry, agent, agent.execution)
+    full.restore_ceilings()
+    agent.full_control = full
+    funds = FundsService(settings, agent.store)
+    agent.funds = funds
     start = started_at or utcnow()
     del start
     app = FastAPI(
@@ -334,19 +427,18 @@ def create_app(
         return result
 
     @app.get("/v1/orders")
-    async def orders(limit: int = 100, _: str = Depends(require_auth)) -> dict[str, Any]:
-        return {"orders": agent.store.list_orders(limit=min(max(limit, 1), 200))}
-
-    @app.post("/v1/orders/{order_id}/cancel")
-    async def cancel_order(order_id: str, request: Request, _: str = Depends(require_auth)) -> dict[str, Any]:
-        result = await agent.execution.cancel(order_id, actor=actor(request))
-        if not result.get("ok"):
-            raise HTTPException(status_code=409, detail=result)
-        return result
-
-    @app.post("/v1/orders/cancel-all")
-    async def cancel_all(request: Request, _: str = Depends(require_auth)) -> dict[str, Any]:
-        return {"results": await agent.execution.cancel_all(actor=actor(request))}
+    async def orders(
+        venue: VenueId | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        states = None
+        if status == "open":
+            states = {"OPEN", "PARTIAL"}
+        elif status:
+            states = {status.upper()}
+        return {"orders": agent.store.list_orders(venue=venue, limit=min(max(limit, 1), 200), states=states)}
 
     @app.get("/v1/rules")
     async def rules(_: str = Depends(require_auth)) -> dict[str, Any]:
@@ -402,6 +494,429 @@ def create_app(
             raise HTTPException(status_code=409, detail=result.get("error", "limit rejected"))
         return result
 
+    # ── full control: capabilities, balance, step-up, ceilings ──────
+
+    def _session_id(request: Request, user: str) -> str:
+        """A stable id for the session, so a step-up token binds to one session."""
+
+        token = request.headers.get("authorization", "")
+        if token.lower().startswith("bearer "):
+            return _hash_token(token.split(" ", 1)[1].strip())
+        cookie = request.cookies.get(SESSION_COOKIE)
+        return _hash_token(cookie or user)
+
+    def _hash_token(value: str) -> str:
+        import hashlib
+
+        return hashlib.sha256(value.encode()).hexdigest()[:32]
+
+    def _idempotency_key(request: Request) -> str | None:
+        return request.headers.get("idempotency-key") or request.headers.get("x-idempotency-key")
+
+    def _fail(exc: FullControlError | FundsError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status,
+            content={"ok": False, "error": {"code": exc.code, "message": str(exc)}},
+        )
+
+    @app.get("/v1/capabilities")
+    async def capabilities(_: str = Depends(require_auth)) -> dict[str, Any]:
+        return full.capabilities()
+
+    @app.get("/v1/balance")
+    async def balance(venue: VenueId | None = None, _: str = Depends(require_auth)) -> dict[str, Any]:
+        return await full.balance(venue)
+
+    @app.post("/v1/auth/stepup")
+    async def stepup(body: StepupBody, request: Request, user: str = Depends(require_auth)) -> Any:
+        client = request.client.host if request.client else "unknown"
+        now = time.time()
+        bucket = login_attempts[f"stepup:{client}"]
+        while bucket and bucket[0] < now - 300:
+            bucket.popleft()
+        if len(bucket) >= 8:
+            raise HTTPException(status_code=429, detail="too many step-up attempts; wait 5 minutes")
+        bucket.append(now)
+        try:
+            return full.create_stepup(body.password, _session_id(request, user), body.action)
+        except FullControlError as exc:
+            return _fail(exc)
+
+    @app.post("/v1/limits/hard-ceiling")
+    async def set_hard_ceiling(
+        body: CeilingBody,
+        request: Request,
+        user: str = Depends(require_auth),
+        x_stepup: str | None = Header(None, alias="X-Stepup-Token"),
+    ) -> Any:
+        session = _session_id(request, user)
+        try:
+            current = agent.risk.ceilings.get(body.name)
+            if current is None:
+                raise FullControlError(f"unknown hard ceiling {body.name}", code="unknown_ceiling", status=400)
+            raising = body.value > current
+            if raising:
+                full.require_stepup(x_stepup, session, "ceiling_raise")
+            return full.set_hard_ceiling(body.name, body.value, actor=actor(request), raise_verified=raising)
+        except FullControlError as exc:
+            return _fail(exc)
+
+    # ── full control: manual trading ───────────────────────────────
+
+    @app.post("/v1/orders/limit")
+    async def place_limit_order(
+        body: LimitOrderBody,
+        request: Request,
+        _: str = Depends(require_auth),
+    ) -> Any:
+        payload = body.model_dump(mode="json")
+        try:
+            stored, request_hash = full.idempotent(_idempotency_key(request), "orders.limit", payload)
+            if stored is not None:
+                return {"ok": True, "replayed": True, **stored}
+            result = await full.place_manual_order(
+                venue=body.venue,
+                market_id=body.market_id,
+                outcome=body.outcome,
+                side=body.side,
+                price=body.price,
+                shares=body.shares,
+                amount_usd=body.amount_usd,
+                order_type=body.tif,
+                expires_at=body.expires_at,
+                post_only=body.post_only,
+                client_id=body.client_id,
+                actor=actor(request),
+            )
+        except FullControlError as exc:
+            return _fail(exc)
+        full.remember(_idempotency_key(request) or "", "orders.limit", request_hash, result)
+        return {"ok": True, **result}
+
+    @app.post("/v1/orders/market")
+    async def place_market_order(
+        body: MarketOrderBody,
+        request: Request,
+        _: str = Depends(require_auth),
+    ) -> Any:
+        payload = body.model_dump(mode="json")
+        try:
+            stored, request_hash = full.idempotent(_idempotency_key(request), "orders.market", payload)
+            if stored is not None:
+                return {"ok": True, "replayed": True, **stored}
+            result = await full.place_manual_order(
+                venue=body.venue,
+                market_id=body.market_id,
+                outcome=body.outcome,
+                side=body.side,
+                price=None,
+                shares=body.shares,
+                amount_usd=body.amount_usd,
+                order_type=OrderType.FAK,
+                client_id=body.client_id,
+                actor=actor(request),
+                max_slippage_cents=body.max_slippage_cents,
+            )
+        except FullControlError as exc:
+            return _fail(exc)
+        full.remember(_idempotency_key(request) or "", "orders.market", request_hash, result)
+        return {"ok": True, **result}
+
+    @app.post("/v1/positions/sell")
+    async def sell_position(body: SellBody, request: Request, _: str = Depends(require_auth)) -> Any:
+        payload = body.model_dump(mode="json")
+        try:
+            stored, request_hash = full.idempotent(_idempotency_key(request), "positions.sell", payload)
+            if stored is not None:
+                return {"ok": True, "replayed": True, **stored}
+            result = await full.sell_position(
+                venue=body.venue,
+                market_id=body.market_id,
+                outcome=body.outcome,
+                shares=body.shares,
+                price=body.price,
+                actor=actor(request),
+            )
+        except FullControlError as exc:
+            return _fail(exc)
+        full.remember(_idempotency_key(request) or "", "positions.sell", request_hash, result)
+        return {"ok": True, **result}
+
+    @app.get("/v1/orders/{order_id}")
+    async def order_detail(order_id: str, _: str = Depends(require_auth)) -> Any:
+        order = agent.store.get_order(order_id)
+        if not order:
+            raise HTTPException(status_code=404, detail="order not found")
+        return {"order": order, "fills": agent.store.fills_for_order(order["id"])}
+
+    @app.post("/v1/orders/{order_id}/cancel")
+    async def cancel_order_by_id(order_id: str, request: Request, _: str = Depends(require_auth)) -> Any:
+        """The original route shape is kept; the body is additive."""
+
+        try:
+            result = await agent.execution.cancel(order_id, actor=actor(request))
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if not result.get("ok"):
+            return JSONResponse(
+                status_code=409,
+                content={"ok": False, "error": {"code": "cancel_failed", "message": result.get("message", "")}},
+            )
+        return {"ok": True, **result}
+
+    @app.post("/v1/orders/cancel-all")
+    async def cancel_all_orders(body: CancelAllBody, request: Request, _: str = Depends(require_auth)) -> Any:
+        """The kill switch. Idempotent and never blocked by caps."""
+
+        try:
+            stored, request_hash = full.idempotent(
+                _idempotency_key(request), "orders.cancel_all", body.model_dump(mode="json")
+            )
+            if stored is not None:
+                return {"ok": True, "replayed": True, **stored}
+            result = await full.cancel_all_orders(venue=body.venue, market_id=body.market_id, actor=actor(request))
+        except FullControlError as exc:
+            return _fail(exc)
+        full.remember(_idempotency_key(request) or "", "orders.cancel_all", request_hash, result)
+        return {"ok": True, **result}
+
+    @app.post("/v1/orders/{order_id}/amend")
+    async def amend_order(order_id: str, body: AmendBody, request: Request, _: str = Depends(require_auth)) -> Any:
+        try:
+            result = await full.amend_order(order_id, price=body.price, shares=body.shares, actor=actor(request))
+        except FullControlError as exc:
+            return _fail(exc)
+        return {"ok": True, **result}
+
+    # ── full control: market data and history ─────────────────────
+
+    @app.get("/v1/markets/{market_id}/book")
+    async def market_book(
+        market_id: str,
+        venue: VenueId | None = None,
+        outcome: Outcome | None = None,
+        depth: int = 20,
+        _: str = Depends(require_auth),
+    ) -> Any:
+        try:
+            return await full.market_book(market_id, venue=venue, outcome=outcome, depth=min(max(depth, 1), 100))
+        except FullControlError as exc:
+            return _fail(exc)
+
+    @app.get("/v1/markets/{market_id}/history")
+    async def market_history(
+        market_id: str,
+        venue: VenueId | None = None,
+        interval: str = "1d",
+        _: str = Depends(require_auth),
+    ) -> Any:
+        try:
+            return await full.market_history(market_id, venue=venue, interval=interval)
+        except FullControlError as exc:
+            return _fail(exc)
+
+    @app.get("/v1/trades")
+    async def trades(
+        venue: VenueId | None = None,
+        market_id: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        return full.trades(venue=venue, market_id=market_id, limit=min(max(limit, 1), 500), cursor=cursor)
+
+    @app.get("/v1/pnl/daily")
+    async def pnl_daily(days: int = 30, venue: VenueId | None = None, _: str = Depends(require_auth)) -> dict[str, Any]:
+        return full.pnl_daily(min(max(days, 1), 365), venue=venue)
+
+    @app.post("/v1/positions/redeem")
+    async def redeem(body: RedeemBody, request: Request, _: str = Depends(require_auth)) -> Any:
+        try:
+            return {
+                "ok": True,
+                **await full.redeem(
+                    venue=body.venue, market_id=body.market_id, outcome=body.outcome, actor=actor(request)
+                ),
+            }
+        except FullControlError as exc:
+            return _fail(exc)
+
+    @app.post("/v1/positions/split")
+    async def split_position(body: RedeemBody, request: Request, _: str = Depends(require_auth)) -> Any:
+        try:
+            return {
+                "ok": True,
+                **await full.split_merge(
+                    venue=body.venue, market_id=body.market_id, action="split", actor=actor(request)
+                ),
+            }
+        except FullControlError as exc:
+            return _fail(exc)
+
+    @app.post("/v1/positions/merge")
+    async def merge_position(body: RedeemBody, request: Request, _: str = Depends(require_auth)) -> Any:
+        try:
+            return {
+                "ok": True,
+                **await full.split_merge(
+                    venue=body.venue, market_id=body.market_id, action="merge", actor=actor(request)
+                ),
+            }
+        except FullControlError as exc:
+            return _fail(exc)
+
+    # ── full control: funds ────────────────────────────────────────
+
+    @app.get("/v1/funds/{venue}/deposit")
+    async def deposit_info(
+        venue: VenueId, network: str | None = None, asset: str | None = None, _: str = Depends(require_auth)
+    ) -> Any:
+        try:
+            info = await funds.deposit_info(venue, network=network, asset=asset)
+        except FundsError as exc:
+            return _fail(exc)
+        return {"ok": True, **info.as_dict()}
+
+    @app.get("/v1/funds/allowlist")
+    async def allowlist_list(_: str = Depends(require_auth)) -> dict[str, Any]:
+        return funds.allowlist_list()
+
+    @app.post("/v1/funds/allowlist")
+    async def allowlist_add(
+        body: AllowlistBody,
+        request: Request,
+        user: str = Depends(require_auth),
+        x_stepup: str | None = Header(None, alias="X-Stepup-Token"),
+    ) -> Any:
+        try:
+            full.require_stepup(x_stepup, _session_id(request, user), "allowlist_add")
+            return {
+                "ok": True,
+                **funds.allowlist_add(
+                    label=body.label,
+                    address=body.address,
+                    network=body.network,
+                    asset=body.asset,
+                    actor=actor(request),
+                ),
+            }
+        except (FundsError, FullControlError) as exc:
+            return _fail(exc)
+
+    @app.delete("/v1/funds/allowlist/{entry_id}")
+    async def allowlist_remove(entry_id: str, request: Request, _: str = Depends(require_auth)) -> Any:
+        try:
+            return {"ok": True, **funds.allowlist_remove(entry_id, actor=actor(request))}
+        except FundsError as exc:
+            return _fail(exc)
+
+    @app.post("/v1/funds/withdraw/preview")
+    async def withdraw_preview(body: WithdrawPreviewBody, _: str = Depends(require_auth)) -> Any:
+        try:
+            return {
+                "ok": True,
+                **await funds.preview_withdraw(venue=body.venue, amount=body.amount, address_id=body.address_id),
+            }
+        except FundsError as exc:
+            return _fail(exc)
+
+    @app.post("/v1/funds/withdraw")
+    async def create_withdrawal(
+        body: WithdrawBody,
+        request: Request,
+        user: str = Depends(require_auth),
+        x_stepup: str | None = Header(None, alias="X-Stepup-Token"),
+    ) -> Any:
+        payload = body.model_dump(mode="json")
+        try:
+            stored, request_hash = full.idempotent(_idempotency_key(request), "funds.withdraw", payload)
+            if stored is not None:
+                return {"ok": True, "replayed": True, **stored}
+            full.require_stepup(x_stepup, _session_id(request, user), "withdraw")
+            result = await funds.create_withdrawal(
+                venue=body.venue, amount=body.amount, address_id=body.address_id, actor=actor(request)
+            )
+        except (FundsError, FullControlError) as exc:
+            return _fail(exc)
+        full.remember(_idempotency_key(request) or "", "funds.withdraw", request_hash, result)
+        return {"ok": True, **result}
+
+    @app.get("/v1/funds/withdrawals")
+    async def list_withdrawals(venue: VenueId | None = None, _: str = Depends(require_auth)) -> dict[str, Any]:
+        return funds.list_withdrawals(venue=venue)
+
+    @app.post("/v1/funds/withdrawals/{withdrawal_id}/cancel")
+    async def cancel_withdrawal(withdrawal_id: str, request: Request, _: str = Depends(require_auth)) -> Any:
+        try:
+            return {"ok": True, **funds.cancel_withdrawal(withdrawal_id, actor=actor(request))}
+        except FundsError as exc:
+            return _fail(exc)
+
+    @app.get("/v1/funds/history")
+    async def funds_history(venue: VenueId | None = None, _: str = Depends(require_auth)) -> dict[str, Any]:
+        """Venue-reported deposits and withdrawals. Read-only everywhere."""
+
+        if not funds.enabled:
+            return {"ok": False, "history": [], "reason": "the funds module is off"}
+        venues = [venue] if venue else list(registry.enabled())
+        rows: list[dict[str, Any]] = []
+        for target in venues:
+            if not registry.get(target).caps.funds_history:
+                continue
+            try:
+                if target is VenueId.POLYMARKET:
+                    wallet = settings.polymarket_wallet_address.strip()
+                    if wallet:
+                        for row in await funds.polymarket_history(wallet):
+                            rows.append({"venue": target.value, **row})
+                    continue
+                for row in await registry.get(target).get_funds_history():
+                    rows.append({"venue": target.value, **row})
+            except Exception:
+                continue
+        return {"ok": True, "history": rows}
+
+    @app.get("/v1/approvals")
+    async def approvals(venue: VenueId | None = None, _: str = Depends(require_auth)) -> dict[str, Any]:
+        venues = [venue] if venue else list(registry.enabled())
+        out: list[dict[str, Any]] = []
+        for target in venues:
+            adapter = registry.get(target)
+            out.append(
+                {
+                    "venue": target.value,
+                    "needed": adapter.caps.approvals_needed,
+                    "reason": adapter.caps.unsupported_reason.get("approvals", ""),
+                    "official_url": "https://docs.polymarket.com/trading/wallets-auth",
+                }
+            )
+        return {"approvals": out}
+
+    @app.post("/v1/approvals")
+    async def set_approvals(
+        body: ApprovalBody,
+        request: Request,
+        user: str = Depends(require_auth),
+        x_stepup: str | None = Header(None, alias="X-Stepup-Token"),
+    ) -> Any:
+        try:
+            full.require_stepup(x_stepup, _session_id(request, user), "approvals")
+            adapter = registry.get(body.venue)
+            if not adapter.caps.approvals_needed:
+                raise FullControlError(
+                    f"{body.venue.value} does not need on-chain approvals for trading",
+                    code="no_approvals_needed",
+                    status=400,
+                )
+            raise FullControlError(
+                f"{body.venue.value} approvals are not automated; grant them on the venue site "
+                "after checking the exact spender and amount",
+                code="approvals_manual",
+                status=400,
+            )
+        except FullControlError as exc:
+            return _fail(exc)
+
     @app.get("/v1/audit")
     async def audit_log(_: str = Depends(require_auth)) -> dict[str, Any]:
         return {"entries": agent.store.recent_audit(200)}
@@ -446,7 +961,12 @@ def create_app(
 
     @app.websocket("/v1/ws")
     async def websocket(ws: WebSocket) -> None:
+        # The native app cannot rely on a browser cookie, so a Bearer token works too.
         token = ws.cookies.get(SESSION_COOKIE)
+        if not token:
+            header = ws.headers.get("authorization", "")
+            if header.lower().startswith("bearer "):
+                token = header.split(" ", 1)[1].strip()
         if not token or _username_from_token(token) is None:
             await ws.close(code=4401)
             return

@@ -43,6 +43,15 @@ class RiskEngine:
             "max_daily_loss_pct": settings.max_daily_loss_pct,
             "max_open_positions": Decimal(settings.max_open_positions),
         }
+        # Stored hard ceilings. Only "max_trade_usd" is operator-raisable (the $2 cap
+        # stopped being a code constant); the rest stay pinned to the code constants.
+        self.ceilings: dict[str, Decimal] = {
+            "max_trade_usd": HARD_MAX_TRADE_USD,
+            "max_event_pct": HARD_MAX_EVENT_PCT,
+            "max_total_exposure_pct": HARD_MAX_TOTAL_EXPOSURE_PCT,
+            "max_daily_loss_pct": HARD_MAX_DAILY_LOSS_PCT,
+            "max_open_positions": Decimal(HARD_MAX_OPEN_POSITIONS),
+        }
 
     def set_cap(self, name: str, value: Decimal) -> Decimal:
         if name not in self.caps:
@@ -52,11 +61,39 @@ class RiskEngine:
                 raise ValueError("max_open_positions must be a positive integer")
             ceiling = min(self.caps[name], Decimal(HARD_MAX_OPEN_POSITIONS))
         else:
-            ceiling = min(self.caps[name], self._hard_ceiling(name))
+            ceiling = min(self.caps[name], self.ceilings[name])
         if value > ceiling:
             raise ValueError(f"{name} can only be lowered at runtime (current ceiling {ceiling})")
         self.caps[name] = value
         return value
+
+    def set_ceiling(self, name: str, value: Decimal) -> Decimal:
+        """Raise or lower a stored hard ceiling. Raising requires a step-up token.
+
+        The effective cap follows the ceiling for "max_trade_usd" so that raising the
+        ceiling actually raises what the operator can trade.
+        """
+        if name not in self.ceilings:
+            raise ValueError(f"unknown hard ceiling {name}")
+        if name == "max_open_positions":
+            if value != value.to_integral_value() or value < 1:
+                raise ValueError("max_open_positions must be a positive integer")
+            value = min(value, Decimal(HARD_MAX_OPEN_POSITIONS))
+        elif name != "max_trade_usd":
+            value = min(value, self._hard_ceiling(name))
+        if value <= 0:
+            raise ValueError(f"{name} must be positive")
+        self.ceilings[name] = value
+        if name == "max_trade_usd":
+            self.caps[name] = value
+        return value
+
+    def restore_ceilings(self, values: dict[str, str]) -> None:
+        for name, raw in values.items():
+            try:
+                self.set_ceiling(name, Decimal(str(raw)))
+            except (ValueError, ArithmeticError):
+                continue
 
     @staticmethod
     def _hard_ceiling(name: str) -> Decimal:
@@ -76,6 +113,9 @@ class RiskEngine:
 
     def as_dict(self) -> dict[str, str]:
         return {k: str(v) for k, v in self.caps.items()}
+
+    def ceilings_dict(self) -> dict[str, str]:
+        return {k: str(v) for k, v in self.ceilings.items()}
 
     def size(
         self,

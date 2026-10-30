@@ -138,6 +138,24 @@ class Settings(BaseSettings):
     auto_propose: bool = True
     proposals_per_cycle: int = 2
 
+    # Full-control build. The $2 per-trade cap is no longer a code constant: it is a
+    # server-side setting (stored, default 2) the operator can raise from the app
+    # with a step-up token. This field is only the *default* for a fresh install.
+    default_max_trade_usd: Decimal = HARD_MAX_TRADE_USD
+
+    # Funds module: off unless explicitly enabled. Separate signer, separate key.
+    funds_enabled: bool = False
+    funds_signer_private_key: str = ""
+    funds_signer_address: str = ""
+    funds_rpc_url: str = "https://polygon-rpc.com"
+    funds_relayer_api_key: str = ""
+    funds_relayer_api_key_address: str = ""
+    funds_withdrawal_daily_limit_usd: Decimal = Decimal("25")
+    funds_withdrawal_hold_minutes: int = 10
+    funds_allowlist_cooling_hours: int = 24
+    funds_polymarket_bridge_url: str = "https://bridge.polymarket.com"
+    funds_polymarket_builder_code: str = ""
+
     @field_validator("max_trade_usd")
     @classmethod
     def _cap_trade(cls, v: Decimal) -> Decimal:

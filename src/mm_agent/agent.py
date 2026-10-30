@@ -19,6 +19,7 @@ from .domain import (
     MarketStatus,
     Mode,
     OrderRequest,
+    OrderType,
     Outcome,
     Position,
     Proposal,
@@ -76,9 +77,14 @@ class AgentService:
         self.locks = LockRegistry()
         self.execution = ExecutionGateway(settings, store, registry, books, self.locks, bus)
         self.paused = False
+        # Set by the API once the full-control layer exists; optional by design.
+        self.full_control: Any = None
+        # Set by the API once the funds service exists; optional by design.
+        self.funds: Any = None
         self._tasks: list[asyncio.Task[None]] = []
         self._expiry_task: asyncio.Task[None] | None = None
         self._auto_task: asyncio.Task[None] | None = None
+        self._funds_task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
 
     async def start(self) -> None:
@@ -92,22 +98,25 @@ class AgentService:
         self._expiry_task = asyncio.create_task(self._expiry_loop(), name="proposal-expiry")
         if self.settings.auto_propose:
             self._auto_task = asyncio.create_task(self._auto_loop(), name="auto-propose")
+        if self.settings.funds_enabled:
+            self._funds_task = asyncio.create_task(self._funds_loop(), name="funds-lifecycle")
 
     async def stop(self) -> None:
         self._stop.set()
         await self.book_feed.stop()
-        for task in (self._expiry_task, self._auto_task):
+        for task in (self._expiry_task, self._auto_task, self._funds_task):
             if task:
                 task.cancel()
         await asyncio.gather(
-            *(t for t in (self._expiry_task, self._auto_task) if t is not None), return_exceptions=True
+            *(t for t in (self._expiry_task, self._auto_task, self._funds_task) if t is not None),
+            return_exceptions=True,
         )
 
     # ---------------------------------------------------------------- status
     def status(self) -> dict[str, Any]:
         venue_summary = self.registry.summary()
         active = self.registry.active_or_none
-        return {
+        payload = {
             "active_venue": active.value if active else None,
             "badge": f"{(active.value if active else 'none').upper()} | "
             f"{self.registry.mode(active).value if active else 'PAPER'}",
@@ -125,10 +134,15 @@ class AgentService:
             "today_pnl_usd": str(self.store.today_pnl()),
             "server_time_dhaka": fmt_dhaka(utcnow()),
         }
+        # The full-control layer is attached by the API once it exists; the field is
+        # optional so existing clients keep working.
+        if self.full_control is not None:
+            payload["capabilities"] = self.full_control.capabilities()
+        return payload
 
     def limits_dict(self) -> dict[str, Any]:
         lim = self.settings.limits
-        return {
+        limits: dict[str, Any] = {
             "bankroll_usd": str(lim.bankroll_usd),
             "max_trade_usd": str(self.risk.caps["max_trade_usd"]),
             "max_event_pct": str(self.risk.caps["max_event_pct"]),
@@ -143,14 +157,9 @@ class AgentService:
             "per_venue_bankroll_usd": {
                 venue.value: str(self.settings.limit_bankroll(venue)) for venue in self.registry.enabled()
             },
-            "hard_ceilings": {
-                "max_trade_usd": "2",
-                "max_event_pct": "4",
-                "max_total_exposure_pct": "15",
-                "max_daily_loss_pct": "5",
-                "max_open_positions": 8,
-            },
+            "hard_ceilings": self.risk.ceilings_dict(),
         }
+        return limits
 
     # --------------------------------------------------------------- markets
     async def get_market(self, market_id: str, venue: VenueId | None = None) -> Market:
@@ -522,7 +531,7 @@ class AgentService:
                 size=shares,
                 client_order_id=f"{proposal.venue.value[:3]}-{uuid.uuid4().hex[:22]}",
                 reduce_only=False,
-                order_type="FAK",
+                order_type=OrderType.FAK,
                 mode=proposal.mode,
             )
             result, local_id = await self.execution.submit(request, market, proposal_id=proposal.id)
@@ -753,6 +762,19 @@ class AgentService:
             except Exception:
                 logger.exception("expiry_loop_error")
             await asyncio.sleep(10)
+
+    async def _funds_loop(self) -> None:
+        """Drive the funds lifecycle: submit what is out of hold, then poll for
+        confirmation. A withdrawal is submitted exactly once and never retried."""
+
+        while not self._stop.is_set():
+            try:
+                if self.funds is not None and self.funds.enabled:
+                    await self.funds.submit_due_withdrawals()
+                    await self.funds.refresh_submitted()
+            except Exception:
+                logger.exception("funds_loop_error")
+            await asyncio.sleep(30)
 
     async def reconcile_pending_unknown(self) -> None:
         for order in self.store.orders_needing_reconcile():

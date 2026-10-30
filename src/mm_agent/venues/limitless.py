@@ -32,6 +32,7 @@ from ..domain import (
     MarketStatus,
     OrderRequest,
     OrderResult,
+    OrderType,
     Outcome,
     OutcomeInfo,
     Position,
@@ -55,6 +56,7 @@ ONE = Decimal("1")
 
 class LimitlessVenue(HttpVenue):
     id = VenueId.LIMITLESS
+    # Capabilities verified against docs.limitless.exchange on 2026-10-30.
     caps = VenueCaps(
         realtime=True,
         sandbox=False,
@@ -62,6 +64,27 @@ class LimitlessVenue(HttpVenue):
         min_order_shares=Decimal("1"),
         min_notional_usd=Decimal("0.01"),
         default_tick=Decimal("0.001"),
+        order_types=(OrderType.GTC, OrderType.FAK, OrderType.FOK),
+        post_only=False,
+        amend=False,
+        batch_orders=False,
+        approvals_needed=True,
+        collateral_asset="USDC",
+        deposit=False,
+        withdraw=False,
+        redeem=False,
+        funds_history=False,
+        unsupported_reason={
+            "deposit": "Limitless has no deposit API; a deposit is a transfer to your wallet on Base.",
+            "withdraw": "Limitless withdrawals are partner server-wallet only and need the "
+            "'withdrawal' scope; a normal API key cannot use them.",
+            "redeem": "Redeem for a normal wallet is an on-chain transaction; the API route is "
+            "partner server-wallet only.",
+            "post_only": "Post-only is not documented for Limitless orders.",
+            "amend": "Limitless has no amend endpoint; cancel and place a new order instead.",
+            "price_history": "No Limitless price-history endpoint is documented.",
+            "funds_history": "No Limitless funds-history endpoint is documented.",
+        },
     )
 
     def __init__(self, settings: Settings) -> None:
@@ -438,7 +461,7 @@ class LimitlessVenue(HttpVenue):
             body = {
                 "order": order,
                 "ownerId": owner_id,
-                "orderType": "FAK" if req.order_type in {"FAK", "IOC"} else req.order_type,
+                "orderType": "FAK" if req.order_type in {OrderType.FAK, OrderType.IOC} else req.order_type.value,
                 "marketSlug": market.native_id,
                 "clientOrderId": req.client_order_id,
                 "stpPolicy": "cancel_taker",
@@ -662,7 +685,7 @@ class LimitlessVenue(HttpVenue):
                 price=Decimal("0.001"),
                 size=Decimal("1"),
                 client_order_id="doctor-" + uuid.uuid4().hex,
-                order_type="GTC",
+                order_type=OrderType.GTC,
             )
             result = await self.place_order(request)
             if result.venue_order_id:

@@ -263,3 +263,165 @@ research/risk must fail closed on one-sided or odd books.
 - The build's own public doctor results are in the final report; the exact text
   at recon was: Polymarket OK, Kalshi DEGRADED (credentials absent; public and
   market reads pass), Limitless OK.
+
+---
+
+## 5. Full-control recon (2026-10-30, second pass)
+
+Every endpoint below was read from the venue's own documentation on 2026-10-30.
+Where the build prompt and the docs disagreed, the docs win and the difference is
+recorded. Nothing here was verified against a live authenticated account: no
+credential was available, so no real order and no authenticated read was made.
+
+### Sources read
+
+| Venue | Pages |
+|---|---|
+| Polymarket | https://docs.polymarket.com/trading/place-orders · https://docs.polymarket.com/trading/bridge/deposit · https://docs.polymarket.com/trading/bridge/withdraw · https://docs.polymarket.com/trading/bridge/quote · https://docs.polymarket.com/trading/bridge/supported-assets · https://docs.polymarket.com/trading/bridge/status · https://docs.polymarket.com/llms.txt · specs: `/api-spec/clob-openapi.yaml`, `/api-spec/bridge-openapi.yaml`, `/api-spec/relayer-openapi.yaml` |
+| Kalshi | https://docs.kalshi.com/api-reference/orders/create-order-v2 · https://docs.kalshi.com/api-reference/orders/cancel-order-v2 · https://docs.kalshi.com/api-reference/portfolio/get-deposits · https://docs.kalshi.com/api-reference/portfolio/get-withdrawals · https://docs.kalshi.com/openapi.yaml (fetched and grepped) |
+| Limitless | https://docs.limitless.exchange/developers/authentication · https://docs.limitless.exchange/developers/programmatic-api · https://docs.limitless.exchange/user-guide/merge-split · https://docs.limitless.exchange/developers/quickstart/websocket · https://docs.limitless.exchange/llms.txt |
+
+### Polymarket — verified endpoints
+
+| Purpose | Method + path | Notes |
+|---|---|---|
+| Place order | `POST https://clob.polymarket.com/order` | body `{order:{maker,signer,tokenId,makerAmount,takerAmount,side,expiration,timestamp,metadata,builder,signature,salt,signatureType}, owner, orderType, deferExec, postOnly}`; `orderType` in GTC/GTD/FAK/FOK |
+| Batch orders | `POST /orders` | 1 to 15 signed orders per call, each evaluated independently |
+| Cancel one | `DELETE /cancel` | body `{order_id, market_id}` |
+| Cancel all | `POST /cancel-all` | – |
+| Cancel by market | `POST /cancel-market-orders` | – |
+| Order book | `GET /book?token_id=` | public |
+| Price history | `GET /prices-history?token_id=&interval=` | – |
+| Heartbeat | `POST /v1/heartbeats` | body `{heartbeat_id}`; legacy `POST /heartbeats` |
+| Bridge deposit | `POST https://bridge.polymarket.com/deposit` | body `{address}`; returns `{address:{evm,svm,btc,tron}, note}` |
+| Bridge supported assets | `GET /supported-assets` | `{supportedAssets:[{chainId,chainName,token:{name,symbol,address,decimals},minCheckoutUsd}]}` |
+| Bridge quote | `POST /quote` | body `{fromAmountBaseUnit,fromChainId,fromTokenAddress,recipientAddress,toChainId,toTokenAddress}`; response `{estCheckoutTimeMs,estInputUsd,estOutputUsd,estToTokenBaseUnit,quoteId,estFeeBreakdown{appFeeUsd,gasUsd,minReceived,maxSlippage,...}}` |
+| Bridge withdraw | `POST /withdraw` | body `{address,toChainId,toTokenAddress,recipientAddr}`; returns the same `{address:{...}}` shape |
+| Bridge status | `GET /status/{address}` | cursor-paginated; `nextCursor` |
+| Relayer submit | `POST https://relayer-v2.polymarket.com/submit` | `RELAYER_API_KEY` + `RELAYER_API_KEY_ADDRESS` headers, or builder-key HMAC headers |
+
+**Verified details that changed the build:**
+
+- **Order types.** GTC, GTD, FOK, FAK. FAK is the SDK default for market orders.
+- **postOnly** applies to limit orders only (GTC and GTD) and is *rejected* if it
+  would match immediately against the book.
+- **GTD expiry** must be at least 3 minutes in the future, and the order expires one
+  minute *before* its stated expiration. The minimum effective lifetime is about
+  two minutes.
+- **There is no explicit worst-price field in the raw order body.** The bound is
+  expressed through the signed `makerAmount`/`takerAmount`; the SDK exposes it as
+  `max_price` (BUY) and `min_price` (SELL), plus a separate fee-inclusive
+  `max_spend`. The build converts the app's slippage bound into `max_price`.
+- **Heartbeat is all-or-nothing.** The first accepted send enables timeout
+  cancellation for **all** open orders of the API key, across markets and processes.
+  There is **no disarm operation**: stopping the sender leaves the deadline active,
+  and after 10 s without an accepted send the server attempts a cancel-all. A
+  heartbeat id mismatch returns HTTP 400 with the expected id.
+  **Decision: the backend does not use it.** Resting orders survive a restart, and
+  the app shows the heartbeat state so the operator knows the trade-off.
+- **Bridge minimums** from the live `/supported-assets` shape: $7 on Ethereum, $2 on
+  Polygon/Arbitrum/Base/Optimism/BNB/Solana and most others, $9 on Bitcoin and Tron.
+  Deposits below the minimum are not processed.
+- **Withdraw addresses are destination-scoped.** The docs say to generate them only
+  when ready to execute, so the build requests the bridge address at submission
+  time and checks it against the withdrawal record.
+- **Collateral is pUSD**, not USDC. The bridge unwraps pUSD on Polygon.
+
+### Kalshi — verified endpoints
+
+| Purpose | Method + path | Notes |
+|---|---|---|
+| Create order (V2) | `POST /portfolio/events/orders` | body `{ticker, side: bid\|ask, count, price, time_in_force, client_order_id, self_trade_prevention_type, post_only?, reduce_only?, subaccount?, order_group_id?, exchange_index?}` |
+| Amend order (V2) | `POST /portfolio/events/orders/{order_id}/amend` | body `{ticker, side, price, count, expiration_time?, client_order_id?, updated_client_order_id?}` |
+| Decrease order (V2) | `POST /portfolio/events/orders/{order_id}/decrease` | body `{reduce_by}` or `{reduce_to}` (exactly one) |
+| Cancel order (V2) | `DELETE /portfolio/events/orders/{order_id}` | query `market_ticker`, `exchange_index`, `subaccount` |
+| Batch create (V2) | `POST /portfolio/events/orders/batched` | body `{orders:[...]}` |
+| Batch cancel (V2) | `DELETE /portfolio/events/orders/batched` | body `{orders:[{order_id, subaccount?, exchange_index?, market_ticker?}]}` |
+| Cancel all | `DELETE /portfolio/events/orders` | – |
+| Open orders | `GET /portfolio/orders` | – |
+| Fills | `GET /portfolio/fills` | – |
+| Balance | `GET /portfolio/balance` | – |
+| Deposits (history) | `GET /portfolio/deposits` | – |
+| Withdrawals (history) | `GET /portfolio/withdrawals` | – |
+| Candlesticks | `GET /markets/candlesticks` | query `market_tickers` (up to 100), `start_ts`, `end_ts`, `period_interval` (1/60/1440) |
+| Subaccounts | `GET/POST /portfolio/subaccounts`, `POST /portfolio/subaccounts/transfer`, `GET /portfolio/subaccounts/balances`, `GET /portfolio/subaccounts/transfers` | – |
+
+**Verified details that changed the build:**
+
+- `client_order_id` is documented as **optional** in `CreateOrderV2Request`, not
+  required as the brief said. The build always sends one anyway.
+- `time_in_force` is one of `good_till_canceled` / `fill_or_kill` /
+  `immediate_or_cancel`. There is **no good-till-date** in the V2 schema, so the
+  app does not offer GTD on Kalshi.
+- The amend request `count` is the order's **total** max-fillable count (already
+  filled plus desired resting), not the new resting size.
+- `side` is `bid`/`ask` on the **YES book only**.
+- **There is no deposit or withdrawal initiation endpoint in the OpenAPI spec.**
+  `GET /portfolio/deposits` and `GET /portfolio/withdrawals` are history only, with
+  `type` in ach/wire/crypto/debit/apm and `status` in pending/applied/failed/returned.
+  Amounts are integer cents. The app shows this history read-only and deep-links
+  to Kalshi for the actual movement of money.
+- Kalshi settles automatically, so there is no redeem call; the app shows a Settled
+  state instead.
+- The legacy `/portfolio/orders` endpoint still exists in the spec.
+
+### Limitless — verified endpoints
+
+| Purpose | Method + path | Notes |
+|---|---|---|
+| Active markets | `GET /markets/active` | – |
+| Order book | `GET /markets/{slug}/orderbook` | YES book only; NO is derived |
+| User orders | `GET /markets/{slug}/user-orders?statuses=LIVE` | – |
+| Create order | `POST /orders` | body `{order:{salt,maker,signer,taker,tokenId,makerAmount,takerAmount,expiration,nonce,feeRateBps,side,signature,signatureType,price}, ownerId, orderType, marketSlug, clientOrderId, stpPolicy}` |
+| Cancel order | `DELETE /orders/{id}` | – |
+| Cancel all | `DELETE /orders/all` | – |
+| Positions | `GET /portfolio/positions` | – |
+| Profile | `GET /profiles/me` | – |
+| Redeem (partner) | `POST /portfolio/redeem` | **server wallet only**; scope `trading` |
+| Withdraw (partner) | `POST /portfolio/withdraw` | **server wallet only**; scope `withdrawal` |
+| Withdraw allowlist (partner) | `POST /portfolio/withdrawal-addresses`, `DELETE /portfolio/withdrawal-addresses/:address` | Privy auth |
+| Split (partner) | `POST /portfolio/split` | server wallet only |
+| Merge (partner) | `POST /portfolio/merge` | server wallet only |
+
+**Verified details that changed the build:**
+
+- Token scopes are exactly `trading`, `account_creation`, `delegated_signing` and
+  `withdrawal`. `account_creation` and `delegated_signing` require an approved
+  partner application ("applications from individual traders and personal bot
+  runners are not approved").
+- `withdrawal` is defined as "Withdraw ERC20 balances from **managed server-wallet
+  sub-accounts** to partner-owned addresses." A normal EOA account cannot use it.
+  The build reports `supported: false` for a normal key and says why.
+- Redeem is blocked until the conditional token payout is settled on-chain
+  (`payoutDenominator(conditionId)` still 0); `status: RESOLVED` alone does not
+  guarantee redeemability. A split resolution has `winningOutcomeIndex: null` plus
+  a `payoutNumerators` array.
+- For a normal wallet, redeem is an on-chain transaction. Merge/split for a normal
+  wallet means calling `splitPosition`/`mergePositions` on the Conditional Tokens
+  Framework contract directly; the API routes sign with a managed server wallet.
+- Order types are GTC, FAK and FOK. Post-only is not documented.
+- Amounts are raw 6-decimal integers; `price × contracts` must equal the collateral
+  amount exactly.
+- **No price-history endpoint is documented.** The app shows that capability as
+  unavailable rather than drawing an empty chart.
+- The docs mention geographic restrictions. The build surfaces the venue's own
+  reason string when it reports one.
+
+### Where the docs disagreed with the build prompt
+
+1. Kalshi `client_order_id` is optional, not required.
+2. Kalshi has no "cancel by market" on V2; the closest is `market_ticker`
+   auto-routing plus a market-scoped cancel.
+3. Polymarket has no explicit worst-price field in the raw order body; the bound
+   rides in the signed amounts, exposed by the SDK as `max_price`/`min_price`.
+4. Kalshi *does* have amend and decrease, which the prompt assumed.
+5. Kalshi candles are public (`GET /markets/candlesticks`) — the prompt did not
+   mention them.
+6. Limitless has **no** documented price-history endpoint, which the prompt's
+   "GET /v1/markets/{id}/history from each venue's public endpoints" assumed.
+7. Limitless split/merge exist but are server-wallet only, so "Merge and Split
+   under Advanced on Polymarket" is right for Polymarket and unsupported for a
+   normal Limitless key.
+8. Polymarket's heartbeat has no disarm, so it cannot be used "safely" — it
+   actively contradicts the requirement that a backend restart never silently
+   wipes resting orders.

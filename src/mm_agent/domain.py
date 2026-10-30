@@ -44,6 +44,27 @@ class Side(StrEnum):
     SELL = "SELL"
 
 
+class OrderType(StrEnum):
+    """Venue order types. Which ones a venue accepts lives in its capabilities."""
+
+    GTC = "GTC"
+    GTD = "GTD"
+    FOK = "FOK"
+    FAK = "FAK"
+    IOC = "IOC"
+
+
+class WithdrawalStatus(StrEnum):
+    """Funds lifecycle. A withdrawal is submitted exactly once, never auto-retried."""
+
+    PENDING_HOLD = "PENDING_HOLD"
+    SUBMITTED = "SUBMITTED"
+    CONFIRMED = "CONFIRMED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    UNKNOWN = "UNKNOWN"
+
+
 class MarketStatus(StrEnum):
     OPEN = "OPEN"
     CLOSED = "CLOSED"
@@ -239,6 +260,22 @@ class VenueCaps(BaseModel):
     min_order_shares: Decimal = Decimal("1")
     min_notional_usd: Decimal = Decimal("1")
     default_tick: Decimal = CENT
+    # Manual-trading capabilities, verified against each venue's docs (2026-10-30).
+    order_types: tuple[OrderType, ...] = (OrderType.GTC,)
+    # Minutes an expiry must be at least away, for venues that document a floor.
+    min_expiry_minutes: int = 0
+    post_only: bool = False
+    amend: bool = False
+    batch_orders: bool = False
+    approvals_needed: bool = False
+    collateral_asset: str = "USD"
+    # Funds features are off unless the venue actually exposes an API for them.
+    deposit: bool = False
+    withdraw: bool = False
+    redeem: bool = False
+    funds_history: bool = False
+    # Free-text reason shown to the operator when a capability is unavailable.
+    unsupported_reason: dict[str, str] = {}
 
 
 class Market(BaseModel):
@@ -454,8 +491,10 @@ class OrderRequest(BaseModel):
     size: Decimal
     client_order_id: str
     reduce_only: bool = False
-    order_type: Literal["GTC", "FAK", "FOK", "IOC"] = "GTC"
+    order_type: OrderType = OrderType.GTC
     mode: Mode = Mode.PAPER
+    expires_at: datetime | None = None
+    post_only: bool = False
 
     @field_validator("price")
     @classmethod

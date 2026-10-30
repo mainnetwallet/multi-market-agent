@@ -37,11 +37,14 @@ from ..domain import (
 from ..util import get_logger, redact
 from ._result import rowcount
 from .models import (
+    AllowlistRow,
     AuditRow,
     Base,
     DecisionRow,
     EventRow,
     FillRow,
+    HardCeilingRow,
+    IdempotencyRow,
     KvRow,
     MarketRow,
     OrderRow,
@@ -52,7 +55,9 @@ from .models import (
     ProposalRow,
     ResearchRow,
     RuleRow,
+    StepupRow,
     VenueStateRow,
+    WithdrawalRow,
 )
 
 logger = get_logger(__name__)
@@ -586,6 +591,8 @@ class Store:
         client_order_id: str,
         proposal_id: str | None,
         reduce_only: bool = False,
+        order_type: str = "GTC",
+        post_only: bool = False,
     ) -> str:
         from ..domain import stable_id
 
@@ -606,6 +613,8 @@ class Store:
                         client_order_id=client_order_id,
                         proposal_id=proposal_id,
                         reduce_only=reduce_only,
+                        order_type=order_type,
+                        post_only=post_only,
                     )
                 )
                 s.flush()
@@ -709,6 +718,8 @@ class Store:
             "client_order_id": row.client_order_id,
             "venue_order_id": row.venue_order_id,
             "reduce_only": row.reduce_only,
+            "order_type": row.order_type,
+            "post_only": row.post_only,
             "proposal_id": row.proposal_id,
             "fee_usd": row.fee_usd,
             "error": row.error,
@@ -756,6 +767,7 @@ class Store:
                 size=size,
                 fee_usd=fee_usd,
                 venue_fill_id=venue_fill_id,
+                market_title=market_title,
             )
             s.add(fill)
             row.filled = _dec(row.filled) + size
@@ -838,6 +850,63 @@ class Store:
                 }
                 for r in s.scalars(stmt).all()
             ]
+
+    def list_fills(
+        self,
+        *,
+        venue: VenueId | None = None,
+        market_id: str | None = None,
+        limit: int = 100,
+        before: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fills newest first. ``before`` is a cursor (the previous page's last id time)."""
+
+        stmt = select(FillRow).order_by(FillRow.created_at.desc(), FillRow.id.desc()).limit(limit)
+        if venue:
+            stmt = stmt.where(FillRow.venue == venue.value)
+        if market_id:
+            stmt = stmt.where(FillRow.market_id == market_id)
+        if before is not None:
+            stmt = stmt.where(FillRow.created_at < before)
+        with self.session() as s:
+            rows = s.scalars(stmt).all()
+            orders = {o.id: o for o in s.scalars(select(OrderRow)).all()}
+            return [
+                {
+                    "id": r.id,
+                    "order_id": r.order_id,
+                    "venue": r.venue,
+                    "market_id": r.market_id,
+                    "market_title": r.market_title or getattr(orders.get(r.order_id), "market_id", None),
+                    "outcome": r.outcome,
+                    "side": r.side,
+                    "price": str(r.price),
+                    "shares": str(r.size),
+                    "fee_usd": str(r.fee_usd),
+                    "mode": getattr(orders.get(r.order_id), "mode", "PAPER"),
+                    "at": r.created_at.isoformat(),
+                }
+                for r in rows
+            ]
+
+    def daily_pnl_series(self, days: int = 30, *, venue: VenueId | None = None) -> list[dict[str, Any]]:
+        """Realized PnL per day, oldest first."""
+
+        start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days - 1)
+        stmt = select(PnlRow).where(PnlRow.created_at >= start).order_by(PnlRow.created_at)
+        with self.session() as s:
+            rows = s.scalars(stmt).all()
+        buckets: dict[str, Decimal] = {}
+        for row in rows:
+            if venue and row.venue != venue.value:
+                continue
+            day = row.created_at.date().isoformat()
+            buckets[day] = buckets.get(day, Decimal("0")) + row.amount_usd
+        out: list[dict[str, Any]] = []
+        for offset in range(days):
+            day = (start + timedelta(days=offset)).date().isoformat()
+            out.append({"date": day, "realized_usd": str(buckets.get(day, Decimal("0")))})
+        return out
 
     # ------------------------------------------------------------- positions
     def list_positions(self, *, mode: Mode | None = None, venue: VenueId | None = None) -> list[Position]:
@@ -1113,3 +1182,241 @@ class Store:
         """Only used by scripts/tests; never by the live agent."""
 
         self.upsert_market(market)
+
+    # ------------------------------------------------------------ idempotency
+    def idempotent_get(self, key: str, scope: str, request_hash: str, *, ttl_hours: int = 24) -> dict[str, Any] | None:
+        """Return the stored result for ``key``, or None if this is a first attempt.
+
+        A key reused with a *different* body is a client bug, not a replay: the
+        stored row is dropped so the new request can be judged on its own.
+        """
+        cutoff = utcnow() - timedelta(hours=ttl_hours)
+        with self.session() as s:
+            row = s.get(IdempotencyRow, key)
+            if row is None:
+                return None
+            if row.created_at < cutoff:
+                s.delete(row)
+                return None
+            if row.scope != scope or row.request_hash != request_hash:
+                s.delete(row)
+                return None
+            return dict(row.response_json or {})
+
+    def idempotent_put(self, key: str, scope: str, request_hash: str, response: dict[str, Any]) -> None:
+        with self.session() as s:
+            if s.get(IdempotencyRow, key) is None:
+                s.add(
+                    IdempotencyRow(
+                        key=key,
+                        scope=scope,
+                        request_hash=request_hash,
+                        response_json=redact(response),
+                        created_at=utcnow(),
+                    )
+                )
+
+    # ---------------------------------------------------------------- step-up
+    def stepup_create(self, token_hash: str, session_id: str, action: str, expires_at: datetime) -> None:
+        with self.session() as s:
+            s.add(
+                StepupRow(
+                    token_hash=token_hash,
+                    session_id=session_id,
+                    action=action,
+                    expires_at=expires_at,
+                    created_at=utcnow(),
+                )
+            )
+
+    def stepup_consume(self, token_hash: str, session_id: str, action: str) -> bool:
+        """Consume a step-up token exactly once, bound to session and action."""
+
+        now = utcnow()
+        with self.session() as s:
+            row = s.get(StepupRow, token_hash)
+            if row is None or row.used_at is not None:
+                return False
+            if row.session_id != session_id or row.action != action:
+                return False
+            if row.expires_at < now:
+                return False
+            result = s.execute(
+                update(StepupRow)
+                .where(StepupRow.token_hash == token_hash, StepupRow.used_at.is_(None))
+                .values(used_at=now)
+            )
+            return bool(rowcount(result))
+
+    # -------------------------------------------------------------- allowlist
+    def allowlist_add(
+        self,
+        *,
+        label: str,
+        address: str,
+        network: str,
+        asset: str,
+        usable_at: datetime,
+    ) -> str:
+        from ..domain import stable_id
+
+        entry_id = stable_id("allowlist", address.lower(), network, asset)
+        with self.session() as s:
+            row = s.get(AllowlistRow, entry_id)
+            if row is None:
+                row = AllowlistRow(id=entry_id)
+                s.add(row)
+            row.label = label
+            row.address = address
+            row.network = network
+            row.asset = asset
+            row.added_at = utcnow()
+            row.usable_at = usable_at
+            row.removed_at = None
+        return entry_id
+
+    def allowlist_remove(self, entry_id: str) -> bool:
+        with self.session() as s:
+            row = s.get(AllowlistRow, entry_id)
+            if row is None or row.removed_at is not None:
+                return False
+            row.removed_at = utcnow()
+            return True
+
+    def allowlist_get(self, entry_id: str) -> dict[str, Any] | None:
+        with self.session() as s:
+            row = s.get(AllowlistRow, entry_id)
+            return self._allowlist(row) if row else None
+
+    def allowlist_list(self, *, include_removed: bool = False) -> list[dict[str, Any]]:
+        stmt = select(AllowlistRow).order_by(AllowlistRow.added_at.desc())
+        if not include_removed:
+            stmt = stmt.where(AllowlistRow.removed_at.is_(None))
+        with self.session() as s:
+            return [self._allowlist(r) for r in s.scalars(stmt).all()]
+
+    @staticmethod
+    def _allowlist(row: AllowlistRow) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "label": row.label,
+            "address": row.address,
+            "network": row.network,
+            "asset": row.asset,
+            "added_at": row.added_at,
+            "usable_at": row.usable_at,
+            "removed_at": row.removed_at,
+        }
+
+    # ------------------------------------------------------------- withdrawals
+    def create_withdrawal(self, **fields: Any) -> str:
+        from ..domain import stable_id
+
+        wid = stable_id(
+            "withdrawal",
+            fields["venue"],
+            str(fields["amount_usd"]),
+            fields["recipient"],
+            utcnow().isoformat(),
+        )
+        with self.session() as s:
+            s.add(
+                WithdrawalRow(
+                    id=wid,
+                    venue=fields["venue"],
+                    amount_usd=fields["amount_usd"],
+                    address_id=fields["address_id"],
+                    recipient=fields["recipient"],
+                    network=fields["network"],
+                    asset=fields["asset"],
+                    status=fields.get("status", "PENDING_HOLD"),
+                    hold_until=fields["hold_until"],
+                    bridge_address=fields.get("bridge_address"),
+                    tx_hash=fields.get("tx_hash"),
+                    fee_usd=fields.get("fee_usd", Decimal("0")),
+                    eta_seconds=fields.get("eta_seconds", 0),
+                    error=fields.get("error"),
+                )
+            )
+        return wid
+
+    def get_withdrawal(self, withdrawal_id: str) -> dict[str, Any] | None:
+        with self.session() as s:
+            row = s.get(WithdrawalRow, withdrawal_id)
+            return self._withdrawal(row) if row else None
+
+    def list_withdrawals(self, *, venue: VenueId | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        # Oldest first, so withdrawals are submitted in the order they were made.
+        stmt = select(WithdrawalRow).order_by(WithdrawalRow.created_at.asc(), WithdrawalRow.id.asc()).limit(limit)
+        if venue:
+            stmt = stmt.where(WithdrawalRow.venue == venue.value)
+        with self.session() as s:
+            return [self._withdrawal(r) for r in s.scalars(stmt).all()]
+
+    def transition_withdrawal(self, withdrawal_id: str, status: str, **fields: Any) -> bool:
+        with self.session() as s:
+            row = s.get(WithdrawalRow, withdrawal_id)
+            if row is None:
+                return False
+            row.status = status
+            for key, value in fields.items():
+                setattr(row, key, value)
+            if status == "SUBMITTED":
+                row.submitted_at = utcnow()
+            if status == "CONFIRMED":
+                row.confirmed_at = utcnow()
+            return True
+
+    def withdrawn_today(self, venue: VenueId, *, sent_only: bool = False) -> Decimal:
+        """Amount counted against today's withdrawal limit.
+
+        Pending withdrawals count too, so creating them reserves the room. Pass
+        ``sent_only=True`` to count only what has actually moved.
+        """
+
+        start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        statuses = ["SUBMITTED", "CONFIRMED"] if sent_only else ["PENDING_HOLD", "SUBMITTED", "CONFIRMED"]
+        stmt = select(func.coalesce(func.sum(WithdrawalRow.amount_usd), 0)).where(
+            WithdrawalRow.venue == venue.value,
+            WithdrawalRow.created_at >= start,
+            WithdrawalRow.status.in_(statuses),
+        )
+        with self.session() as s:
+            return Decimal(str(s.scalar(stmt) or 0))
+
+    @staticmethod
+    def _withdrawal(row: WithdrawalRow) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "venue": row.venue,
+            "amount_usd": row.amount_usd,
+            "address_id": row.address_id,
+            "recipient": row.recipient,
+            "network": row.network,
+            "asset": row.asset,
+            "status": row.status,
+            "hold_until": row.hold_until,
+            "bridge_address": row.bridge_address,
+            "tx_hash": row.tx_hash,
+            "fee_usd": row.fee_usd,
+            "eta_seconds": row.eta_seconds,
+            "error": row.error,
+            "created_at": row.created_at,
+            "submitted_at": row.submitted_at,
+            "confirmed_at": row.confirmed_at,
+        }
+
+    # ----------------------------------------------------------- hard ceilings
+    def hard_ceilings(self) -> dict[str, Decimal]:
+        with self.session() as s:
+            return {r.name: r.value for r in s.scalars(select(HardCeilingRow)).all()}
+
+    def set_hard_ceiling(self, name: str, value: Decimal, actor: str) -> None:
+        with self.session() as s:
+            row = s.get(HardCeilingRow, name)
+            if row is None:
+                row = HardCeilingRow(name=name)
+                s.add(row)
+            row.value = value
+            row.actor = actor
+            row.updated_at = utcnow()

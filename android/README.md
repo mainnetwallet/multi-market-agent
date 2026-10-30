@@ -1,97 +1,89 @@
-# Android app
+# Android app — full-control native client
 
-Native Android shell for the **multi-market-agent** PWA. It is deliberately
-thin: the agent functionality, controls, charts, chat and safety confirmations
-come from the deployed web app. The APK provides a launcher, persistent secure
-cookies, JavaScript dialogs, back navigation and a server URL setting.
+Kotlin · Jetpack Compose · Material 3. It talks to the agent's Control API
+directly — no WebView.
 
-## Deploy backend to Render first
+## What it does
 
-1. Push this repo to GitHub.
-2. In Render, create a Blueprint from `render.yaml` (or the existing service).
-3. Set `ADMIN_PASSWORD`, `SESSION_SECRET`, and optionally LLM/Tavily/Telegram/
-   venue secrets.
-4. Use the **HTTPS** Render URL, for example:
-   `https://multi-market-agent.onrender.com`
-5. Verify:
-   - `HEAD https://<service>.onrender.com/health` returns 200.
-   - Open the URL on your phone and log in.
-6. Render free instances sleep. Use an always-on plan, otherwise trading loops
-   and exit rules will not run while asleep.
+- **Home** — cash available (tap opens the Wallet), today's PnL, and one-tap
+  Pause and Cancel all. Both reduce risk, so neither uses hold-to-confirm.
+- **Markets** — the market list; tap a market to open the trade sheet.
+- **Trade sheet** — Buy/Sell, Yes/No, then order-type chips driven by the venue's
+  capabilities (Limit GTC, Limit with expiry GTD, Market FOK/FAK, Post-only where
+  supported). Shows the order book depth and the price history, both drawn with
+  Compose Canvas, plus price, size, cost, fee, max loss and payout *before* the
+  confirmation. Paper: one tap. Live: press and hold.
+- **Portfolio** — tabs for Positions, Orders, Rules and History. Positions offer
+  Sell 25/50/100%, Redeem (when the venue supports it) and Split/Merge on
+  Polymarket. Open orders can be cancelled one at a time or all at once; the
+  order card's Cancel is a single tap plus a normal dialog, because cancelling
+  reduces risk. History shows trade rows and a daily PnL chart.
+- **Wallet** — per-venue balances in the venue's own collateral asset (pUSD,
+  USD, USDC — never hardcoded), Deposit and Withdraw, Allowlist, Approvals and
+  withdrawal/deposit history. Where a venue has no API for something, a card
+  explains why and opens the venue in a Custom Tab.
+- **Settings** — a Security section with the mode, the app lock (on/off and the
+  background timeout), the per-trade cap, the hard ceiling (raisable with a
+  step-up token), the funds capability status and the heartbeat/resting-orders
+  state.
 
-The backend blueprint already uses `APP_ENV=production`, `HOST=0.0.0.0`,
-`PORT=10000`, a persistent disk at `/app/data`, SQLite, and `/health`.
+## App lock
 
-## Prebuilt APK
+The app re-locks after a chosen time in the background (default 5 minutes) and
+needs a biometric to open again. The lock only turns on when the device actually
+has a biometric enrolled — a lock that could not be opened would strand the
+operator, so without one Settings says "off (no biometric enrolled)" and the app
+opens normally.
 
-The first build is attached to the private repo release:
-
-**Download:** https://github.com/mainnetwallet/multi-market-agent/releases/tag/v1.0.0-android  
-**File:** `mm-agent-1.0.0-debug.apk`  
-**SHA256:** `80FDF368D6AF7EDE121465539402A5EE5953B899B50C91FA8AF60A4D63964AA4`
-
-This is a debug-signed sideload build, not a Play Store upload.
-
-## Build the APK
-
-### Option A — GitHub Actions (recommended)
-
-`.github/workflows/android.yml` runs Android unit tests and builds a debug APK on
-every `android/**` change. Open **Actions → Android APK → latest run → Artifacts**
-and download `mm-agent-debug-apk`.
-
-Optional: set a repository **variable** `ANDROID_BASE_URL` to your Render URL so
-the app opens it by default. The app still shows a server settings screen if the
-variable is empty.
-
-### Option B — Android Studio / local Gradle
-
-Requirements: JDK 17, Android SDK Platform 35, Build Tools 35.0.0.
+## Build
 
 ```bash
-cd android
-./gradlew testDebugUnitTest assembleDebug
-# Windows:
-gradlew.bat testDebugUnitTest assembleDebug
+export ANDROID_HOME=/path/to/android-sdk
+export JAVA_HOME=/path/to/jdk-17
+gradle -p android -PmmBaseUrl=https://your-service.onrender.com testDebugUnitTest assembleDebug
 ```
 
-APK: `android/app/build/outputs/apk/debug/app-debug.apk`
+The APK lands in `android/app/build/outputs/apk/debug/app-debug.apk`.
+`-PmmBaseUrl` sets the default server URL; the operator can change it on the
+login screen.
 
-Build with a pre-filled Render URL:
+CI builds the APK on every push to `android/**`:
+`.github/workflows/android.yml` → **Actions → Android APK**.
+
+## First run
+
+1. Enter the HTTPS URL of your deployed agent (for example
+   `https://multi-market-agent.onrender.com`).
+2. Sign in with the same `ADMIN_USERNAME` / `ADMIN_PASSWORD` as the website.
+   The token is stored in the app's private storage.
+3. The header always shows `VENUE | PAPER` or a red `VENUE | LIVE`.
+
+## Safety rules the app enforces
+
+- Every confirmation shows venue, market, outcome, side, order type, price, size,
+  cost, fee and Paper/Live before anything is sent.
+- A withdrawal confirmation shows the full final recipient address in
+  4-character groups, the network, the token, the amount, the fee and the hold
+  time.
+- Buttons are disabled while a request is in flight.
+- Order and withdrawal status is shown exactly as the server returns it. The app
+  never says "filled" or "sent" unless the server did.
+- Live actions that add risk or move money out use press-and-hold. Cancel and
+  Pause stay one tap plus a normal dialog.
+- When the server is unreachable, every money-adding and money-out action is
+  disabled. Cancel and Pause stay available.
+- `FLAG_SECURE` stays on, so a screenshot of the app is not a screenshot of your
+  wallet. The copy button covers addresses.
+- One idempotency key per user intent, reused if you tap again after a timeout
+  and discarded after a definite result.
+
+## Tests
 
 ```bash
-./gradlew -PmmBaseUrl=https://your-service.onrender.com assembleDebug
+gradle -p android testDebugUnitTest
 ```
 
-## Install on Android
-
-1. Copy `app-debug.apk` to the phone (USB, Drive, etc.).
-2. Allow "Install unknown apps" for the file manager/browser.
-3. Open the APK and install.
-4. Launch **MM Agent**. On first run, enter the Render HTTPS URL.
-5. Log in with the agent's `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
-
-The app uses a normal Android WebView cookie jar and never stores venue API keys
-or wallet keys. Clearing app data or using **Clear session** in the menu logs out.
-
-## Security / production notes
-
-- Only `https://` server URLs are accepted. Cleartext HTTP is disabled.
-- SSL certificate errors cancel the load; there is no bypass.
-- `target="_blank"` research links open in the external browser.
-- Release builds are unsigned by default. For Play Store or a trusted sideload,
-  create a keystore **outside the repo**, configure a `signingConfigs` block in
-  `app/build.gradle`, build `assembleRelease`, and never commit the keystore or
-  passwords.
-- Debug APK is signed by the standard Android debug key and is suitable for
-  sideload/testing, not Play Store.
-- The APK is a shell: updating the web app on Render updates the UI immediately;
-  only shell changes require a new APK.
-
-## Known limitations
-
-- No FCM push notifications; while the app is backgrounded, alerts are via
-  Telegram/email/uptime monitoring.
-- No offline trading (and there must never be offline order placement).
-- Android WebView version must be reasonably current (Android 8+/WebView updated
-  through Play Store). The app targets Android 15/API 35.
+Covers the money/price/Dhaka-time formatting, the trade sheet's order-type chips
+following the venue capabilities, the estimate shown before confirming, the
+withdraw flow's idempotency-key handling, and the offline gating that disables
+money actions when the server cannot be reached.

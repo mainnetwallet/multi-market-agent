@@ -5,8 +5,12 @@ and **Limitless**, switchable at runtime. One asyncio process runs the scanner,
 background book feed/cache, research/edge pipeline, risk engine, proposal queue,
 order execution, exit-rule monitor, FastAPI Control API, PWA, Telegram bot and an
 in-process event bus. The book feed refreshes the active venue's candidate books
-and exposes freshness/error counters in `/status`. A native Android WebView shell
-is included in `android/` and connects to the Render HTTPS deployment.
+and exposes freshness/error counters in `/status`.
+
+A **native Android app** (Kotlin, Jetpack Compose, Material 3) is included in
+`android/`. It talks to the Control API directly: it can see balances, trade by
+hand, cancel, sell, redeem, deposit, withdraw and read history. The agent's
+proposal flow stays one way to trade, not the only one.
 
 **Paper by default. No real order is ever sent without an operator-set live flag
 and a human action.** The build was completed and tested without live
@@ -19,29 +23,68 @@ credentials; public reads for all three venues were verified on 2026-10-30.
 1. **PAPER by default per venue.** A venue trades LIVE only when the operator
    edits `LIVE_POLYMARKET=true`, `LIVE_KALSHI=true` or
    `LIVE_LIMITLESS=true` in `.env`/host env and restarts. No API, chat, UI,
-   Telegram or LLM call can change it. Limits can only be lowered at runtime.
+   Telegram or LLM call can change it.
 2. **Fail closed.** Stale book/research, missing fee info, unit mismatch, feed
    errors, not-ready venue, UNKNOWN order, market closing within 5 minutes,
    synthetic-looking depth, missing research or any risk-cap breach means no
    entry.
 3. **UNKNOWN is never resent.** A timeout/5xx becomes `UNKNOWN`, blocks that
    market pending reconciliation and is surfaced in `/status` and Telegram.
-4. **Human action for every real order.** Approve a proposal (UI/Telegram) or,
-   if `CHAT_AUTOPILOT=true`, issue an explicit chat command. `/panic` always
-   needs a second confirmation.
-5. **No withdrawals or transfers in v1.** Move funds on the venue's own UI.
-6. **Hard caps** (code, not config): $2/trade, 4% of bankroll per event, 15%
-   total exposure, 5% daily loss then pause, 8 open positions. Env may lower but
-   never raise them.
-7. Dedicated trading wallets/accounts with small funds only. Eligibility, KYC
-   and geo restrictions are the operator's responsibility; the agent never
-   bypasses venue rules.
-8. Sizing uses `BANKROLL_USD`, optionally overridden per venue with
-   `BANKROLL_POLYMARKET`, `BANKROLL_KALSHI`, `BANKROLL_LIMITLESS` or
-   `BANKROLL_FAKE`. Caps remain percentage-based and code-capped.
+4. **Human action for every real order.** Approve a proposal (UI/Telegram), trade
+   by hand from the app, or, if `CHAT_AUTOPILOT=true`, issue an explicit chat
+   command. `/panic` always needs a second confirmation.
+5. **Manual orders go through the same checks.** An order the operator places by
+   hand passes the same risk engine, caps, pause state and audit trail as an agent
+   proposal. The operator's own order is their approval, not an exemption.
+6. **Every money-moving POST needs an `Idempotency-Key`.** The server stores
+   key → result for 24 h and replays the first result, so a retry after a timeout
+   can never double-submit.
+7. **Step-up auth for anything that moves money or raises a limit.** A step-up
+   token is single-use, bound to the session and to one action, and expires in
+   120 s. The password is never stored or logged.
+8. **Funds are off by default.** The funds module (`FUNDS_ENABLED=true`) uses its
+   own signer secret, never a trading key, and never moves money in PAPER mode.
+9. **Per-trade cap is a stored setting, not a constant.** The default is still $2;
+   raising it from the app needs a step-up token, and the bankroll and percentage
+   caps can never exceed it. The other caps stay code-pinned: 4% of bankroll per
+   event, 15% total exposure, 5% daily loss then pause, 8 open positions.
+10. Dedicated trading wallets/accounts with small funds only. Eligibility, KYC
+    and geo restrictions are the operator's responsibility; the agent never
+    bypasses venue rules.
+11. Sizing uses `BANKROLL_USD`, optionally overridden per venue with
+    `BANKROLL_POLYMARKET`, `BANKROLL_KALSHI`, `BANKROLL_LIMITLESS` or
+    `BANKROLL_FAKE`.
 
 Full security notes and rotation steps: [SECURITY.md](SECURITY.md). Venue
 reconnaissance and current API differences: [DOCS_FINDINGS.md](DOCS_FINDINGS.md).
+The full-control build plan and support matrix:
+[PLAN_FULL_CONTROL.md](PLAN_FULL_CONTROL.md).
+
+---
+
+## What each venue allows through its API
+
+The app reads this from `GET /v1/capabilities` rather than guessing. Where a venue
+has no API for something, the app says so with the reason and offers a link to the
+venue's own site.
+
+| Capability | Polymarket | Kalshi | Limitless |
+|---|---|---|---|
+| Limit order GTC | yes | yes | yes |
+| Limit order with expiry (GTD) | yes | no | no |
+| Market order | yes (FOK/FAK) | yes (IOC/FOK) | yes (FAK/FOK) |
+| Post-only | yes | yes | no |
+| Cancel one / all | yes | yes | yes |
+| Amend or decrease | no | yes | no |
+| Deposit | yes (Bridge) | no — deep link | no — transfer to your wallet on Base |
+| Withdraw | yes (Bridge) | no — deep link | no for a normal key |
+| Redeem | yes | settles automatically | on-chain only |
+| Merge / split | yes | no | partner server-wallet only |
+| Approvals | yes | not needed | yes |
+| Price history | yes | yes | no documented endpoint |
+
+Every cell was verified against the venue's own docs on 2026-10-30; the links and
+the exact endpoints are in [DOCS_FINDINGS.md](DOCS_FINDINGS.md).
 
 ---
 
@@ -328,6 +371,65 @@ transitions are committed before network side effects; UNKNOWN never transitions
 back to SUBMITTING. Reconciliation checks open orders first and then terminal
 trade history. See `src/mm_agent/store/repo.py`.
 
+The full-control build adds `idempotency_keys`, `stepup_tokens`,
+`withdrawal_allowlist`, `withdrawals` and `hard_ceilings`. The `orders` table
+gains `order_type`, `post_only` and `client_ref`; `fills` gains `market_title`.
+
+---
+
+## Trading by hand (the app, or the API)
+
+The agent's proposal flow is one way to trade. The operator can also place orders
+directly. Every manual order passes the same risk engine, caps, pause state and
+audit trail.
+
+```bash
+# Sign in first, then send the session token as a Bearer.
+curl -s -X POST https://<service>/v1/orders/limit \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H "Content-Type: application/json" \
+  -d '{"venue":"kalshi","market_id":"HIGHNY-24JAN01-T60","outcome":"YES",
+       "side":"BUY","price":"0.57","shares":"10","tif":"GTC"}'
+```
+
+The routes are `POST /v1/orders/limit`, `POST /v1/orders/market`,
+`POST /v1/positions/sell`, `POST /v1/orders/{id}/cancel`,
+`POST /v1/orders/cancel-all` and `POST /v1/orders/{id}/amend`. Cancellations are
+never blocked by caps; they reduce risk. `amend` returns `supported: false` on a
+venue without it, and the app then offers cancel-then-new as two separate audited
+actions rather than hiding a combined call.
+
+---
+
+## Funds (off by default)
+
+The funds module lives in `src/mm_agent/funds/` and every route refuses with a
+reason unless `FUNDS_ENABLED=true`. It uses its own signer secret
+(`FUNDS_SIGNER_PRIVATE_KEY`), never a trading key.
+
+```dotenv
+FUNDS_ENABLED=true
+FUNDS_SIGNER_PRIVATE_KEY=0x...
+FUNDS_WITHDRAWAL_DAILY_LIMIT_USD=25
+FUNDS_WITHDRAWAL_HOLD_MINUTES=10
+FUNDS_ALLOWLIST_COOLING_HOURS=24
+```
+
+A withdrawal goes `PENDING_HOLD` → `SUBMITTED` → `CONFIRMED`, or `FAILED` /
+`CANCELLED` / `UNKNOWN`. It is submitted exactly once and never auto-retried;
+UNKNOWN keeps the transaction hash and asks the operator to look. The bridge
+address is requested only when the hold ends, and is checked against the
+withdrawal record before anything is sent. The collateral transfer to that
+address is signed by the funds signer and sent once; the bridge then delivers
+it to the recipient, and the bridge's status endpoint moves the withdrawal to
+`CONFIRMED`.
+
+**Read [SECURITY.md](SECURITY.md) before enabling this.** Polymarket withdrawals
+need the wallet owner's signature, so if you point the funds signer at your
+trading key, that key becomes a withdrawal key. The code makes the choice
+visible rather than making it for you.
+
 ---
 
 ## Known gaps / limitations
@@ -361,9 +463,30 @@ trade history. See `src/mm_agent/store/repo.py`.
   refreshes through the adapter `subscribe_books` contract, not each venue's
   native stream. Native WS can replace the feed without changing the pipeline.
 - **Android push notifications** are not implemented; background alerts rely on
-  Telegram/email/uptime monitoring. The app is a secure WebView shell and works
-  with the Render HTTPS deployment and the responsive PWA.
-- Cross-venue market matching (optional P8) is not built. No automatic arbitrage.
+  Telegram/email/uptime monitoring. The app talks to the Control API directly and
+  works with the Render HTTPS deployment.
+- **Cross-venue market matching** is not built. No automatic arbitrage.
+- **The Polymarket order heartbeat is deliberately off.** Its first accepted send
+  enables timeout cancellation for every open order and there is no disarm, so a
+  backend restart would silently cancel resting orders. Turning it on needs a
+  setting and an explicit acknowledgement; it is not implemented in this build.
+- **Approvals are reported, not automated.** `GET /v1/approvals` shows which venues
+  need an on-chain allowance; `POST /v1/approvals` refuses rather than guessing a
+  spender or an amount. The approval detail per venue is not verified for
+  Limitless, so nothing is automated there.
+- **Limitless price history has no documented endpoint**, so the market chart is
+  not available for that venue.
+- **The withdraw flow signs and sends the on-chain transfer, but the whole path
+  is unverified against a live venue.** The ERC-20 transfer is built, signed and
+  sent through the configured RPC, and the bridge's status endpoint moves the
+  withdrawal to `CONFIRMED` — but no real transfer has been made, so the gas,
+  the bridge's own behaviour and the pUSD contract are unproven. Treat the funds
+  module as unverified for real money until one small withdrawal completes
+  end to end.
+- **Kalshi deposit and withdrawal initiation** do not exist in the API; the app
+  shows the read-only history and deep-links to Kalshi.
+- **Limitless withdrawal, redeem, split and merge** are partner server-wallet
+  features. A normal API key gets `supported: false` with the reason.
 
 ---
 
