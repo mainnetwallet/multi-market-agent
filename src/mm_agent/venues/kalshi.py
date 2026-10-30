@@ -561,7 +561,11 @@ class KalshiVenue(HttpVenue):
                     detail="opt-in only; pass --i-accept-real-money",
                 )
             )
-        status = DoctorStatus.OK if all(c.status is DoctorStatus.OK for c in checks) else DoctorStatus.DEGRADED
+        status = (
+            DoctorStatus.OK
+            if all(c.status in {DoctorStatus.OK, DoctorStatus.SKIPPED} for c in checks)
+            else DoctorStatus.DEGRADED
+        )
         reason = "" if auth_ok else "credentials absent or auth failed; PAPER only"
         return DoctorReport(venue=self.id, status=status, checks=tuple(checks), reason=reason)
 

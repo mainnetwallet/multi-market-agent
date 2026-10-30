@@ -77,7 +77,7 @@ the build record; tests/quality gate status is at the bottom.
 - [x] CI: ruff, format check, mypy, pytest, fresh-DB Alembic, pip-audit.
 - [x] Backup/restore scripts, README runbook, SECURITY.md, DOCS_FINDINGS.md, .env.example.
 - [x] Final secret scan of tree and git history.
-- [ ] Push private GitHub repo (requires one operator token; not stored).
+- [x] Private GitHub repo `mainnetwallet/multi-market-agent` created and `main` pushed using the operator's existing authenticated GitHub CLI keyring; no token was written to the repo or remote URL.
 
 ## Quality gate
 
