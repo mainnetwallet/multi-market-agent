@@ -100,19 +100,11 @@ class ApiClient(
     }
 }
 
-/** JSONArray is not a Kotlin collection; these make it iterable. */
+/** JSONArray is not a Kotlin collection; this makes it iterable. */
 fun JSONArray.objects(): List<JSONObject> {
     val out = ArrayList<JSONObject>(length())
     for (index in 0 until length()) {
         optJSONObject(index)?.let { out.add(it) }
-    }
-    return out
-}
-
-fun JSONArray.strings(): List<String> {
-    val out = ArrayList<String>(length())
-    for (index in 0 until length()) {
-        out.add(optString(index))
     }
     return out
 }

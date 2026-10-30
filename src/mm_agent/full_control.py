@@ -33,7 +33,6 @@ from .domain import (
     OrderRequest,
     OrderType,
     Outcome,
-    Position,
     Side,
     VenueId,
     quantize_shares,
@@ -386,7 +385,7 @@ class FullControlService:
                 f"{target.value} needs at least {adapter.caps.min_notional_usd} of notional",
                 code="below_min_notional",
             )
-        if self.paused_refusal():
+        if self.agent.paused:
             raise FullControlError("the agent is paused; resume before trading", code="agent_paused")
 
         client_order_id = client_id or f"{target.value[:3]}-{uuid.uuid4().hex[:22]}"
@@ -444,9 +443,6 @@ class FullControlService:
             "message": result.message,
             "mode": self.registry.mode(target).value,
         }
-
-    def paused_refusal(self) -> bool:
-        return bool(self.agent.paused)
 
     async def sell_position(
         self,
@@ -723,10 +719,3 @@ class FullControlService:
         result = await self.registry.get(target).split_merge(market_id=market_id, action=action)
         self.store.audit(actor, f"position.{action}", {"venue": target.value, "market_id": market_id})
         return {"venue": target.value, "market_id": market_id, "action": action, "result": result}
-
-
-def positions_by_venue(store: Store) -> dict[str, list[Position]]:
-    out: dict[str, list[Position]] = {}
-    for position in store.list_positions():
-        out.setdefault(position.venue.value, []).append(position)
-    return out

@@ -19,10 +19,7 @@ data class AllowlistEntry(
     val network: String,
     val asset: String,
     val usableAt: String?,
-) {
-    /** An entry is usable once its cooling period has passed. */
-    fun isCooledDown(nowMillis: Long): Boolean = usableAt == null
-}
+)
 
 data class WithdrawPreview(
     val feeUsd: String = "0",
@@ -91,6 +88,64 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
                 _state.value = _state.value.copy(entries = entries)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message)
+            }
+        }
+    }
+
+    /** Add a recipient. Needs a step-up token; the server enforces the cooling period. */
+    fun addAllowlistEntry(label: String, address: String, network: String, asset: String, stepupToken: String) {
+        viewModelScope.launch {
+            try {
+                api.post(
+                    "/v1/funds/allowlist",
+                    ApiClient.jsonOf(
+                        "label" to label,
+                        "address" to address,
+                        "network" to network,
+                        "asset" to asset,
+                    ),
+                    stepupToken = stepupToken,
+                )
+                _state.value = _state.value.copy(error = null)
+                loadAllowlist()
+            } catch (e: ApiClient.ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message)
+            }
+        }
+    }
+
+    /** Removal is immediate; it never needs a step-up token. */
+    fun removeAllowlistEntry(entryId: String) {
+        viewModelScope.launch {
+            try {
+                api.delete("/v1/funds/allowlist/$entryId")
+                _state.value = _state.value.copy(error = null)
+                loadAllowlist()
+            } catch (e: ApiClient.ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message)
+            }
+        }
+    }
+
+    /** A step-up token for the allowlist action. */
+    fun stepUpForAllowlist(password: String, onToken: (String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val response = api.post(
+                    "/v1/auth/stepup",
+                    ApiClient.jsonOf("password" to password, "action" to "allowlist_add"),
+                )
+                onToken(response.optString("stepup_token"))
+            } catch (e: ApiClient.ApiException) {
+                _state.value = _state.value.copy(error = e.message)
+                onToken(null)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message)
+                onToken(null)
             }
         }
     }

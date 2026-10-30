@@ -35,10 +35,6 @@ data class TradeDraft(
         get() = listOf("GTC", "GTD", "FAK", "FOK").filter { it in availableOrderTypes }
 
     val isMarketOrder: Boolean get() = orderType == "FAK" || orderType == "FOK"
-
-    /** The worst price a market order may pay, derived from the entered price. */
-    val effectivePrice: BigDecimal?
-        get() = price.toBigDecimalOrNull()
 }
 
 /** Everything the confirmation sheet has to show, computed before sending. */

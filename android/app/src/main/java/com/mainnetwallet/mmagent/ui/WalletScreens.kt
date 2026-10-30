@@ -40,15 +40,20 @@ import org.json.JSONObject
 
 /**
  * The Wallet screen: per-venue balances with the venue's own collateral asset
- * name, deposit and withdraw entries, allowlist, approvals and history.
+ * name, deposit and withdraw entries, the allowlist, approvals and history.
  */
 @Composable
 fun WalletScreen(
     balances: List<JSONObject>,
     capabilities: JSONObject?,
+    allowlist: List<JSONObject>,
+    approvals: List<JSONObject>,
+    fundsHistory: List<JSONObject>,
     onDeposit: (venue: String) -> Unit,
     onWithdraw: (venue: String) -> Unit,
     onOpenVenue: (venue: String, url: String) -> Unit,
+    onAddAllowlist: () -> Unit,
+    onRemoveAllowlist: (String) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -62,6 +67,175 @@ fun WalletScreen(
         if (balances.isEmpty()) {
             item { Text("No venue balances available.", style = MaterialTheme.typography.bodyMedium) }
         }
+
+        item {
+            SectionHeader("Allowlist", "${allowlist.size} recipient(s)")
+            Spacer(Modifier.height(6.dp))
+            if (allowlist.isEmpty()) {
+                Text(
+                    "No withdrawal recipients yet. Add one before withdrawing; a new address waits out a cooling period.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                allowlist.forEach { entry ->
+                    RowCard(
+                        title = entry.optString("label"),
+                        subtitle = "${entry.optString("network")} · ${entry.optString("asset")}",
+                        detail = Format.groupAddress(entry.optString("address")),
+                        trailing = {
+                            Text(
+                                "Remove",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onRemoveAllowlist(entry.optString("id")) }
+                                    .padding(6.dp),
+                            )
+                        },
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            ConfirmButton("Add recipient", enabled = true, onClick = onAddAllowlist)
+        }
+
+        item {
+            SectionHeader("Approvals")
+            Spacer(Modifier.height(6.dp))
+            if (approvals.isEmpty()) {
+                Text("No approval data available.", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                approvals.forEach { approval ->
+                    val venue = approval.optString("venue")
+                    val needed = approval.optBoolean("needed")
+                    RowCard(
+                        title = venue.replaceFirstChar { it.uppercase() },
+                        subtitle = if (needed) {
+                            "Needs an on-chain allowance"
+                        } else {
+                            "No on-chain approval needed"
+                        },
+                        detail = approval.optString("reason"),
+                        trailing = {
+                            if (needed) {
+                                Text(
+                                    "Guide",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { onOpenVenue(venue, approval.optString("official_url")) }
+                                        .padding(6.dp),
+                                )
+                            }
+                        },
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
+        }
+
+        item {
+            SectionHeader("Deposit and withdrawal history")
+            Spacer(Modifier.height(6.dp))
+            if (fundsHistory.isEmpty()) {
+                Text("No history reported by the venues.", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                fundsHistory.forEach { row ->
+                    RowCard(
+                        title = "${row.optString("kind")} ${Format.money(row.optString("amount_usd"))}",
+                        subtitle = "${row.optString("venue")} · ${row.optString("status")}",
+                        detail = "${row.optString("type")} · fee ${Format.money(row.optString("fee_usd"))}",
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The deposit sheet: where to send money, in the asset and network the venue
+ * itself lists. The asset name is never hardcoded.
+ */
+@Composable
+fun DepositScreen(
+    venue: String,
+    info: JSONObject?,
+    error: String?,
+    onCopy: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(16.dp),
+    ) {
+        SectionHeader("Deposit", venue.uppercase())
+        ErrorNote(error)
+        Spacer(Modifier.height(10.dp))
+
+        if (info == null || !info.optBoolean("supported")) {
+            val reason = info?.optString("reason").orEmpty()
+            UnsupportedCard(
+                title = "No deposit API",
+                reason = reason.ifBlank { "This venue does not accept deposits through the API." },
+            )
+        } else {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    ValueRow("Network", info.optString("network"))
+                    ValueRow("Asset", info.optString("asset"), emphasise = true)
+                    ValueRow("Minimum", Format.money(info.optString("min_amount")))
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Send to",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        Format.groupAddress(info.optString("address")),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ConfirmButton(
+                        "Copy address",
+                        enabled = true,
+                        onClick = { onCopy(info.optString("address")) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            val warnings = info.optJSONArray("warnings")
+            if (warnings != null && warnings.length() > 0) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Before you send", style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.height(6.dp))
+                        for (index in 0 until warnings.length()) {
+                            Text(
+                                "• ${warnings.optString(index)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Palette.Alert,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        ConfirmButton("Back", enabled = true, onClick = onBack)
     }
 }
 

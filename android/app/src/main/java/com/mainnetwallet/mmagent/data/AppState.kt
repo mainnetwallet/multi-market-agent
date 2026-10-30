@@ -39,6 +39,9 @@ data class AppUiState(
     val rules: List<JSONObject> = emptyList(),
     val trades: List<JSONObject> = emptyList(),
     val pnlDays: List<Pair<String, BigDecimal>> = emptyList(),
+    val allowlist: List<JSONObject> = emptyList(),
+    val approvals: List<JSONObject> = emptyList(),
+    val fundsHistory: List<JSONObject> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
     val loggedIn: Boolean = false,
@@ -125,6 +128,9 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 val rules = runCatching { api.get("/v1/rules") }.getOrNull()
                 val trades = runCatching { api.get("/v1/trades?limit=50") }.getOrNull()
                 val pnl = runCatching { api.get("/v1/pnl/daily?days=30") }.getOrNull()
+                val allowlist = runCatching { api.get("/v1/funds/allowlist") }.getOrNull()
+                val approvals = runCatching { api.get("/v1/approvals") }.getOrNull()
+                val fundsHistory = runCatching { api.get("/v1/funds/history") }.getOrNull()
 
                 val capabilities = status.optJSONObject("capabilities")
                 val limits = status.optJSONObject("limits")
@@ -162,6 +168,9 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                     pnlDays = ApiClient.arrayOf(pnl, "days").objects().map { obj ->
                         obj.optString("date") to java.math.BigDecimal(obj.optString("realized_usd", "0"))
                     },
+                    allowlist = ApiClient.arrayOf(allowlist, "entries").objects(),
+                    approvals = ApiClient.arrayOf(approvals, "approvals").objects(),
+                    fundsHistory = ApiClient.arrayOf(fundsHistory, "history").objects(),
                     loading = false,
                     loggedIn = true,
                 )

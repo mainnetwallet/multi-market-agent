@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -210,12 +210,9 @@ class FundsService:
             "Send only the asset and chain shown here; anything else can be lost.",
             "Deposits below the minimum are not processed by the bridge.",
             "Wrong-token recovery: https://recovery.polymarket.com",
+            "Polymarket funds sit in the funder/proxy wallet, which can differ from the "
+            "signing wallet. Confirm you are sending to the funder wallet.",
         ]
-        if self._polymarket_funder_wallet() and self._polymarket_funder_wallet() != wallet:
-            warnings.append(
-                "Your funds sit in the funder/proxy wallet, which differs from the signing wallet. "
-                "Confirm you are sending to the funder wallet."
-            )
         return DepositInfo(
             supported=True,
             network=str(chosen.get("chainName") or chain_id),
@@ -249,9 +246,6 @@ class FundsService:
 
     def _polymarket_wallet(self) -> str:
         return self.settings.polymarket_wallet_address.strip()
-
-    def _polymarket_funder_wallet(self) -> str:
-        return ""
 
     # ------------------------------------------------------------- allowlist
     def allowlist_add(
@@ -538,23 +532,9 @@ class FundsService:
     def list_withdrawals(self, *, venue: VenueId | None = None) -> dict[str, Any]:
         return {"withdrawals": self.store.list_withdrawals(venue=venue)}
 
-    async def funds_history(self, venue: VenueId | None = None) -> dict[str, Any]:
-        """Venue-reported deposits and withdrawals. Read-only everywhere."""
-
-        from ..venues.registry import VenueRegistry  # noqa: F401  (typing only)
-
-        return {"history": []}
-
 
 # pUSD on Polygon, the Polymarket collateral the bridge unwraps from.
 POLYMARKET_PUSD = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"
 
 
-def parse_amount(raw: Any) -> Decimal:
-    try:
-        return Decimal(str(raw))
-    except (InvalidOperation, ValueError, TypeError) as exc:
-        raise FundsError("amount must be a decimal number", code="bad_amount", status=400) from exc
-
-
-__all__ = ["DepositInfo", "FundsError", "FundsService", "parse_amount"]
+__all__ = ["DepositInfo", "FundsError", "FundsService"]

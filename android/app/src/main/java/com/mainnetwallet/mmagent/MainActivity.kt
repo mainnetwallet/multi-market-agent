@@ -12,13 +12,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.browser.customtabs.CustomTabsIntent
 import com.mainnetwallet.mmagent.data.ApiClient
 import com.mainnetwallet.mmagent.data.AppViewModel
 import com.mainnetwallet.mmagent.data.TradeSheetViewModel
 import com.mainnetwallet.mmagent.data.WithdrawViewModel
 import com.mainnetwallet.mmagent.ui.AppScaffold
+import com.mainnetwallet.mmagent.ui.AllowlistAddScreen
+import com.mainnetwallet.mmagent.ui.DepositScreen
 import com.mainnetwallet.mmagent.ui.HomeScreen
 import com.mainnetwallet.mmagent.ui.LoginScreen
 import com.mainnetwallet.mmagent.ui.MMAgentTheme
@@ -57,6 +61,9 @@ class MainActivity : ComponentActivity() {
                 var tab by remember { mutableStateOf(Tab.HOME) }
                 var overlay by remember { mutableStateOf<String?>(null) }
                 var selectedVenue by remember { mutableStateOf("") }
+                var depositInfo by remember { mutableStateOf<org.json.JSONObject?>(null) }
+                var depositError by remember { mutableStateOf<String?>(null) }
+                val clipboard = LocalClipboardManager.current
 
                 val tradeVm = remember { TradeSheetViewModel(api) }
                 val tradeState by tradeVm.state.collectAsState()
@@ -94,6 +101,27 @@ class MainActivity : ComponentActivity() {
                             onAmount = { tradeVm.setAmount(it) },
                             onSubmit = { tradeVm.submit() },
                             onCancel = { overlay = null },
+                        )
+
+                        "deposit" -> DepositScreen(
+                            venue = selectedVenue,
+                            info = depositInfo,
+                            error = depositError,
+                            onCopy = { address -> clipboard.setText(AnnotatedString(address)) },
+                            onBack = { overlay = null },
+                        )
+
+                        "allowlist" -> AllowlistAddScreen(
+                            error = withdrawState.error,
+                            busy = withdrawState.submitting,
+                            onAdd = { label, address, network, asset, password ->
+                                withdrawVm.stepUpForAllowlist(password) { token ->
+                                    if (token != null) {
+                                        withdrawVm.addAllowlistEntry(label, address, network, asset, token)
+                                    }
+                                }
+                            },
+                            onBack = { overlay = null; withdrawState.error?.let { } },
                         )
 
                         "withdraw" -> WithdrawReviewScreen(
@@ -143,9 +171,18 @@ class MainActivity : ComponentActivity() {
                             Tab.WALLET -> WalletScreen(
                                 balances = state.balances,
                                 capabilities = state.status.capabilities,
+                                allowlist = state.allowlist,
+                                approvals = state.approvals,
+                                fundsHistory = state.fundsHistory,
                                 onDeposit = { venue ->
                                     selectedVenue = venue
+                                    depositInfo = null
+                                    depositError = null
                                     overlay = "deposit"
+                                    loadDepositInfo(api, venue) { info, error ->
+                                        depositInfo = info
+                                        depositError = error
+                                    }
                                 },
                                 onWithdraw = { venue ->
                                     withdrawVm.reset()
@@ -154,6 +191,11 @@ class MainActivity : ComponentActivity() {
                                     overlay = "withdraw"
                                 },
                                 onOpenVenue = { _, url -> openInBrowser(url) },
+                                onAddAllowlist = {
+                                    withdrawVm.reset()
+                                    overlay = "allowlist"
+                                },
+                                onRemoveAllowlist = { id -> withdrawVm.removeAllowlistEntry(id) },
                             )
 
                             Tab.SETTINGS -> com.mainnetwallet.mmagent.ui.SettingsScreen(
@@ -214,6 +256,24 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             runCatching {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            }
+        }
+    }
+
+    /** Read the venue's own deposit information: chain, asset, address and minimum. */
+    private fun loadDepositInfo(
+        api: ApiClient,
+        venue: String,
+        onLoaded: (org.json.JSONObject?, String?) -> Unit,
+    ) {
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                val response = api.get("/v1/funds/$venue/deposit")
+                onLoaded(response, null)
+            } catch (e: ApiClient.ApiException) {
+                onLoaded(null, e.message)
+            } catch (e: Exception) {
+                onLoaded(null, e.message)
             }
         }
     }

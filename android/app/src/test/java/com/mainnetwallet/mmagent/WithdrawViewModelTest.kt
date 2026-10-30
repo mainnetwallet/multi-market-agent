@@ -56,4 +56,11 @@ class WithdrawViewModelTest {
         vm.setAmount("10")
         assertEquals(null, vm.state.value.stepUpToken)
     }
+
+    @Test
+    fun removingArecipientIsOfferedWithoutAStepUp() {
+        // Removal reduces risk, so the server takes no step-up token for it.
+        vm.reset()
+        assertEquals(WithdrawStep.AMOUNT, vm.state.value.step)
+    }
 }
