@@ -10,12 +10,13 @@ directly — no WebView.
 - **Markets** — the market list; tap a market to open the trade sheet.
 - **Trade sheet** — Buy/Sell, Yes/No, then order-type chips driven by the venue's
   capabilities (Limit GTC, Limit with expiry GTD, Market FOK/FAK, Post-only where
-  supported). Shows price, size, cost, fee, max loss and payout *before* the
+  supported). Shows the order book depth and the price history, both drawn with
+  Compose Canvas, plus price, size, cost, fee, max loss and payout *before* the
   confirmation. Paper: one tap. Live: press and hold.
-- **Portfolio** — tabs for Positions, Orders, Rules and History. Open orders can
-  be cancelled one at a time or all at once; positions offer Sell, Redeem (when
-  the venue supports it) and Merge/Split on Polymarket. History shows trade rows
-  and a daily PnL chart.
+- **Portfolio** — tabs for Positions, Orders, Rules and History. Positions offer
+  Sell 25/50/100%, Redeem (when the venue supports it) and Split/Merge on
+  Polymarket. Open orders can be cancelled one at a time or all at once. History
+  shows trade rows and a daily PnL chart.
 - **Wallet** — per-venue balances in the venue's own collateral asset (pUSD,
   USD, USDC — never hardcoded), Deposit and Withdraw, Allowlist, Approvals and
   withdrawal/deposit history. Where a venue has no API for something, a card
