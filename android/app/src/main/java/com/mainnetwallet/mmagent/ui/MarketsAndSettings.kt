@@ -1,5 +1,6 @@
 package com.mainnetwallet.mmagent.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +24,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import com.mainnetwallet.mmagent.data.AppUiState
 import com.mainnetwallet.mmagent.data.Format
@@ -68,17 +71,22 @@ fun MarketsScreen(
     }
 }
 
-/** Settings, including the new Security section. */
+/** Settings, including the Security section. */
 @Composable
 fun SettingsScreen(
     state: AppUiState,
+    appLockEnabled: Boolean,
+    appLockAvailable: Boolean,
+    appLockTimeoutMinutes: Int,
     onRaiseCeiling: (name: String, value: String, stepupToken: String?) -> Unit,
+    onSetAppLock: (enabled: Boolean, timeoutMinutes: Int) -> Unit,
     onLogout: () -> Unit,
     onOpenVenue: (url: String) -> Unit,
 ) {
     var newCeiling by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var lockTimeout by remember { mutableStateOf(appLockTimeoutMinutes.toString()) }
     val capabilities = state.status.capabilities
 
     LazyColumn(
@@ -94,7 +102,46 @@ fun SettingsScreen(
                 Column(Modifier.padding(16.dp)) {
                     SectionHeader("Security")
                     ValueRow("Mode", state.status.mode, emphasise = true)
-                    ValueRow("App lock", "on in LIVE")
+                    // The lock is only on when this device can actually open it.
+                    ValueRow(
+                        label = "App lock",
+                        value = when {
+                            !appLockAvailable -> "off (no biometric enrolled)"
+                            appLockEnabled -> "on · locks after $appLockTimeoutMinutes min"
+                            else -> "off"
+                        },
+                    )
+                    if (appLockAvailable) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                if (appLockEnabled) "☑" else "☐",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Lock the app",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onSetAppLock(!appLockEnabled, lockTimeout.toIntOrNull() ?: 5) }
+                                    .padding(6.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = lockTimeout,
+                            onValueChange = { lockTimeout = it },
+                            label = { Text("Lock after (minutes, 0-60)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        ConfirmButton(
+                            "Save lock timeout",
+                            enabled = lockTimeout.toIntOrNull() in 0..60,
+                            onClick = { onSetAppLock(appLockEnabled, lockTimeout.toIntOrNull() ?: 5) },
+                        )
+                    }
                     ValueRow("Per-trade cap", Format.money(state.status.maxTradeUsd))
                     ValueRow("Hard ceiling", Format.money(state.status.hardCeilingMaxTrade))
                     ValueRow("Withdrawal daily limit", "set on the server")

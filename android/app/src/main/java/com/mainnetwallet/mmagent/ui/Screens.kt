@@ -221,6 +221,29 @@ fun HomeScreen(
     }
 }
 
+/** The lock screen: shown instead of everything else when the app re-locks. */
+@Composable
+fun LockedScreen(onUnlock: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("MM Agent is locked", style = MaterialTheme.typography.displaySmall)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Confirm it is you to see your balances and positions.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(24.dp))
+        ConfirmButton("Unlock", enabled = true, onClick = onUnlock)
+    }
+}
+
 /** The login screen: server URL, username, password. */
 @Composable
 fun LoginScreen(

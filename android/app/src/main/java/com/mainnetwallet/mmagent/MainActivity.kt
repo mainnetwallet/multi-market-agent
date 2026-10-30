@@ -7,6 +7,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.fragment.app.FragmentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.browser.customtabs.CustomTabsIntent
 import com.mainnetwallet.mmagent.data.ApiClient
+import com.mainnetwallet.mmagent.data.AppLock
 import com.mainnetwallet.mmagent.data.AppViewModel
 import com.mainnetwallet.mmagent.data.TradeSheetViewModel
 import com.mainnetwallet.mmagent.data.WithdrawViewModel
@@ -30,6 +32,7 @@ import com.mainnetwallet.mmagent.ui.AllowlistAddScreen
 import com.mainnetwallet.mmagent.ui.DepositScreen
 import com.mainnetwallet.mmagent.ui.HomeScreen
 import com.mainnetwallet.mmagent.ui.LoginScreen
+import com.mainnetwallet.mmagent.ui.LockedScreen
 import com.mainnetwallet.mmagent.ui.MMAgentTheme
 import com.mainnetwallet.mmagent.ui.PortfolioScreen
 import com.mainnetwallet.mmagent.ui.Tab
@@ -44,11 +47,14 @@ import kotlinx.coroutines.launch
  * FLAG_SECURE stays on: the copy button covers addresses, and a screenshot of a
  * wallet should not be a screenshot of a wallet.
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+
+    private lateinit var appLock: AppLock
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        appLock = AppLock(this)
 
         val api = ApiClient(BuildConfig.DEFAULT_BASE_URL ?: "") { null }
         val appViewModel: AppViewModel by viewModels {
@@ -69,6 +75,7 @@ class MainActivity : ComponentActivity() {
                 var depositInfo by remember { mutableStateOf<org.json.JSONObject?>(null) }
                 var depositError by remember { mutableStateOf<String?>(null) }
                 var toast by remember { mutableStateOf<String?>(null) }
+                var locked by remember { mutableStateOf(appLock.isLocked()) }
                 val clipboard = LocalClipboardManager.current
 
                 val tradeVm = remember { TradeSheetViewModel(api) }
@@ -76,7 +83,18 @@ class MainActivity : ComponentActivity() {
                 val withdrawVm = remember { WithdrawViewModel(api) }
                 val withdrawState by withdrawVm.state.collectAsState()
 
-                if (!state.loggedIn || appViewModel.baseUrl.isBlank()) {
+                if (locked) {
+                    LockedScreen {
+                        if (appLock.available(this@MainActivity)) {
+                            appLock.prompt(this@MainActivity) { locked = false }
+                        } else {
+                            // No biometric enrolled: the lock cannot be opened, so do not trap
+                            // the operator behind it.
+                            appLock.unlock()
+                            locked = false
+                        }
+                    }
+                } else if (!state.loggedIn || appViewModel.baseUrl.isBlank()) {
                     LoginScreen(
                         baseUrl = appViewModel.baseUrl.ifBlank { BuildConfig.DEFAULT_BASE_URL ?: "" },
                         busy = state.loading,
@@ -107,6 +125,7 @@ class MainActivity : ComponentActivity() {
                             bids = tradeState.bids,
                             asks = tradeState.asks,
                             history = tradeState.history,
+                            online = state.online,
                             submitting = tradeState.submitting,
                             error = tradeState.error,
                             result = tradeState.result,
@@ -149,6 +168,7 @@ class MainActivity : ComponentActivity() {
                             preview = withdrawState.preview,
                             step = withdrawState.step,
                             error = withdrawState.error,
+                            online = state.online,
                             submitting = withdrawState.submitting,
                             onAmountChange = { withdrawVm.setAmount(it) },
                             onSelectAddress = { withdrawVm.setAddress(it) },
@@ -231,7 +251,14 @@ class MainActivity : ComponentActivity() {
 
                             Tab.SETTINGS -> com.mainnetwallet.mmagent.ui.SettingsScreen(
                                 state = state,
+                                appLockEnabled = appLock.enabled,
+                                appLockAvailable = appLock.available(this@MainActivity),
+                                appLockTimeoutMinutes = appLock.timeoutMinutes,
                                 onRaiseCeiling = { name, value, stepup -> raiseCeiling(api, name, value, stepup) },
+                                onSetAppLock = { enabled, minutes ->
+                                    appLock.enabled = enabled
+                                    appLock.timeoutMinutes = minutes
+                                },
                                 onLogout = { appViewModel.logout() },
                                 onOpenVenue = { url -> openInBrowser(url) },
                             )
@@ -307,5 +334,11 @@ class MainActivity : ComponentActivity() {
                 onLoaded(null, e.message)
             }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Leaving the app starts the lock timer.
+        appLock.onBackground()
     }
 }

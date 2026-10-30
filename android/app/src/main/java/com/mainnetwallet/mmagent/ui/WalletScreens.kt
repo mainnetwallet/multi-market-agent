@@ -321,6 +321,7 @@ fun WithdrawReviewScreen(
     preview: WithdrawPreview,
     step: WithdrawStep,
     error: String?,
+    online: Boolean,
     submitting: Boolean,
     onAmountChange: (String) -> Unit,
     onSelectAddress: (AllowlistEntry) -> Unit,
@@ -340,6 +341,9 @@ fun WithdrawReviewScreen(
     ) {
         SectionHeader("Withdraw", venue.uppercase())
         ErrorNote(error)
+        if (!online) {
+            ErrorNote("The server is unreachable. Withdrawing is disabled until it answers again.")
+        }
 
         when (step) {
             WithdrawStep.AMOUNT -> {
@@ -375,7 +379,7 @@ fun WithdrawReviewScreen(
                 Spacer(Modifier.height(12.dp))
                 ConfirmButton(
                     label = "Preview withdrawal",
-                    enabled = amount.isNotBlank() && entries.isNotEmpty(),
+                    enabled = amount.isNotBlank() && entries.isNotEmpty() && online,
                     busy = submitting,
                     onClick = onPreview,
                 )
@@ -447,7 +451,7 @@ fun WithdrawReviewScreen(
                 if (isLive) {
                     HoldToConfirmButton(
                         label = "Hold to send",
-                        enabled = !submitting,
+                        enabled = !submitting && online,
                         busy = submitting,
                         danger = true,
                         onConfirmed = onConfirm,
@@ -455,7 +459,7 @@ fun WithdrawReviewScreen(
                 } else {
                     ConfirmButton(
                         label = "Send",
-                        enabled = !submitting,
+                        enabled = !submitting && online,
                         busy = submitting,
                         danger = true,
                         onClick = onConfirm,
@@ -503,6 +507,7 @@ fun TradeSheetScreen(
     bids: List<BookLevel>,
     asks: List<BookLevel>,
     history: List<PricePoint>,
+    online: Boolean,
     submitting: Boolean,
     error: String?,
     result: String?,
@@ -646,23 +651,28 @@ fun TradeSheetScreen(
 
         Spacer(Modifier.height(10.dp))
         ErrorNote(error)
+        if (!online) {
+            // The server is unreachable: the price on screen is unknown, so no order.
+            ErrorNote("The server is unreachable. Trading is disabled until it answers again.")
+        }
         if (result != null) {
             Spacer(Modifier.height(8.dp))
             Text(result, style = MaterialTheme.typography.bodyMedium, color = Palette.Long)
         }
         Spacer(Modifier.height(12.dp))
 
+        val canSubmit = estimate.valid && !submitting && online
         if (isLive) {
             HoldToConfirmButton(
                 label = "Hold to ${draft.side.lowercase()}",
-                enabled = estimate.valid && !submitting,
+                enabled = canSubmit,
                 busy = submitting,
                 onConfirmed = onSubmit,
             )
         } else {
             ConfirmButton(
                 label = "${draft.side.lowercase().replaceFirstChar { it.uppercase() }} (paper)",
-                enabled = estimate.valid && !submitting,
+                enabled = canSubmit,
                 busy = submitting,
                 onClick = onSubmit,
             )

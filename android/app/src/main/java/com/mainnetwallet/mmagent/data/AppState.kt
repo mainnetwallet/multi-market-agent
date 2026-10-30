@@ -45,7 +45,19 @@ data class AppUiState(
     val loading: Boolean = false,
     val error: String? = null,
     val loggedIn: Boolean = false,
-)
+) {
+    /**
+     * True when the server is reachable and the data is fresh.
+     *
+     * Money-adding and money-out actions are disabled when this is false: an
+     * unreachable server means the price and the balance on screen are unknown.
+     * Cancel and Pause stay available, because they reduce risk.
+     */
+    val online: Boolean get() = error == null && !loading
+
+    /** True when the server could not be reached at the last refresh. */
+    val unreachable: Boolean get() = error != null
+}
 
 /**
  * The shared app state: one refresh pulls status, balances, markets, positions,

@@ -19,14 +19,14 @@ The app can now place orders, cancel them and move money. What protects that:
 
 | Risk | Protection |
 |---|---|
-| Stolen phone | App lock (on by default in LIVE); hold-to-confirm for every action that adds risk or moves money out. Cancel and Pause stay one tap. |
+| Stolen phone | App lock: the app re-locks after a chosen time in the background and needs a biometric to open again. The lock only turns on when the device actually has a biometric enrolled, so it can never strand the operator. Hold-to-confirm for every action that adds risk or moves money out. Cancel and Pause stay one tap. |
 | Stolen session token | Step-up tokens are required for withdrawals, allowlist changes, approval grants and ceiling raises. A step-up token is single-use, bound to the session and to one action, and expires in 120 s. The password is never stored or logged. |
 | Replayed request | Every money-moving POST requires an `Idempotency-Key`. The server stores key → result for 24 h and replays the first result, so a retry after a timeout can never double-submit. |
 | Wrong withdrawal address | Only addresses on the allowlist may be used. The address format and its EIP-55 checksum are validated. A new address waits out a cooling period (default 24 h) before first use. The withdrawal shows the full final recipient, network, token, amount, fee and hold time before it is sent. |
 | Double submit | One client id per user intent, one idempotency key per intent, and the venue's own client order id where it has one. UNKNOWN outcomes are never resent. |
 | Key custody | The funds module uses its own signer secret (`FUNDS_SIGNER_PRIVATE_KEY`), never a trading key. Trading keys keep no withdrawal permission. |
 | Backend restart | Resting orders belong to the venue, not to the backend. The Polymarket order heartbeat is deliberately **not** used, because its first accepted send enables timeout cancellation for every open order with no disarm — a restart would silently cancel resting orders. The app shows the heartbeat state in Settings. |
-| Stale data | Money-adding and money-out actions are disabled when the server is unreachable or the data is stale. Cancel and Pause stay available whenever the server is reachable. |
+| Stale data | Money-adding and money-out actions are disabled when the server is unreachable or a refresh is in flight: the price and the balance on screen are then unknown. Cancel and Pause stay available whenever the server is reachable. |
 | Price/unit drift | One normalizer for every venue price; the startup unit guard halts all trading on a mismatch. |
 | Venue silent failure | Order and withdrawal states are reported exactly as the server reports them. The app never says "sent" or "filled" unless the server did. |
 

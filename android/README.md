@@ -21,9 +21,18 @@ directly — no WebView.
   USD, USDC — never hardcoded), Deposit and Withdraw, Allowlist, Approvals and
   withdrawal/deposit history. Where a venue has no API for something, a card
   explains why and opens the venue in a Custom Tab.
-- **Settings** — a Security section with the mode, the per-trade cap, the hard
-  ceiling (raisable with a step-up token), the funds capability status and the
-  heartbeat/resting-orders state.
+- **Settings** — a Security section with the mode, the app lock (on/off and the
+  background timeout), the per-trade cap, the hard ceiling (raisable with a
+  step-up token), the funds capability status and the heartbeat/resting-orders
+  state.
+
+## App lock
+
+The app re-locks after a chosen time in the background (default 5 minutes) and
+needs a biometric to open again. The lock only turns on when the device actually
+has a biometric enrolled — a lock that could not be opened would strand the
+operator, so without one Settings says "off (no biometric enrolled)" and the app
+opens normally.
 
 ## Build
 
@@ -60,6 +69,8 @@ CI builds the APK on every push to `android/**`:
   never says "filled" or "sent" unless the server did.
 - Live actions that add risk or move money out use press-and-hold. Cancel and
   Pause stay one tap plus a normal dialog.
+- When the server is unreachable, every money-adding and money-out action is
+  disabled. Cancel and Pause stay available.
 - `FLAG_SECURE` stays on, so a screenshot of the app is not a screenshot of your
   wallet. The copy button covers addresses.
 - One idempotency key per user intent, reused if you tap again after a timeout
@@ -72,5 +83,6 @@ gradle -p android testDebugUnitTest
 ```
 
 Covers the money/price/Dhaka-time formatting, the trade sheet's order-type chips
-following the venue capabilities, the estimate shown before confirming, and the
-withdraw flow's idempotency-key handling.
+following the venue capabilities, the estimate shown before confirming, the
+withdraw flow's idempotency-key handling, and the offline gating that disables
+money actions when the server cannot be reached.
