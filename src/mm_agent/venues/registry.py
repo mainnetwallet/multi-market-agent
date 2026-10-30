@@ -29,6 +29,7 @@ class VenueStatus:
     reason: str
     live: bool
     mode: Mode
+    credentialed: bool = False
     doctor: DoctorReport | None = None
 
 
@@ -87,6 +88,8 @@ class VenueRegistry:
     def reason(self, venue: VenueId) -> str:
         if not self._ready.get(venue):
             return self._reasons.get(venue, "doctor not run")
+        if not self.settings.live_for(venue) and not self.settings.credentials_present(venue):
+            return "public PAPER only; credentials absent"
         if self.settings.live_for(venue):
             doctor = self.doctors.get(venue)
             if doctor and doctor.status is DoctorStatus.OK:
@@ -104,6 +107,7 @@ class VenueRegistry:
                 reason=self.reason(venue),
                 live=self.settings.live_for(venue),
                 mode=self.mode(venue),
+                credentialed=self.settings.credentials_present(venue),
                 doctor=self.doctors.get(venue),
             )
             for venue in self.settings.enabled_venues
@@ -240,6 +244,7 @@ class VenueRegistry:
                     "reason": s.reason,
                     "live": s.live,
                     "mode": s.mode.value,
+                    "credentialed": s.credentialed,
                     "doctor_status": s.doctor.status.value if s.doctor else "NOT_RUN",
                 }
                 for s in self.statuses()

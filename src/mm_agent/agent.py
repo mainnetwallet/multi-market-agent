@@ -115,6 +115,10 @@ class AgentService:
             "unit_guard": {"ok": self.unit_guard.ok, "reason": self.unit_guard.reason},
             "feed_diag": self.scanner.feed_diag().model_dump(mode="json"),
             "book_feed": self.book_feed.status(),
+            "research": {
+                "available": self.research_service.available,
+                "reason": self.research_service.disabled_reason,
+            },
             "venues": venue_summary["venues"],
             "limits": self.limits_dict(),
             "counts": self.store.status_counts(),

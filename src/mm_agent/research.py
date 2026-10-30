@@ -53,6 +53,14 @@ class ResearchService:
     def available(self) -> bool:
         return self.llm.enabled and self.search.enabled
 
+    @property
+    def disabled_reason(self) -> str:
+        if not self.llm.enabled:
+            return "LLM_BASE_URL and LLM_MODEL are not configured"
+        if not self.search.enabled:
+            return "TAVILY_API_KEY is not configured"
+        return ""
+
     async def research(self, market: Market) -> ResearchOutcome:
         if not self.llm.enabled:
             return ResearchOutcome(None, reason="LLM not configured")

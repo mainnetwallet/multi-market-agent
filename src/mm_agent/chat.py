@@ -191,11 +191,14 @@ class ChatService:
 
     async def _cmd_status(self, *_: Any, **__: Any) -> dict[str, Any]:
         status = self.agent.status()
+        research = status.get("research", {})
+        research_line = "READY" if research.get("available") else f"DISABLED — {research.get('reason', '')}"
         lines = [
             f"Venue: {status['badge']}   Paused: {status['paused']}",
             f"Unit check: {'OK' if status['unit_guard']['ok'] else 'HALTED — ' + status['unit_guard']['reason']}",
             f"Book feed: {status.get('book_feed', {}).get('updates', 0)} updates · "
             f"{status.get('book_feed', {}).get('errors', 0)} errors",
+            f"Research: {research_line}",
             f"Time: {status['server_time_dhaka']} (Asia/Dhaka)",
             f"Markets: {status['counts']['markets']}  Positions: {status['counts']['open_positions']}",
             f"Pending proposals: {status['counts']['pending_proposals']}  "
