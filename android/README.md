@@ -69,9 +69,16 @@ CI: `.github/workflows/android.yml`.
 
 1. Enter the HTTPS URL of your deployed agent (for example
    `https://multi-market-agent.onrender.com`).
-2. Sign in with the same `ADMIN_USERNAME` / `ADMIN_PASSWORD` as the website.
-   The token is stored in the app's private storage.
-3. The header always shows `VENUE | PAPER` or a red `VENUE | LIVE`.
+2. Sign in with the same `ADMIN_USERNAME` / `ADMIN_PASSWORD` as the website. The
+   username starts as `operator` (or the last one you used).
+3. You stay signed in. The session token is kept in the app's private storage and
+   swapped for a fresh one (`POST /v1/auth/refresh`) every time the app starts and
+   every few hours while it is open. Sessions last 30 days and renew while you use
+   the app, up to 90 days in total, then you sign in again. Sign out from Settings
+   to forget the session. This needs the server to be redeployed with the refresh
+   endpoint; against an older server the app still works, but the session ends
+   after the old 72 hours.
+4. The header always shows `VENUE | PAPER` or a red `VENUE | LIVE`.
 
 ## Safety rules the app enforces
 

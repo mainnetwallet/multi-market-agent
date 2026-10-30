@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import time
+
 from fastapi.testclient import TestClient
+from itsdangerous import URLSafeTimedSerializer
 
 from mm_agent.control_api import create_app
 from tests.conftest import Harness
@@ -23,6 +26,24 @@ def test_health_head_and_auth(harness: Harness) -> None:
     assert status.status_code == 200, status.text
     assert status.json()["active_venue"] == "fake"
     assert "PAPER" in status.json()["badge"]
+
+
+def test_session_refresh_renews_and_is_capped(harness: Harness) -> None:
+    client = make_client(harness)
+    assert make_client(harness).post("/v1/auth/refresh").status_code == 401
+    login = client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})
+    token = login.json()["token"]
+    refreshed = client.post("/v1/auth/refresh", headers={"Authorization": f"Bearer {token}"})
+    assert refreshed.status_code == 200, refreshed.text
+    fresh = refreshed.json()["token"]
+    assert fresh
+    ok = make_client(harness).get("/v1/status", headers={"Authorization": f"Bearer {fresh}"})
+    assert ok.status_code == 200, ok.text
+    # A session that was first signed in more than 90 days ago cannot be renewed.
+    signer = URLSafeTimedSerializer(harness.settings.session_secret, salt="mm-session")
+    old = signer.dumps({"u": "operator", "v": "1", "o": int(time.time()) - 91 * 24 * 3600})
+    refused = make_client(harness).post("/v1/auth/refresh", headers={"Authorization": f"Bearer {old}"})
+    assert refused.status_code == 401
 
 
 def test_panic_needs_confirm(harness: Harness) -> None:

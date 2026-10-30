@@ -43,6 +43,8 @@ from .venues.registry import VenueRegistry
 logger = get_logger(__name__)
 STATIC = Path(__file__).parent / "static"
 SESSION_COOKIE = "mm_session"
+# A session renews while the app is used, but never lives longer than this in total.
+SESSION_MAX_AGE_SECONDS = 90 * 24 * 3600
 
 
 class LoginBody(BaseModel):
@@ -280,6 +282,20 @@ def create_app(
         }
         return JSONResponse(payload, status_code=200 if ready_bool else 503)
 
+    def _issue_session(response: Response, user: str, origin: int) -> str:
+        """Sign a session token and set the cookie. `o` is when the operator really signed in."""
+        token = serializer.dumps({"u": user, "v": "1", "o": origin})
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            max_age=settings.session_ttl_hours * 3600,
+            httponly=True,
+            samesite="strict",
+            secure=settings.app_env.lower() in {"prod", "production"},
+            path="/",
+        )
+        return token
+
     @app.post("/v1/auth/login")
     async def login(body: LoginBody, request: Request, response: Response) -> dict[str, Any]:
         if not settings.admin_password or not settings.session_secret:
@@ -297,18 +313,33 @@ def create_app(
         if not (user_ok and pass_ok):
             logger.warning("login_failed", client=client)
             raise HTTPException(status_code=401, detail="invalid credentials")
-        token = serializer.dumps({"u": settings.admin_username, "v": "1"})
-        response.set_cookie(
-            SESSION_COOKIE,
-            token,
-            max_age=settings.session_ttl_hours * 3600,
-            httponly=True,
-            samesite="strict",
-            secure=settings.app_env.lower() in {"prod", "production"},
-            path="/",
-        )
+        token = _issue_session(response, settings.admin_username, int(time.time()))
         agent.store.audit(f"web:{settings.admin_username}", "auth.login", {})
         return {"ok": True, "username": settings.admin_username, "token": token}
+
+    @app.post("/v1/auth/refresh")
+    async def refresh_session(
+        request: Request, response: Response, user: str = Depends(require_auth)
+    ) -> dict[str, Any]:
+        """Swap a still-valid session for a fresh one, so a phone that keeps using the app stays signed in.
+
+        The original sign-in time travels with the token: after SESSION_MAX_AGE_SECONDS the operator
+        signs in again, however often the app was used.
+        """
+        token = request.cookies.get(SESSION_COOKIE)
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+        try:
+            data, issued_at = serializer.loads(
+                token or "", max_age=settings.session_ttl_hours * 3600, return_timestamp=True
+            )
+        except (SignatureExpired, BadSignature):
+            raise HTTPException(status_code=401, detail="invalid or expired session") from None
+        origin = int(data.get("o") or issued_at.timestamp()) if isinstance(data, dict) else 0
+        if time.time() - origin > SESSION_MAX_AGE_SECONDS:
+            raise HTTPException(status_code=401, detail="invalid or expired session")
+        return {"ok": True, "username": user, "token": _issue_session(response, user, origin)}
 
     @app.post("/v1/auth/logout")
     async def logout(response: Response, _: str = Depends(require_auth)) -> dict[str, bool]:

@@ -93,7 +93,10 @@ class MainActivity : FragmentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (true) {
                     delay(AUTO_REFRESH_MS)
-                    if (appViewModel.state.value.loggedIn) appViewModel.refresh(silent = true)
+                    if (appViewModel.state.value.loggedIn) {
+                        appViewModel.refresh(silent = true)
+                        appViewModel.renewSessionIfDue()
+                    }
                 }
             }
         }
@@ -148,6 +151,7 @@ class MainActivity : FragmentActivity() {
                 } else if (!state.loggedIn || appViewModel.baseUrl.isBlank()) {
                     LoginScreen(
                         baseUrl = appViewModel.baseUrl,
+                        initialUsername = appViewModel.savedUsername,
                         busy = state.loading,
                         error = state.error,
                         onSaveBaseUrl = { appViewModel.saveBaseUrl(it) },

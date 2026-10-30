@@ -109,6 +109,9 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
 
     private var refreshJob: Job? = null
 
+    /** When the saved session was last swapped for a fresh one (0 = not yet this run). */
+    private var lastRenewAt = 0L
+
     init {
         // A 401 that means "the session is gone" sends the operator back to login.
         api.onUnauthorized = { expireSession() }
@@ -132,6 +135,37 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             }.apply()
         }
 
+    /** The last username that signed in, so the login screen never starts empty. */
+    var savedUsername: String
+        get() = prefs.getString(KEY_USERNAME, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_USERNAME
+        set(value) {
+            prefs.edit().putString(KEY_USERNAME, value.trim().ifBlank { DEFAULT_USERNAME }).apply()
+        }
+
+    /**
+     * Keep the operator signed in: trade the saved session for a fresh one on every start
+     * and every few hours while the app is open. Best effort. Offline, or against a server
+     * without the endpoint, the saved session stays as it is; a rejected session still
+     * sends the operator to the login screen.
+     */
+    fun renewSessionIfDue() {
+        if (token.isNullOrBlank()) return
+        val now = System.currentTimeMillis()
+        if (now - lastRenewAt < RENEW_EVERY_MS) return
+        lastRenewAt = now
+        viewModelScope.launch {
+            try {
+                val fresh = api.post("/v1/auth/refresh", JSONObject()).optString("token")
+                if (fresh.isNotBlank() && !token.isNullOrBlank()) token = fresh
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Try again in a few minutes rather than waiting for the next full interval.
+                lastRenewAt = now - RENEW_EVERY_MS + RENEW_RETRY_MS
+            }
+        }
+    }
+
     fun saveBaseUrl(url: String) {
         baseUrl = url.trim()
     }
@@ -141,7 +175,10 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         prefs.getString(KEY_BASE_URL, null)?.takeIf { it.isNotBlank() }?.let { api.baseUrl = it }
         val saved = token
         _state.value = _state.value.copy(loggedIn = !saved.isNullOrBlank())
-        if (!saved.isNullOrBlank()) refresh()
+        if (!saved.isNullOrBlank()) {
+            refresh()
+            renewSessionIfDue()
+        }
     }
 
     fun login(username: String, password: String, onDone: (Boolean) -> Unit) {
@@ -159,6 +196,8 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                     return@launch
                 }
                 token = newToken
+                savedUsername = username
+                lastRenewAt = System.currentTimeMillis()
                 _state.value = _state.value.copy(loggedIn = true, loading = false, error = null)
                 refresh()
                 onDone(true)
@@ -592,5 +631,9 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     companion object {
         const val KEY_BASE_URL = "base_url"
         const val KEY_TOKEN = "session_token"
+        const val KEY_USERNAME = "username"
+        const val DEFAULT_USERNAME = "operator"
+        private const val RENEW_EVERY_MS = 6L * 60 * 60 * 1000
+        private const val RENEW_RETRY_MS = 5L * 60 * 1000
     }
 }

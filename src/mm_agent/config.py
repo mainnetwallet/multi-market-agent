@@ -122,7 +122,7 @@ class Settings(BaseSettings):
     admin_username: str = "operator"
     admin_password: str = ""
     session_secret: str = ""
-    session_ttl_hours: int = 72
+    session_ttl_hours: int = 720
     allowed_origins_raw: str = Field(default="http://127.0.0.1:8080,http://localhost:8080", alias="ALLOWED_ORIGINS")
 
     telegram_bot_token: str = ""
