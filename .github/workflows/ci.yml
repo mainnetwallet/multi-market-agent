@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Ruff lint
+        run: ruff check src tests scripts
+      - name: Ruff format check
+        run: ruff format --check src tests scripts
+      - name: Mypy
+        run: mypy src
+      - name: Pytest
+        run: pytest -q
+      - name: Alembic upgrade on a fresh database
+        env:
+          DATABASE_URL: sqlite:///./data/ci.db
+        run: |
+          mkdir -p data
+          alembic upgrade head
+          alembic check
+      - name: Dependency audit
+        run: pip-audit

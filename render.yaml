@@ -1,0 +1,63 @@
+# Render blueprint. Always-on plan required: a sleeping instance cannot scan or
+# enforce exits. Secrets are sync:false and must be entered in the dashboard.
+services:
+  - type: web
+    name: multi-market-agent
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    region: singapore
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "10000"
+      - key: TZ
+        value: Asia/Dhaka
+      - key: DATABASE_URL
+        value: sqlite:////app/data/mm_agent.db
+      - key: ENABLED_VENUES
+        value: polymarket,kalshi,limitless
+      - key: ACTIVE_VENUE
+        value: polymarket
+      - key: PARALLEL_SCAN
+        value: "false"
+      - key: BANKROLL_USD
+        value: "50"
+      - key: MAX_TRADE_USD
+        value: "1"
+      - key: LIVE_POLYMARKET
+        value: "false"
+      - key: LIVE_KALSHI
+        value: "false"
+      - key: LIVE_LIMITLESS
+        value: "false"
+      - key: CHAT_AUTOPILOT
+        value: "false"
+      - key: ADMIN_USERNAME
+        value: operator
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: LLM_BASE_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ALLOWED_USER_ID
+        sync: false
+    disk:
+      name: mm-agent-data
+      mountPath: /app/data
+      sizeGB: 1
