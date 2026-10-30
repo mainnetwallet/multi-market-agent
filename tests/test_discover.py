@@ -140,3 +140,212 @@ def test_discover_search_uses_public_search(tmp_path: Path) -> None:
     out = asyncio.run(venue.discover(tab="trending", q="newsom", limit=10, offset=0))
     assert seen["url"].endswith("/public-search") and seen["params"]["q"] == "newsom"
     assert out["items"][0]["event_id"] == "9" and out["next_offset"] == 10
+
+
+# ------------------------------------------------------------------ Kalshi / Limitless
+
+
+def _kmarket(ticker: str, **extra: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "ticker": ticker,
+        "title": f"Will {ticker} happen?",
+        "yes_sub_title": f"Opt {ticker}",
+        "market_type": "binary",
+        "status": "active",
+        "yes_bid_dollars": "0.40",
+        "yes_ask_dollars": "0.44",
+        "no_ask_dollars": "0.60",
+        "last_price_dollars": "0.42",
+        "previous_price_dollars": "0.38",
+        "volume_fp": "1000",
+        "volume_24h_fp": "120",
+        "close_time": "2026-12-01T00:00:00Z",
+        "created_time": "2026-10-01T00:00:00Z",
+    }
+    base.update(extra)
+    return base
+
+
+def _kevent(ticker: str, markets: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "event_ticker": ticker,
+        "title": f"Event {ticker}",
+        "category": "Politics",
+        "markets": markets,
+    }
+    base.update(extra)
+    return base
+
+
+def test_kalshi_card_prices_and_move() -> None:
+    card = discover.shape_kalshi_event(_kevent("E1", [_kmarket("A")]))
+    assert card is not None
+    row = card["markets"][0]
+    assert row["yes_price"] == "0.44" and row["no_price"] == "0.60"
+    assert row["chance"] == "0.42"  # mid of 0.40/0.44
+    assert row["change_1d"] == "0.04"
+    assert card["volume_unit"] == "contracts"
+    assert card["url"] == "https://kalshi.com/markets/e1"
+
+
+def test_kalshi_skips_combos_closed_and_unpriced() -> None:
+    event = _kevent(
+        "E2",
+        [
+            _kmarket("A", mve_collection_ticker="X"),
+            _kmarket("B", status="closed"),
+            _kmarket("C", yes_bid_dollars="", yes_ask_dollars="", last_price_dollars=""),
+            _kmarket("D", market_type="scalar"),
+        ],
+    )
+    assert discover.shape_kalshi_event(event) is None
+
+
+def test_kalshi_category_filter_and_search() -> None:
+    rows = [
+        _kevent("P", [_kmarket("P1")], category="Politics"),
+        _kevent("S", [_kmarket("S1")], category="Sports", title="Super game"),
+        _kevent("T", [_kmarket("T1")], category="Science and Technology"),
+    ]
+    assert [e["event_id"] for e in discover.shape_kalshi_events(rows, match=["sport"])] == ["S"]
+    assert [e["event_id"] for e in discover.shape_kalshi_events(rows, match=["tech", "science"])] == ["T"]
+    assert [e["event_id"] for e in discover.shape_kalshi_events(rows, q="super")] == ["S"]
+
+
+def test_rank_items_volume_and_newest() -> None:
+    items = [
+        {"event_id": "a", "volume_24h": "5", "volume": "1", "created": "2026-01-01"},
+        {"event_id": "b", "volume_24h": "9", "volume": "1", "created": "2026-02-01"},
+    ]
+    assert [i["event_id"] for i in discover.rank_items(items, "volume")] == ["b", "a"]
+    assert [i["event_id"] for i in discover.rank_items(items, "newest")] == ["b", "a"]
+    assert discover.rank_items(items, None) == items
+
+
+def test_kalshi_discover_pages_with_cursor(tmp_path: Path) -> None:
+    from mm_agent.venues.kalshi import KalshiVenue
+
+    venue = KalshiVenue(make_settings(tmp_path))
+    calls: list[dict[str, Any]] = []
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        calls.append(dict(params or {}))
+        n = len(calls)
+        return {"events": [_kevent(f"E{n}", [_kmarket(f"M{n}")])], "cursor": f"c{n}" if n < 9 else ""}
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover(tab="politics", q=None, limit=1, offset=0))
+    assert calls[0]["status"] == "open" and calls[0]["with_nested_markets"] == "true"
+    assert [i["event_id"] for i in out["items"]] == ["E1"]
+    nxt = out["next_offset"]
+    assert nxt is not None
+    calls.clear()
+    out = asyncio.run(venue.discover(tab="politics", q=None, limit=1, offset=nxt))
+    assert calls[0]["cursor"] == "c1"  # resumed where the first page stopped
+    # An offset the server never issued ends the list instead of restarting it.
+    stale = asyncio.run(venue.discover(tab="politics", q=None, limit=1, offset=999))
+    assert stale["items"] == [] and stale["next_offset"] is None
+    with pytest.raises(ValueError):
+        asyncio.run(venue.discover(tab="nope", q=None, limit=1, offset=0))
+
+
+def _lmarket(slug: str, **extra: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "id": abs(hash(slug)) % 10_000,
+        "slug": slug,
+        "title": f"Market {slug}",
+        "status": "FUNDED",
+        "expired": False,
+        "tradeType": "clob",
+        "prices": [0.62, 0.38],
+        "volumeFormatted": "141.27",
+        "expirationTimestamp": 1793349900000,
+        "categories": ["Crypto", "Bitcoin"],
+        "imageUrl": "https://img/x.png",
+        "createdAt": "2026-10-30T08:00:00.000Z",
+        "tokens": {"yes": "1", "no": "2"},
+    }
+    base.update(extra)
+    return base
+
+
+def test_limitless_card_single_and_group() -> None:
+    single = discover.shape_limitless_event(_lmarket("a"))
+    assert single is not None
+    assert single["markets"][0]["yes_price"] == "0.62"
+    assert single["volume"] == "141.27"
+    assert single["image"] == "https://img/x.png"
+    assert single["end_time"] == "2026-10-30T08:45:00Z"
+    group = discover.shape_limitless_event(
+        _lmarket("grp", groupId="g1", markets=[_lmarket("x", prices=[0.2, 0.8]), _lmarket("y", prices=[0.7, 0.3])])
+    )
+    assert group is not None and group["event_id"] == "g1"
+    assert [m["market_id"] for m in group["markets"]] == ["y", "x"]
+
+
+def test_limitless_skips_untradable() -> None:
+    for bad in (
+        {"expired": True},
+        {"hidden": True},
+        {"tradeType": "amm"},
+        {"status": "RESOLVED"},
+        {"prices": [0.5]},
+        {"prices": [2, -1]},
+    ):
+        assert discover.shape_limitless_event(_lmarket("z", **bad)) is None
+
+
+def test_limitless_category_filter() -> None:
+    rows = [_lmarket("c"), _lmarket("s", categories=["Sports"])]
+    got = discover.shape_limitless_events(rows, match=["sport"])
+    assert [e["slug"] for e in got] == ["s"]
+
+
+def test_limitless_discover_pages_and_warms(tmp_path: Path) -> None:
+    from mm_agent.venues.limitless import LimitlessVenue
+
+    venue = LimitlessVenue(make_settings(tmp_path))
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        seen.append((url, dict(params or {})))
+        page = (params or {})["page"]
+        return {"data": [_lmarket(f"m{page}-{i}") for i in range(25)], "totalMarketsCount": 400}
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover(tab="trending", q=None, limit=30, offset=0))
+    assert [p["page"] for _, p in seen] == [1, 2]
+    assert all(p["limit"] == 25 and p["sortBy"] == "volume" for _, p in seen)
+    assert len(out["items"]) == 50 and out["next_offset"] == 50
+    assert "m1-0" in venue._markets
+    seen.clear()
+    asyncio.run(venue.discover(tab="trending", q=None, limit=30, offset=50))
+    assert [p["page"] for _, p in seen] == [3, 4]
+    seen.clear()
+    asyncio.run(venue.discover(tab="crypto", q=None, limit=30, offset=0))
+    assert len(seen) == 4  # category tabs scan more pages, then filter locally
+    with pytest.raises(ValueError):
+        asyncio.run(venue.discover(tab="nope", q=None, limit=30, offset=0))
+
+
+def test_limitless_search_falls_back_to_active_list(tmp_path: Path) -> None:
+    from mm_agent.venues.base import VenueHTTPError
+    from mm_agent.venues.limitless import LimitlessVenue
+
+    venue = LimitlessVenue(make_settings(tmp_path))
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        if url.endswith("/markets/search"):
+            raise VenueHTTPError(404, "nope", url)
+        return {"data": [_lmarket("btc", title="Bitcoin above 100k"), _lmarket("eth", title="Ether flips")]}
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover(tab="trending", q="bitcoin", limit=30, offset=0))
+    assert [i["slug"] for i in out["items"]] == ["btc"]
+
+
+def test_tab_lists_per_venue() -> None:
+    assert {t["id"] for t in discover.tab_list("kalshi")} >= {"trending", "politics", "sports", "crypto"}
+    assert {t["id"] for t in discover.tab_list("limitless")} >= {"trending", "new", "crypto"}
+    assert discover.tab_list("fake") == []
+    assert all(t["supported"] for t in discover.tab_list("kalshi") + discover.tab_list("limitless"))

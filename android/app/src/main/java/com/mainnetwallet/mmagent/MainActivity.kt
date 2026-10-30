@@ -287,7 +287,7 @@ class MainActivity : FragmentActivity() {
                                 Tab.MARKETS -> com.mainnetwallet.mmagent.ui.MarketsScreen(
                                     markets = state.markets,
                                     activeVenue = state.status.venue,
-                                    fetchDiscover = { tabId, query, offset -> appViewModel.discover(tabId, query, offset) },
+                                    fetchDiscover = { venue, tabId, query, offset -> appViewModel.discover(venue, tabId, query, offset) },
                                     onOpen = { marketId, title, outcome ->
                                         tradeVm.newIntent()
                                         tradeVm.setMarket(marketId, title)

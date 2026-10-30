@@ -48,8 +48,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-/** Polymarket's tab order. The server owns the tag behind each id; `/v1/discover/tabs` lists them. */
-private val DISCOVER_TABS: List<Pair<String, String>> = listOf(
+/** Venues that have a browse feed on the server (`/v1/discover`). */
+val BROWSABLE_VENUES: Set<String> = setOf("polymarket", "kalshi", "limitless")
+
+private val POLYMARKET_TABS: List<Pair<String, String>> = listOf(
     "trending" to "Trending",
     "combos" to "Combos",
     "perps" to "Perps",
@@ -71,6 +73,43 @@ private val DISCOVER_TABS: List<Pair<String, String>> = listOf(
     "mentions" to "Mentions",
 )
 
+private val KALSHI_TABS: List<Pair<String, String>> = listOf(
+    "trending" to "Trending",
+    "new" to "New",
+    "politics" to "Politics",
+    "elections" to "Elections",
+    "sports" to "Sports",
+    "crypto" to "Crypto",
+    "economics" to "Economics",
+    "financials" to "Financials",
+    "companies" to "Companies",
+    "tech" to "Tech & Science",
+    "weather" to "Weather",
+    "culture" to "Culture",
+    "world" to "World",
+    "health" to "Health",
+    "mentions" to "Mentions",
+)
+
+private val LIMITLESS_TABS: List<Pair<String, String>> = listOf(
+    "trending" to "Trending",
+    "new" to "New",
+    "liquid" to "Liquid",
+    "crypto" to "Crypto",
+    "sports" to "Sports",
+    "politics" to "Politics",
+    "economy" to "Economy",
+    "tech" to "Tech",
+    "culture" to "Culture",
+)
+
+/** The server owns what each id means; `/v1/discover/tabs?venue=` lists the same ids. */
+private fun tabsFor(venue: String): List<Pair<String, String>> = when (venue) {
+    "kalshi" -> KALSHI_TABS
+    "limitless" -> LIMITLESS_TABS
+    else -> POLYMARKET_TABS
+}
+
 /** org.json turns a JSON null into the string "null"; the server sends null for missing values. */
 private fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(key)
 
@@ -78,15 +117,17 @@ private fun JSONObject.text(key: String): String = if (isNull(key)) "" else optS
 private const val CARD_ROWS = 3
 
 /**
- * Polymarket-style market browser: category tabs, search, event cards with the live
+ * Polymarket-style market browser (Polymarket, Kalshi, Limitless): category tabs, search, event cards with the live
  * Yes/No prices, volume and close time. Tapping a price opens the trade sheet on that side.
  * Read-only: the app only fetches public data here; every order still goes through the trade sheet.
  */
 @Composable
 fun DiscoverScreen(
-    fetch: suspend (tab: String, query: String, offset: Int) -> JSONObject,
+    venue: String,
+    fetch: suspend (venue: String, tab: String, query: String, offset: Int) -> JSONObject,
     onTrade: (marketId: String, title: String, outcome: String) -> Unit,
 ) {
+    val tabs = tabsFor(venue)
     var tab by rememberSaveable { mutableStateOf("trending") }
     var query by rememberSaveable { mutableStateOf("") }
     var items by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
@@ -102,7 +143,7 @@ fun DiscoverScreen(
     suspend fun load(offset: Int, gen: Int, tabId: String, text: String) {
         loading = true
         try {
-            val body = fetch(tabId, text, offset)
+            val body = fetch(venue, tabId, text, offset)
             if (gen != generation) return
             val page = ApiClient.arrayOf(body, "items").objects()
             items = if (offset == 0) {
@@ -146,7 +187,7 @@ fun DiscoverScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            items(DISCOVER_TABS, key = { it.first }) { (id, label) ->
+            items(tabs, key = { it.first }) { (id, label) ->
                 DiscoverTab(label, selected = tab == id && query.isBlank(), onClick = {
                     if (tab == id) reloadKey += 1 else tab = id
                     query = ""
@@ -227,7 +268,11 @@ private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Un
     val image = event.text("image")
     val first = markets.first()
     val footer = buildList {
-        add(Format.volume(event.optString("volume")) + " Vol")
+        if (event.text("volume_unit") == "contracts") {
+            add(Format.compact(event.optString("volume")) + " contracts")
+        } else {
+            add(Format.volume(event.optString("volume")) + " Vol")
+        }
         if (single) Format.move(first.text("change_1d").ifBlank { null })?.let { add(it + " 24h") }
         val end = event.text("end_time")
         if (end.isNotBlank()) add("closes in " + Format.countdown(end))
@@ -262,7 +307,7 @@ private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Un
                 Spacer(Modifier.width(10.dp))
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        Format.percent(first.optString("yes_price")),
+                        Format.percent(first.text("chance").ifBlank { first.optString("yes_price") }),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                     )
@@ -298,7 +343,7 @@ private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Un
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            Format.percent(market.optString("yes_price")),
+                            Format.percent(market.text("chance").ifBlank { market.optString("yes_price") }),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 8.dp),

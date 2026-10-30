@@ -384,9 +384,18 @@ def create_app(
         rows = agent.store.list_markets(venue=venue, q=q, limit=min(max(limit, 1), 200))
         return {"markets": [m.model_dump(mode="json") for m in rows], "count": len(rows)}
 
+    def _discover_venue(venue: VenueId | None) -> VenueId:
+        chosen = venue or registry.active_or_none or VenueId.POLYMARKET
+        if venue is None and chosen.value not in discover_lib.VENUE_TABS:
+            chosen = VenueId.POLYMARKET  # e.g. the fake test venue is active: keep the old default
+        if chosen.value not in discover_lib.VENUE_TABS:
+            raise HTTPException(status_code=404, detail=f"no browse feed for {chosen.value}")
+        return chosen
+
     @app.get("/v1/discover/tabs")
-    async def discover_tabs(_: str = Depends(require_auth)) -> dict[str, Any]:
-        return {"tabs": discover_lib.tab_list()}
+    async def discover_tabs(venue: VenueId | None = None, _: str = Depends(require_auth)) -> dict[str, Any]:
+        chosen = _discover_venue(venue)
+        return {"venue": chosen.value, "tabs": discover_lib.tab_list(chosen.value)}
 
     @app.get("/v1/discover")
     async def discover(
@@ -394,20 +403,23 @@ def create_app(
         q: str | None = None,
         limit: int = 30,
         offset: int = 0,
+        venue: VenueId | None = None,
         _: str = Depends(require_auth),
     ) -> dict[str, Any]:
-        """Polymarket-style browse (tabs, prices, volume). Read-only public data."""
+        """Polymarket-style browse (tabs, prices, volume). Read-only public data, per venue."""
 
-        if tab not in discover_lib.TABS:
+        chosen = _discover_venue(venue)
+        if tab not in discover_lib.tabs_for(chosen.value):
             raise HTTPException(status_code=404, detail=f"unknown tab: {tab}")
-        adapter = registry.adapters.get(VenueId.POLYMARKET)
-        if VenueId.POLYMARKET not in registry.enabled() or adapter is None or not hasattr(adapter, "discover"):
-            raise HTTPException(status_code=409, detail="Polymarket is not enabled on this server")
+        adapter = registry.adapters.get(chosen)
+        if chosen not in registry.enabled() or adapter is None or not hasattr(adapter, "discover"):
+            raise HTTPException(status_code=409, detail=f"{chosen.value} is not enabled on this server")
         try:
             result: dict[str, Any] = await adapter.discover(tab=tab, q=q, limit=limit, offset=offset)
+            result["venue"] = chosen.value
             return result
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Polymarket discovery failed: {str(exc)[:160]}") from exc
+            raise HTTPException(status_code=502, detail=f"{chosen.value} discovery failed: {str(exc)[:160]}") from exc
 
     @app.get("/v1/market")
     async def market_detail(

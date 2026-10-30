@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .. import discover as discover_lib
 from ..config import Settings
 from ..domain import (
     Balance,
@@ -86,6 +87,8 @@ class KalshiVenue(HttpVenue):
         self._signer: KalshiSigner | None = None
         self._signer_error: str | None = None
         self._order_markets: dict[str, str] = {}
+        # (tab, query, offset) -> Kalshi cursor, so the app's integer offset can page a cursor API.
+        self._discover_cursors: dict[tuple[str, str, int], str] = {}
         self.test_orders = False
 
     @property
@@ -150,6 +153,57 @@ class KalshiVenue(HttpVenue):
                 break
         next_cursor = data.get("cursor")
         return Page(items=markets[: query.limit], next_cursor=next_cursor)
+
+    async def discover(self, *, tab: str, q: str | None, limit: int, offset: int) -> dict[str, Any]:
+        """Polymarket-style browse for Kalshi: open events with nested markets as cards.
+
+        Kalshi has no category filter or sort on ``/events``, so a tab scans a few pages and
+        filters/ranks that batch locally. Combos (multivariate) are skipped.
+        """
+
+        limit = min(max(limit, 1), 50)
+        offset = max(offset, 0)
+        cfg = discover_lib.KALSHI_TABS.get(tab)
+        if cfg is None:
+            raise ValueError(f"unknown tab: {tab}")
+        query = (q or "").strip()
+        cursor: str | None = None
+        if offset > 0:
+            cursor = self._discover_cursors.get((tab, query, offset))
+            if cursor is None:  # server restarted or the key aged out: end the list, do not loop
+                return {"tab": tab, "items": [], "next_offset": None, "note": ""}
+        rank = cfg.get("rank")
+        min_pages = 3 if rank else 1
+        max_pages = 5 if (query or cfg.get("match") or rank) else 2
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        pages = 0
+        while pages < max_pages:
+            params: dict[str, Any] = {"status": "open", "with_nested_markets": "true", "limit": 200}
+            if cursor:
+                params["cursor"] = cursor
+            data = await self.get_json(self.base_url + "/events", params=params)
+            rows = data.get("events") if isinstance(data, dict) else None
+            if not isinstance(rows, list):
+                raise VenueUnavailableError("Kalshi returned a non-list events payload")
+            for item in discover_lib.shape_kalshi_events(rows, match=cfg.get("match"), q=query):
+                if item["event_id"] not in seen:
+                    seen.add(item["event_id"])
+                    items.append(item)
+            cursor = (data.get("cursor") or None) if isinstance(data, dict) else None
+            pages += 1
+            if not cursor or (pages >= min_pages and len(items) >= limit):
+                break
+        items = discover_lib.rank_items(items, rank)
+        if rank:
+            items = items[:limit]
+        next_offset: int | None = None
+        if cursor:
+            next_offset = offset + max(len(items), 1)
+            self._discover_cursors[(tab, query, next_offset)] = cursor
+            while len(self._discover_cursors) > 200:
+                self._discover_cursors.pop(next(iter(self._discover_cursors)))
+        return {"tab": tab, "items": items, "next_offset": next_offset, "note": ""}
 
     def _parse_market(self, raw: dict[str, Any]) -> Market | None:
         if raw.get("market_type") not in {None, "binary"}:

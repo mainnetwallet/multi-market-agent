@@ -6,6 +6,7 @@ order signatures from the isolated signing module.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -16,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from .. import discover as discover_lib
 from ..config import Settings
 from ..domain import (
     Balance,
@@ -121,6 +123,74 @@ class LimitlessVenue(HttpVenue):
             markets.append(market)
         next_cursor = str(page_no + 1) if len(rows) >= limit else None
         return Page(items=markets[: query.limit], next_cursor=next_cursor)
+
+    LIMITLESS_PAGE = 25  # the live API rejects limit > 25 on /markets/active
+
+    @staticmethod
+    def _rows(data: Any) -> list[Any]:
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            for key in ("data", "markets", "results"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    return value
+        return []
+
+    async def _discover_page(self, page: int, *, sort: str | None, query: str) -> list[Any]:
+        size = self.LIMITLESS_PAGE
+        if query:
+            try:
+                data = await self.get_json(
+                    self.base_url + "/markets/search", params={"query": query, "limit": size, "page": page}
+                )
+                return self._rows(data)
+            except VenueHTTPError:
+                pass  # search is not on every deployment; fall back to the active list below
+        params: dict[str, Any] = {"limit": size, "page": page}
+        if sort:
+            params["sortBy"] = sort
+        try:
+            data = await self.get_json(self.base_url + "/markets/active", params=params)
+        except VenueHTTPError as exc:
+            if sort is None or exc.status_code not in {400, 422}:
+                raise
+            params.pop("sortBy")
+            data = await self.get_json(self.base_url + "/markets/active", params=params)
+        return self._rows(data)
+
+    async def discover(self, *, tab: str, q: str | None, limit: int, offset: int) -> dict[str, Any]:
+        """Polymarket-style browse for Limitless: active CLOB markets (groups nested) as cards.
+
+        Category tabs scan several pages and filter on the market's category labels locally.
+        """
+
+        offset = max(offset, 0)
+        cfg = discover_lib.LIMITLESS_TABS.get(tab)
+        if cfg is None:
+            raise ValueError(f"unknown tab: {tab}")
+        query = (q or "").strip()
+        match = cfg.get("match")
+        size = self.LIMITLESS_PAGE
+        pages_per = 4 if (match or query) else 2
+        first = offset // size + 1
+        pages = await asyncio.gather(
+            *(self._discover_page(first + i, sort=cfg.get("sort"), query=query) for i in range(pages_per))
+        )
+        rows = [row for page in pages for row in page]
+        items = discover_lib.shape_limitless_events(rows, match=match, q=query)
+        # Warm the adapter so tapping a card opens the trade sheet without another lookup.
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for raw in [row, *[m for m in row.get("markets") or [] if isinstance(m, dict)]]:
+                try:
+                    self._remember(self.parse_market(raw), raw)
+                except Exception:
+                    continue
+        more = len(pages[-1]) >= size
+        next_offset = (first - 1) * size + pages_per * size if more else None
+        return {"tab": tab, "items": items, "next_offset": next_offset, "note": ""}
 
     def parse_market(self, raw: dict[str, Any]) -> Market:
         slug = str(raw.get("slug") or "").strip()

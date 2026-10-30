@@ -80,3 +80,16 @@ def test_bengali_summary_is_appended(harness: Harness) -> None:
     response = client.post("/v1/chat", json={"message": "/status দেখুন"})
     assert response.status_code == 200
     assert "[বাংলা সারসংক্ষেপ]" in response.json()["reply"]
+
+
+def test_discover_routes_are_venue_aware(harness: Harness) -> None:
+    client = make_client(harness)
+    login = client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})
+    assert login.status_code == 200, login.text
+    assert client.get("/v1/discover/tabs").json()["venue"] == "polymarket"  # fake venue active: old default
+    kalshi = client.get("/v1/discover/tabs", params={"venue": "kalshi"}).json()
+    assert kalshi["venue"] == "kalshi" and {"trending", "sports"} <= {t["id"] for t in kalshi["tabs"]}
+    assert client.get("/v1/discover", params={"venue": "fake"}).status_code == 404
+    assert client.get("/v1/discover", params={"venue": "kalshi", "tab": "perps"}).status_code == 404
+    # Tab is valid but the venue is not enabled on this server.
+    assert client.get("/v1/discover", params={"venue": "limitless", "tab": "new"}).status_code == 409

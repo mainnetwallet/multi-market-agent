@@ -39,18 +39,21 @@ import com.mainnetwallet.mmagent.data.Format
 import org.json.JSONObject
 
 /**
- * Markets. On Polymarket this is the browser with category tabs, prices and volume.
- * Other venues have no discovery feed yet, so they keep the plain list from the scanner.
+ * Markets. Polymarket, Kalshi and Limitless each get the browser with category tabs, prices and
+ * volume. Any other venue (the offline fake) keeps the plain list from the scanner.
  */
 @Composable
 fun MarketsScreen(
     markets: List<JSONObject>,
     activeVenue: String,
-    fetchDiscover: suspend (tab: String, query: String, offset: Int) -> JSONObject,
+    fetchDiscover: suspend (venue: String, tab: String, query: String, offset: Int) -> JSONObject,
     onOpen: (marketId: String, title: String, outcome: String) -> Unit,
 ) {
-    if (activeVenue == "polymarket") {
-        DiscoverScreen(fetch = fetchDiscover, onTrade = onOpen)
+    if (activeVenue in BROWSABLE_VENUES) {
+        // Keyed on the venue so switching venue resets the tab, search text and scroll position.
+        androidx.compose.runtime.key(activeVenue) {
+            DiscoverScreen(venue = activeVenue, fetch = fetchDiscover, onTrade = onOpen)
+        }
     } else {
         LegacyMarketsList(markets, activeVenue) { marketId, title -> onOpen(marketId, title, "YES") }
     }
