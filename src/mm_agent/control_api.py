@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 
+from . import discover as discover_lib
 from .agent import AgentService
 from .chat import ChatService
 from .config import Settings
@@ -382,6 +383,31 @@ def create_app(
     ) -> dict[str, Any]:
         rows = agent.store.list_markets(venue=venue, q=q, limit=min(max(limit, 1), 200))
         return {"markets": [m.model_dump(mode="json") for m in rows], "count": len(rows)}
+
+    @app.get("/v1/discover/tabs")
+    async def discover_tabs(_: str = Depends(require_auth)) -> dict[str, Any]:
+        return {"tabs": discover_lib.tab_list()}
+
+    @app.get("/v1/discover")
+    async def discover(
+        tab: str = "trending",
+        q: str | None = None,
+        limit: int = 30,
+        offset: int = 0,
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Polymarket-style browse (tabs, prices, volume). Read-only public data."""
+
+        if tab not in discover_lib.TABS:
+            raise HTTPException(status_code=404, detail=f"unknown tab: {tab}")
+        adapter = registry.adapters.get(VenueId.POLYMARKET)
+        if VenueId.POLYMARKET not in registry.enabled() or adapter is None or not hasattr(adapter, "discover"):
+            raise HTTPException(status_code=409, detail="Polymarket is not enabled on this server")
+        try:
+            result: dict[str, Any] = await adapter.discover(tab=tab, q=q, limit=limit, offset=offset)
+            return result
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Polymarket discovery failed: {str(exc)[:160]}") from exc
 
     @app.get("/v1/market")
     async def market_detail(

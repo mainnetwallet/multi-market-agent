@@ -38,9 +38,27 @@ import com.mainnetwallet.mmagent.data.AppUiState
 import com.mainnetwallet.mmagent.data.Format
 import org.json.JSONObject
 
-/** Markets: filter by venue, sort by what closes first, see the countdown. */
+/**
+ * Markets. On Polymarket this is the browser with category tabs, prices and volume.
+ * Other venues have no discovery feed yet, so they keep the plain list from the scanner.
+ */
 @Composable
 fun MarketsScreen(
+    markets: List<JSONObject>,
+    activeVenue: String,
+    fetchDiscover: suspend (tab: String, query: String, offset: Int) -> JSONObject,
+    onOpen: (marketId: String, title: String, outcome: String) -> Unit,
+) {
+    if (activeVenue == "polymarket") {
+        DiscoverScreen(fetch = fetchDiscover, onTrade = onOpen)
+    } else {
+        LegacyMarketsList(markets, activeVenue) { marketId, title -> onOpen(marketId, title, "YES") }
+    }
+}
+
+/** Filter by venue, sort by what closes first, see the countdown. */
+@Composable
+private fun LegacyMarketsList(
     markets: List<JSONObject>,
     activeVenue: String,
     onOpen: (marketId: String, title: String) -> Unit,

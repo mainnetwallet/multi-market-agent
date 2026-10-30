@@ -287,11 +287,13 @@ class MainActivity : FragmentActivity() {
                                 Tab.MARKETS -> com.mainnetwallet.mmagent.ui.MarketsScreen(
                                     markets = state.markets,
                                     activeVenue = state.status.venue,
-                                    onOpen = { marketId, title ->
+                                    fetchDiscover = { tabId, query, offset -> appViewModel.discover(tabId, query, offset) },
+                                    onOpen = { marketId, title, outcome ->
                                         tradeVm.newIntent()
                                         tradeVm.setMarket(marketId, title)
                                         applyCapabilities(tradeVm, state, marketId)
-                                        tradeVm.loadMarketData(marketId, tradeVm.state.value.draft.venue, "YES")
+                                        tradeVm.setOutcome(outcome)
+                                        tradeVm.loadMarketData(marketId, tradeVm.state.value.draft.venue, outcome)
                                         overlay = "trade"
                                     },
                                 )

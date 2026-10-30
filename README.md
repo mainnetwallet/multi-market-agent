@@ -393,6 +393,10 @@ curl -s -X POST https://<service>/v1/orders/limit \
        "side":"BUY","price":"0.57","shares":"10","tif":"GTC"}'
 ```
 
+Browse for markets with `GET /v1/discover?tab=trending|breaking|new|politics|sports|crypto|...&q=&limit=&offset=`
+(Polymarket only, public Gamma data) and `GET /v1/discover/tabs`. Each card carries the
+Yes/No prices, volume and close time, and the `market_id` to trade.
+
 The routes are `POST /v1/orders/limit`, `POST /v1/orders/market`,
 `POST /v1/positions/sell`, `POST /v1/orders/{id}/cancel`,
 `POST /v1/orders/cancel-all` and `POST /v1/orders/{id}/amend`. Cancellations are

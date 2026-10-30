@@ -68,4 +68,36 @@ class FormatTest {
     fun relativeTimeReadsAsFutureOrPast() {
         assertTrue(Format.relative("2026-10-30T12:00:00Z").contains("ago"))
     }
+
+    @Test
+    fun percentNeverRoundsToAFalseZeroOrHundred() {
+        assertEquals("57%", Format.percent("0.57"))
+        assertEquals("<1%", Format.percent("0.004"))
+        assertEquals(">99%", Format.percent("0.996"))
+        assertEquals("0%", Format.percent("0"))
+        assertEquals("—", Format.percent(null))
+    }
+
+    @Test
+    fun centShowsADecimalOnlyUnderOneCent() {
+        assertEquals("57¢", Format.cent("0.57"))
+        assertEquals("0.4¢", Format.cent("0.004"))
+        assertEquals("—", Format.cent("x"))
+    }
+
+    @Test
+    fun volumeIsCompact() {
+        assertEquals("$1.2M", Format.volume("1234567"))
+        assertEquals("$340k", Format.volume("340200"))
+        assertEquals("$85", Format.volume("85.4"))
+        assertEquals("$2.5B", Format.volume("2500000000"))
+    }
+
+    @Test
+    fun moveNeedsHalfAPointAndCarriesAnArrow() {
+        assertEquals("▲ 4%", Format.move("0.04"))
+        assertEquals("▼ 3%", Format.move("-0.03"))
+        assertEquals(null, Format.move("0.001"))
+        assertEquals(null, Format.move(null))
+    }
 }

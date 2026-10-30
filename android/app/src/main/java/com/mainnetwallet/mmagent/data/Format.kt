@@ -44,6 +44,46 @@ object Format {
         return p.multiply(BigDecimal(100)).setScale(1, RoundingMode.HALF_UP).toPlainString() + "c"
     }
 
+    /** "57%" from a probability string in [0, 1]; "<1%" and ">99%" never round to a false 0 or 100. */
+    fun percent(price: String?): String {
+        val p = price?.toBigDecimalOrNull() ?: return "—"
+        val pct = p.multiply(BigDecimal(100))
+        if (pct.signum() > 0 && pct < BigDecimal.ONE) return "<1%"
+        if (pct > BigDecimal(99) && pct < BigDecimal(100)) return ">99%"
+        return pct.setScale(0, RoundingMode.HALF_UP).toPlainString() + "%"
+    }
+
+    /** "57¢" for a price; one decimal under 1¢ so a 0.4¢ side is not shown as 0¢. */
+    fun cent(price: String?): String {
+        val p = price?.toBigDecimalOrNull() ?: return "—"
+        val cents = p.multiply(BigDecimal(100))
+        val scale = if (cents.signum() > 0 && cents < BigDecimal.ONE) 1 else 0
+        return cents.setScale(scale, RoundingMode.HALF_UP).toPlainString() + "¢"
+    }
+
+    /** "$1.2M" / "$340k" / "$85" — trading volume on a card. */
+    fun volume(value: String?): String {
+        val v = value?.toBigDecimalOrNull() ?: return "—"
+        val billion = BigDecimal(1_000_000_000)
+        val million = BigDecimal(1_000_000)
+        val thousand = BigDecimal(1_000)
+        return when {
+            v >= billion -> "$" + v.divide(billion, 1, RoundingMode.HALF_UP).toPlainString() + "B"
+            v >= million -> "$" + v.divide(million, 1, RoundingMode.HALF_UP).toPlainString() + "M"
+            v >= thousand -> "$" + v.divide(thousand, 0, RoundingMode.HALF_UP).toPlainString() + "k"
+            else -> "$" + v.setScale(0, RoundingMode.HALF_UP).toPlainString()
+        }
+    }
+
+    /** "▲ 4%" / "▼ 3%" for a 24h price move, or null when it is under half a point. */
+    fun move(change: String?): String? {
+        val c = change?.toBigDecimalOrNull() ?: return null
+        val pts = c.multiply(BigDecimal(100))
+        if (pts.abs() < BigDecimal("0.5")) return null
+        val arrow = if (pts.signum() > 0) "▲" else "▼"
+        return arrow + " " + pts.abs().setScale(0, RoundingMode.HALF_UP).toPlainString() + "%"
+    }
+
     /** "12.34" shares, without trailing noise. */
     fun shares(value: String?): String {
         val s = value?.toBigDecimalOrNull() ?: return "—"

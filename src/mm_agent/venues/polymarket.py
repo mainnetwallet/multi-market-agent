@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from .. import discover as discover_lib
 from ..config import Settings
 from ..domain import (
     Balance,
@@ -145,6 +146,65 @@ class PolymarketVenue(HttpVenue):
             markets.append(market)
         next_cursor = str(offset + len(data)) if len(data) >= limit else None
         return Page(items=markets[: query.limit], next_cursor=next_cursor)
+
+    async def discover(self, *, tab: str, q: str | None, limit: int, offset: int) -> dict[str, Any]:
+        """Polymarket-style browse: Gamma events for a tab (or a text search) as cards."""
+
+        limit = min(max(limit, 1), 50)
+        offset = max(offset, 0)
+        cfg = discover_lib.TABS.get(tab)
+        if cfg is None:
+            raise ValueError(f"unknown tab: {tab}")
+        query = (q or "").strip()
+        if "unsupported" in cfg and not query:
+            return {"tab": tab, "items": [], "next_offset": None, "note": cfg["unsupported"]}
+        if query:
+            page = offset // limit + 1
+            data = await self.get_json(
+                GAMMA + "/public-search",
+                params={"q": query, "limit_per_type": limit, "page": page, "events_status": "active"},
+            )
+            rows = data.get("events") if isinstance(data, dict) else None
+            more = bool(isinstance(data, dict) and (data.get("pagination") or {}).get("hasMore"))
+        else:
+            fetch = int(cfg.get("fetch", limit))
+            params: dict[str, Any] = {
+                "active": "true",
+                "closed": "false",
+                "order": cfg.get("order", "volume24hr"),
+                "ascending": "false",
+                "limit": fetch,
+                "offset": offset,
+            }
+            if cfg.get("tag"):
+                params["tag_slug"] = cfg["tag"]
+            rows = await self.get_json(GAMMA + "/events", params=params)
+            more = isinstance(rows, list) and len(rows) >= fetch
+        if not isinstance(rows, list):
+            raise VenueUnavailableError("Polymarket Gamma returned a non-list events payload")
+        items = discover_lib.shape_events(rows)
+        if cfg.get("rank") == "change" and not query:
+            items = discover_lib.rank_by_change(items)
+        items = items[:limit]
+        # Warm the adapter so tapping a card opens the trade sheet without another lookup.
+        by_id = {
+            str(m.get("id")): m
+            for event in rows
+            if isinstance(event, dict)
+            for m in event.get("markets") or []
+            if isinstance(m, dict)
+        }
+        for item in items:
+            for card in item["markets"]:
+                raw = by_id.get(card["market_id"])
+                if raw is None:
+                    continue
+                try:
+                    self._remember(self.parse_gamma_market(raw))
+                except Exception:
+                    continue
+        step = int(cfg.get("fetch", limit)) if not query else limit
+        return {"tab": tab, "items": items, "next_offset": offset + step if more else None, "note": ""}
 
     @staticmethod
     def _json_list(value: Any) -> list[Any]:

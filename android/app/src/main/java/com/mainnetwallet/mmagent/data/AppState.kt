@@ -242,6 +242,13 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         _state.value = AppUiState(error = error)
     }
 
+    /** One page of Polymarket-style browse results (public data, read-only). */
+    suspend fun discover(tab: String, query: String, offset: Int): JSONObject {
+        val enc = { value: String -> java.net.URLEncoder.encode(value, "UTF-8") }
+        val q = if (query.isBlank()) "" else "&q=" + enc(query)
+        return api.get("/v1/discover?tab=" + enc(tab) + q + "&limit=30&offset=" + offset)
+    }
+
     fun notify(message: String) {
         _messages.tryEmit(message)
     }
