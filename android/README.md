@@ -47,8 +47,23 @@ The APK lands in `android/app/build/outputs/apk/debug/app-debug.apk`.
 `-PmmBaseUrl` sets the default server URL; the operator can change it on the
 login screen.
 
-CI builds the APK on every push to `android/**`:
-`.github/workflows/android.yml` → **Actions → Android APK**.
+## Install and update
+
+Every push to `main` that touches `android/**` builds a **signed release APK** and
+publishes it on the repo's **Releases** page (tag `android-latest`).
+
+- Download the `.apk` from Releases on your phone and open it. Installing a newer
+  release over an older one updates the app and keeps your login.
+- Updates only work because every release is signed with the same key and has a
+  higher `versionCode` (`100 + run number`). The key lives in the repo secrets
+  `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and
+  `ANDROID_KEY_PASSWORD`. If it is ever replaced, uninstall the app once and
+  install the new release.
+- The first signed release cannot update the older debug builds (different app id
+  and key). Uninstall those once.
+- Pull-request builds only produce a debug APK (Actions → Android APK → artifact).
+
+CI: `.github/workflows/android.yml`.
 
 ## First run
 
