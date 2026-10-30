@@ -73,14 +73,55 @@ object Format {
         }
     }
 
+    /**
+     * Parse a server timestamp. Accepts "...Z", "...+00:00" and a bare
+     * "2026-10-30T12:00:00" (read as UTC, which is what the server stores).
+     */
+    fun parseInstant(isoTimestamp: String?): Instant? {
+        if (isoTimestamp.isNullOrBlank()) return null
+        return try {
+            Instant.parse(isoTimestamp)
+        } catch (e: Exception) {
+            try {
+                java.time.OffsetDateTime.parse(isoTimestamp).toInstant()
+            } catch (e2: Exception) {
+                try {
+                    Instant.parse(isoTimestamp + "Z")
+                } catch (e3: Exception) {
+                    null
+                }
+            }
+        }
+    }
+
+    /** Whole seconds from [now] until [isoTimestamp]; negative once it has passed, null if unreadable. */
+    fun secondsUntil(isoTimestamp: String?, now: Instant = Instant.now()): Long? {
+        val instant = parseInstant(isoTimestamp) ?: return null
+        return java.time.Duration.between(now, instant).seconds
+    }
+
+    /**
+     * "Closes in" text for a market: "2d 4h", "3h 20m", "45m", "<1m" or "closed".
+     * Only the two largest units are shown so it fits a card.
+     */
+    fun countdown(isoTimestamp: String?, now: Instant = Instant.now()): String {
+        val seconds = secondsUntil(isoTimestamp, now) ?: return "—"
+        if (seconds <= 0) return "closed"
+        val days = seconds / 86_400
+        val hours = (seconds % 86_400) / 3_600
+        val minutes = (seconds % 3_600) / 60
+        return when {
+            days > 0 -> "${days}d ${hours}h"
+            hours > 0 -> "${hours}h ${minutes}m"
+            minutes > 0 -> "${minutes}m"
+            else -> "<1m"
+        }
+    }
+
     /** "in 9 min" / "2 min ago" for a hold window or an expiry. */
     fun relative(isoTimestamp: String?): String {
         if (isoTimestamp.isNullOrBlank()) return "—"
-        val instant = try {
-            Instant.parse(isoTimestamp)
-        } catch (e: Exception) {
-            return "—"
-        }
+        val instant = parseInstant(isoTimestamp) ?: return "—"
         val seconds = java.time.Duration.between(Instant.now(), instant).seconds
         val minutes = seconds / 60
         return when {
