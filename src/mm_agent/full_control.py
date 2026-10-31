@@ -100,10 +100,8 @@ class FullControlService:
         for venue in self.registry.enabled():
             adapter = self.registry.get(venue)
             caps = adapter.caps
-            mode = self.registry.mode(venue).value
             venues[venue.value] = {
                 "display_name": adapter.display_name,
-                "mode": mode,
                 "ready": self.registry.is_ready(venue),
                 "reason": self.registry.reason(venue),
                 "collateral_asset": caps.collateral_asset,
@@ -159,11 +157,9 @@ class FullControlService:
         out: list[dict[str, Any]] = []
         for target in targets:
             adapter = self.registry.get(target)
-            mode = self.registry.mode(target)
             entry: dict[str, Any] = {
                 "venue": target.value,
                 "display_name": adapter.display_name,
-                "mode": mode.value,
                 "collateral_asset": adapter.caps.collateral_asset,
                 "available": None,
                 "in_orders": None,
@@ -184,11 +180,11 @@ class FullControlService:
                 continue
             in_orders = ZERO
             positions_value = ZERO
-            for order in self.store.list_orders(venue=target, mode=mode, states={"OPEN", "PARTIAL"}, limit=200):
+            for order in self.store.list_orders(venue=target, states={"OPEN", "PARTIAL"}, limit=200):
                 filled = Decimal(str(order.get("filled") or "0"))
                 size = Decimal(str(order["size"]))
                 in_orders += (size - filled) * Decimal(str(order["price"]))
-            for position in self.store.list_positions(mode=mode, venue=target):
+            for position in self.store.list_positions(venue=target):
                 mark = position.current_price or position.avg_price
                 positions_value += position.shares * mark
             entry["available"] = str(balance.available_usd)
@@ -318,7 +314,6 @@ class FullControlService:
     def _check_risk(self, venue: VenueId, amount: Decimal, *, market_id: str | None = None) -> None:
         """Manual orders pass the same caps as agent proposals."""
 
-        mode = self.registry.mode(venue)
         bankroll = self.settings.limit_bankroll(venue)
         cap = self.agent.risk.caps["max_trade_usd"]
         if amount > cap:
@@ -326,13 +321,13 @@ class FullControlService:
                 f"order of {amount} exceeds the per-trade cap of {cap}",
                 code="max_trade_exceeded",
             )
-        if self.store.today_pnl(mode) <= -(bankroll * self.agent.risk.caps["max_daily_loss_pct"] / HUNDRED):
+        if self.store.today_pnl() <= -(bankroll * self.agent.risk.caps["max_daily_loss_pct"] / HUNDRED):
             raise FullControlError(
                 "the daily loss limit is reached; no new entries",
                 code="daily_loss_cap",
             )
         if (
-            self.store.total_exposure(mode, venue) + amount
+            self.store.total_exposure(venue) + amount
             > bankroll * self.agent.risk.caps["max_total_exposure_pct"] / HUNDRED
         ):
             raise FullControlError(
@@ -342,7 +337,7 @@ class FullControlService:
         # The same position-count cap the agent's own sizing applies. It counts
         # markets, not outcomes: YES and NO on one market are one position.
         max_positions = int(self.agent.risk.caps["max_open_positions"])
-        positions = self.store.list_positions(mode=mode, venue=venue)
+        positions = self.store.list_positions(venue=venue)
         open_markets = {p.market_id for p in positions}
         already_held = bool(market_id) and market_id in open_markets
         if len(open_markets) >= max_positions and not already_held:
@@ -431,7 +426,6 @@ class FullControlService:
             client_order_id=client_order_id,
             reduce_only=reduce_only,
             order_type=order_type,
-            mode=self.registry.mode(target),
             expires_at=expires_at,
             post_only=post_only,
         )
@@ -473,7 +467,6 @@ class FullControlService:
             "average_price": str(result.average_price) if result.average_price else None,
             "fee_usd": str(result.fee_usd),
             "message": result.message,
-            "mode": self.registry.mode(target).value,
         }
 
     async def sell_position(
@@ -523,7 +516,6 @@ class FullControlService:
             client_order_id=f"{target.value[:3]}-sell-{uuid.uuid4().hex[:20]}",
             reduce_only=True,
             order_type=OrderType.FAK,
-            mode=self.registry.mode(target),
         )
         result, local_id = await self.execution.submit(request, market)
         self.store.audit(
@@ -545,7 +537,6 @@ class FullControlService:
             "average_price": str(result.average_price) if result.average_price else None,
             "fee_usd": str(result.fee_usd),
             "message": result.message,
-            "mode": self.registry.mode(target).value,
         }
 
     async def amend_order(

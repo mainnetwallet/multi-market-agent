@@ -29,7 +29,6 @@ data class TradeDraft(
     val tick: BigDecimal = BigDecimal("0.01"),
     val availableOrderTypes: List<String> = listOf("GTC"),
     val postOnlySupported: Boolean = false,
-    val mode: String = "LIVE",
     val collateralAsset: String = "USD",
 ) {
     /** The chips the trade sheet offers, driven by the venue's capabilities. */
@@ -72,7 +71,7 @@ class TradeSheetViewModel(private val api: ApiClient) : ViewModel() {
     private val _state = MutableStateFlow(TradeUiState())
     val state: StateFlow<TradeUiState> = _state.asStateFlow()
 
-    fun setCapabilities(venue: String, orderTypes: List<String>, postOnly: Boolean, tick: BigDecimal, mode: String, asset: String) {
+    fun setCapabilities(venue: String, orderTypes: List<String>, postOnly: Boolean, tick: BigDecimal, asset: String) {
         _state.value = _state.value.copy(
             draft = _state.value.draft.copy(
                 venue = venue,
@@ -80,7 +79,6 @@ class TradeSheetViewModel(private val api: ApiClient) : ViewModel() {
                 postOnlySupported = postOnly,
                 postOnly = _state.value.draft.postOnly && postOnly,
                 tick = tick,
-                mode = mode,
                 collateralAsset = asset,
                 orderType = if (_state.value.draft.orderType in orderTypes) _state.value.draft.orderType else orderTypes.firstOrNull() ?: "GTC",
             )

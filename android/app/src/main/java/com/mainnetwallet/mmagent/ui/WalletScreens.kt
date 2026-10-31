@@ -287,7 +287,6 @@ private fun WalletCard(
     val venueCaps = capabilities?.optJSONObject("venues")?.optJSONObject(venue)
     val funds = venueCaps?.optJSONObject("funds")
     val asset = balance.optString("collateral_asset", "USD")
-    val mode = balance.optString("mode", "LIVE")
     val unavailable = balance.optString("reason").takeIf { it.isNotBlank() && it != "null" }
 
     Card(
@@ -302,7 +301,7 @@ private fun WalletCard(
             ) {
                 Text(venue.uppercase(), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    mode,
+                    "LIVE",
                     style = MaterialTheme.typography.labelSmall,
                     color = Palette.Danger,
                 )

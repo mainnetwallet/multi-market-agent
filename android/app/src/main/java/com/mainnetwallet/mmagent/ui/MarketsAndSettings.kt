@@ -193,7 +193,6 @@ fun SettingsScreen(
             ) {
                 Column(Modifier.padding(16.dp)) {
                     SectionHeader("Security")
-                    ValueRow("Mode", state.status.mode, emphasise = true)
                     // The lock is only on when this device can actually open it.
                     ValueRow(
                         label = "App lock",
@@ -278,7 +277,7 @@ fun SettingsScreen(
                         ValueRow(
                             label = venue.optString("display_name").ifBlank { id.replaceFirstChar { it.uppercase() } } +
                                 if (id == state.status.venue) " (active)" else "",
-                            value = (if (ready) "ready" else "not ready") + " · " + venue.optString("mode", "LIVE"),
+                            value = if (ready) "ready" else "not ready",
                             valueColor = if (ready) Palette.Long else Palette.Alert,
                         )
                         Text(

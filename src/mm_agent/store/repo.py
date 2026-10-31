@@ -3,7 +3,7 @@
 Rules:
 * state transitions are committed before external side effects,
 * an UNKNOWN order can never transition back to SUBMITTING,
-* every row is scoped by venue (and mode where money is involved).
+* every row is scoped by venue.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..domain import (
     Market,
     MarketStatus,
-    Mode,
     Outcome,
     OutcomeInfo,
     Position,
@@ -478,7 +477,6 @@ class Store:
                 ProposalRow(
                     id=proposal.id,
                     venue=proposal.venue.value,
-                    mode=proposal.mode.value,
                     market_id=proposal.market_id,
                     market_title=proposal.market_title,
                     outcome=proposal.outcome.value,
@@ -577,7 +575,6 @@ class Store:
         return Proposal(
             id=row.id,
             venue=VenueId(row.venue),
-            mode=Mode(row.mode),
             market_id=row.market_id,
             market_title=row.market_title,
             outcome=Outcome(row.outcome),
@@ -604,7 +601,6 @@ class Store:
         self,
         *,
         venue: VenueId,
-        mode: Mode,
         market_id: str,
         outcome: Outcome,
         side: Side,
@@ -625,7 +621,6 @@ class Store:
                     OrderRow(
                         id=local_id,
                         venue=venue.value,
-                        mode=mode.value,
                         market_id=market_id,
                         outcome=outcome.value,
                         side=side.value,
@@ -665,15 +660,12 @@ class Store:
         self,
         *,
         venue: VenueId | None = None,
-        mode: Mode | None = None,
         limit: int = 100,
         states: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         stmt = select(OrderRow).order_by(OrderRow.created_at.desc()).limit(limit)
         if venue:
             stmt = stmt.where(OrderRow.venue == venue.value)
-        if mode:
-            stmt = stmt.where(OrderRow.mode == mode.value)
         if states:
             stmt = stmt.where(OrderRow.state.in_(states))
         with self.session() as s:
@@ -729,7 +721,6 @@ class Store:
             "id": row.id,
             "short_id": row.id[:8],
             "venue": row.venue,
-            "mode": row.mode,
             "market_id": row.market_id,
             "outcome": row.outcome,
             "side": row.side,
@@ -755,7 +746,6 @@ class Store:
         *,
         order_id: str,
         venue: VenueId,
-        mode: Mode,
         market_id: str,
         outcome: Outcome,
         side: Side,
@@ -798,7 +788,6 @@ class Store:
             pos = s.scalar(
                 select(PositionRow).where(
                     PositionRow.venue == venue.value,
-                    PositionRow.mode == mode.value,
                     PositionRow.market_id == market_id,
                     PositionRow.outcome == outcome.value,
                 )
@@ -806,7 +795,6 @@ class Store:
             if pos is None:
                 pos = PositionRow(
                     venue=venue.value,
-                    mode=mode.value,
                     market_id=market_id,
                     outcome=outcome.value,
                     market_title=market_title,
@@ -835,7 +823,6 @@ class Store:
                 s.add(
                     PnlRow(
                         venue=venue.value,
-                        mode=mode.value,
                         kind="realized",
                         amount_usd=realized,
                         ref=market_id,
@@ -846,7 +833,6 @@ class Store:
                 s.add(
                     PnlRow(
                         venue=venue.value,
-                        mode=mode.value,
                         kind="fee",
                         amount_usd=-fee_usd,
                         ref=market_id,
@@ -905,7 +891,6 @@ class Store:
                     "price": str(r.price),
                     "shares": str(r.size),
                     "fee_usd": str(r.fee_usd),
-                    "mode": getattr(orders.get(r.order_id), "mode", "LIVE"),
                     "at": r.created_at.isoformat(),
                 }
                 for r in rows
@@ -931,10 +916,8 @@ class Store:
         return out
 
     # ------------------------------------------------------------- positions
-    def list_positions(self, *, mode: Mode | None = None, venue: VenueId | None = None) -> list[Position]:
+    def list_positions(self, *, venue: VenueId | None = None) -> list[Position]:
         stmt = select(PositionRow).where(PositionRow.shares > 0).order_by(PositionRow.updated_at.desc())
-        if mode:
-            stmt = stmt.where(PositionRow.mode == mode.value)
         if venue:
             stmt = stmt.where(PositionRow.venue == venue.value)
         with self.session() as s:
@@ -952,28 +935,25 @@ class Store:
                         (r.current_price - r.avg_price) * r.shares if r.current_price is not None else Decimal("0")
                     ),
                     market_title=r.market_title,
-                    mode=Mode(r.mode),
                 )
                 for r in rows
             ]
 
-    def open_positions_count(self, mode: Mode | None = None) -> int:
+    def open_positions_count(self) -> int:
         stmt = select(func.count()).select_from(PositionRow).where(PositionRow.shares > 0)
-        if mode:
-            stmt = stmt.where(PositionRow.mode == mode.value)
         with self.session() as s:
             return int(s.scalar(stmt) or 0)
 
-    def total_exposure(self, mode: Mode, venue: VenueId | None = None) -> Decimal:
+    def total_exposure(self, venue: VenueId | None = None) -> Decimal:
         stmt = select(func.coalesce(func.sum(PositionRow.shares * PositionRow.avg_price), 0)).where(
-            PositionRow.shares > 0, PositionRow.mode == mode.value
+            PositionRow.shares > 0
         )
         if venue:
             stmt = stmt.where(PositionRow.venue == venue.value)
         with self.session() as s:
             return Decimal(str(s.scalar(stmt) or 0))
 
-    def event_exposure(self, venue: VenueId, mode: Mode, event_id: str | None) -> Decimal:
+    def event_exposure(self, venue: VenueId, event_id: str | None) -> Decimal:
         if not event_id:
             return Decimal("0")
         with self.session() as s:
@@ -985,23 +965,20 @@ class Store:
             total = s.scalar(
                 select(func.coalesce(func.sum(PositionRow.shares * PositionRow.avg_price), 0)).where(
                     PositionRow.venue == venue.value,
-                    PositionRow.mode == mode.value,
                     PositionRow.shares > 0,
                     PositionRow.market_id.in_(market_ids),
                 )
             )
             return Decimal(str(total or 0))
 
-    def realized_pnl_since(self, since: datetime, mode: Mode | None = None) -> Decimal:
+    def realized_pnl_since(self, since: datetime) -> Decimal:
         stmt = select(func.coalesce(func.sum(PnlRow.amount_usd), 0)).where(PnlRow.created_at >= since)
-        if mode:
-            stmt = stmt.where(PnlRow.mode == mode.value)
         with self.session() as s:
             return Decimal(str(s.scalar(stmt) or 0))
 
-    def today_pnl(self, mode: Mode | None = None) -> Decimal:
+    def today_pnl(self) -> Decimal:
         start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        return self.realized_pnl_since(start, mode)
+        return self.realized_pnl_since(start)
 
     def update_position_price(self, venue: VenueId, market_id: str, outcome: Outcome, price: Decimal) -> None:
         with self.session() as s:
@@ -1023,7 +1000,6 @@ class Store:
                 RuleRow(
                     id=rule.id,
                     venue=rule.venue.value,
-                    mode=rule.mode.value,
                     market_id=rule.market_id,
                     outcome=rule.outcome.value,
                     kind=rule.kind.value,
@@ -1035,12 +1011,10 @@ class Store:
                 )
             )
 
-    def list_rules(self, *, status: RuleStatus | None = None, mode: Mode | None = None) -> list[Rule]:
+    def list_rules(self, *, status: RuleStatus | None = None) -> list[Rule]:
         stmt = select(RuleRow).order_by(RuleRow.created_at.desc())
         if status:
             stmt = stmt.where(RuleRow.status == status.value)
-        if mode:
-            stmt = stmt.where(RuleRow.mode == mode.value)
         with self.session() as s:
             return [self._rule(r) for r in s.scalars(stmt).all()]
 
@@ -1124,7 +1098,6 @@ class Store:
         return Rule(
             id=row.id,
             venue=VenueId(row.venue),
-            mode=Mode(row.mode),
             market_id=row.market_id,
             outcome=Outcome(row.outcome),
             kind=RuleKind(row.kind),

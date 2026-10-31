@@ -46,7 +46,6 @@ def test_balance_is_read_from_the_venue(harness: Harness) -> None:
     client = make_client(harness)
     body = client.get("/v1/balance?venue=fake").json()
     assert body["venue"] == "fake"
-    assert body["mode"] == "LIVE"
     assert body["reason"] is None
     assert Decimal(body["available"]) > 0
 
@@ -367,7 +366,6 @@ def test_trades_listing_returns_fills(harness: Harness) -> None:
     row = body["trades"][0]
     assert row["venue"] == "fake"
     assert row["outcome"] == "YES"
-    assert row["mode"] == "LIVE"
 
 
 def test_pnl_daily_series(harness: Harness) -> None:

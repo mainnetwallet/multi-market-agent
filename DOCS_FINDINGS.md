@@ -258,8 +258,7 @@ research/risk must fail closed on one-sided or odd books.
   like `37` (cents) or `37c` rather than guessing.
 - Adapters expose a single index price, but order placement uses each venue's
   tick alignment. Kalshi sub-cent edge bands remain a go-live blocker.
-- All live placement is behind `LIVE_<VENUE>=true`; no authenticated/key-bearing
-  call is needed for PAPER or public reads.
+- No authenticated or key-bearing call is needed for public reads.
 - The build's own public doctor results are in the final report; the exact text
   at recon was: Polymarket OK, Kalshi DEGRADED (credentials absent; public and
   market reads pass), Limitless OK.

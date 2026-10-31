@@ -119,7 +119,6 @@ fun AppScaffold(
             Column {
                 ModeFrame(
                     venue = state.status.venue.ifBlank { "no venue" },
-                    mode = state.status.mode,
                     paused = state.status.paused,
                     onBadgeClick = onVenueClick,
                     trailing = {
@@ -190,7 +189,6 @@ fun VenueSwitcherDialog(
                     val id = venue.optString("venue")
                     val isActive = id == active
                     val ready = venue.optBoolean("ready")
-                    val mode = venue.optString("mode", "LIVE")
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -207,8 +205,8 @@ fun VenueSwitcherDialog(
                             )
                             Text(
                                 when {
-                                    isActive -> "Active · $mode"
-                                    ready -> "Ready · $mode"
+                                    isActive -> "Active"
+                                    ready -> "Ready"
                                     else -> "Not ready: ${venue.optString("reason").ifBlank { "the server gave no reason" }}"
                                 },
                                 style = MaterialTheme.typography.bodySmall,

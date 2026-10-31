@@ -1188,6 +1188,6 @@ def create_app(
         active = registry.active_or_none
         if active is None:
             return "NO VENUE READY"
-        return f"{active.value.upper()} | {registry.mode(active).value}"
+        return f"{active.value.upper()} | LIVE"
 
     return app

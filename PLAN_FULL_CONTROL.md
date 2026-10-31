@@ -8,7 +8,7 @@ one way to trade, not the only one.
 
 Ground rules kept from the base build:
 
-- PAPER default per venue. `LIVE_<VENUE>=true` remains operator-only, env-only, restart-only.
+- No paper mode: every order is real, and a venue trades only after its authenticated doctor check passes.
 - Fail closed. Unknown order outcomes are never resent.
 - Decimal-as-string JSON everywhere.
 - Money-moving POSTs need an `Idempotency-Key`; the server stores key → result for 24 h
@@ -27,7 +27,7 @@ All routes under `/v1`, all authenticated (`require_auth`: session cookie **or**
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/v1/status` | yes | gains `capabilities`, `balance`, `limits.hard_ceilings` (new optional fields) |
-| GET | `/v1/balance?venue=` | yes | per-venue `available`, `in_orders`, `positions_value`, `total`, `collateral_asset`, `mode`, `as_of` |
+| GET | `/v1/balance?venue=` | yes | per-venue `available`, `in_orders`, `positions_value`, `total`, `collateral_asset`, `as_of` |
 | GET | `/v1/capabilities` | yes | same `capabilities` block, standalone |
 
 ### Manual trading
@@ -139,7 +139,7 @@ Existing tables gain optional columns: `orders.order_type`, `orders.tif`, `order
 
 ```
 ┌──────────────────────────────┐
-│ ← Wallet            PAPER ▮  │
+│ ← Wallet            LIVE ▮   │
 ├──────────────────────────────┤
 │ POLYMARKET        pUSD        │
 │ Available   12.40            │

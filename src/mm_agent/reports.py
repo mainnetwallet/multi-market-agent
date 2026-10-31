@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 
 from .agent import AgentService
-from .domain import Mode
 from .store import Store
 from .store.models import DecisionRow, FillRow, MarketRow, ProbabilityRow
 
@@ -101,9 +100,7 @@ def daily_report(store: Store, agent: AgentService, day: datetime | None = None)
         "fees_usd": str(fees.quantize(Decimal("0.01"))),
         "realized_pnl_usd": str(store.today_pnl()),
         "open_positions": len(positions),
-        "open_exposure_usd_by_mode": {
-            "LIVE": str(store.total_exposure(Mode.LIVE)),
-        },
+        "open_exposure_usd": str(store.total_exposure()),
         "rules": dict(Counter(r.status.value for r in store.list_rules())),
         "probability_bins": bins,
         "calibration": calibration,
@@ -121,7 +118,7 @@ def render_report(report: dict[str, Any]) -> str:
         f"Top vetoes: {report['top_vetoes']}\n"
         f"Fills: {report['fills']} · notional ${report['fill_notional_usd']} · fees ${report['fees_usd']}\n"
         f"Realized PnL: ${report['realized_pnl_usd']} · open positions: {report['open_positions']}\n"
-        f"Exposure: {report['open_exposure_usd_by_mode']}\n"
+        f"Exposure: ${report['open_exposure_usd']}\n"
         f"Rules: {report['rules']}\n"
         f"Calibration: {calibration_text}"
     )

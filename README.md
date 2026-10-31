@@ -280,8 +280,8 @@ step-up token.
   - LLM tool `switch_venue`
 - On switch: new proposals pause briefly, in-flight placement finishes, and all
   venues' positions/open orders/rules stay alive. Only the event bus and store
-  are shared; every row carries `venue` (and `mode`).
-- The badge always names the active venue and mode.
+  are shared; every row carries `venue`.
+- The badge always names the active venue and says LIVE.
 
 ---
 
@@ -423,7 +423,7 @@ alembic upgrade head
 
 Normalized `venues`, `events`, `outcomes`, `markets`, research, probabilities,
 proposals, orders, fills, positions, PnL, rules, decisions, audit and kv tables
-are present. Every trading row carries venue (and mode for money rows). Order/fill
+are present. Every trading row carries its venue. Order/fill
 transitions are committed before network side effects; UNKNOWN never transitions
 back to SUBMITTING. Reconciliation checks open orders first and then terminal
 trade history. See `src/mm_agent/store/repo.py`.

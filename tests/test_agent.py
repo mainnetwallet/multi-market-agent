@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from mm_agent.domain import MarketRef, Mode, Outcome, RuleKind, RuleStatus, VenueId, utcnow
+from mm_agent.domain import MarketRef, Outcome, RuleKind, RuleStatus, VenueId, utcnow
 from mm_agent.rules import RulesEngine
 from tests.conftest import Harness
 
@@ -29,13 +29,12 @@ async def test_proposal_is_sourced_and_approved_into_fill(harness: Harness, rese
     )
     assert result["ok"], result.get("reasons")
     proposal = result["proposal"]
-    assert proposal["mode"] == "LIVE"
     assert Decimal(proposal["edge"]) >= Decimal("0.03")
     approved = await harness.agent.approve(proposal["id"], actor="web:test", via="ui")
     assert approved["ok"], approved
     assert approved["status"] in {"FILLED", "PARTIAL"}
     assert approved["venue"] == "fake"
-    positions = harness.store.list_positions(mode=Mode.LIVE)
+    positions = harness.store.list_positions()
     assert positions
     assert positions[0].shares > 0
 
@@ -61,7 +60,6 @@ async def test_unknown_order_is_never_resent(harness: Harness, researched: str) 
     )
     assert result["ok"], result.get("reasons")
     proposal = result["proposal"]
-    assert proposal["mode"] == "LIVE"
     approved = await harness.agent.approve(proposal["id"], actor="web:test", via="ui")
     assert approved["status"] == "UNKNOWN"
     order = harness.store.get_order(approved["order_id"])
@@ -78,7 +76,7 @@ async def test_unknown_order_is_never_resent(harness: Harness, researched: str) 
     reconciled_order = harness.store.get_order(approved["order_id"])
     assert reconciled_order["state"] == "PARTIAL"
     assert reconciled_order["filled"] > 0
-    assert harness.store.list_positions(mode=Mode.LIVE)
+    assert harness.store.list_positions()
 
 
 @pytest.mark.asyncio
@@ -91,7 +89,7 @@ async def test_rule_fires_once_and_stale_book_blocks(harness: Harness, researche
     assert result["ok"], result.get("reasons")
     approved = await harness.agent.approve(result["proposal"]["id"], actor="web:test", via="ui")
     assert approved["ok"], approved
-    position = harness.store.list_positions(mode=Mode.LIVE)[0]
+    position = harness.store.list_positions()[0]
     created = harness.agent.create_exit_rule(
         market_id=position.market_id,
         outcome=position.outcome,
@@ -153,7 +151,6 @@ async def test_unknown_order_blocks_approval(harness: Harness, researched: str) 
     assert first["status"] == "UNKNOWN"
     second_proposal = Proposal(
         venue=VenueId.FAKE,
-        mode=Mode.LIVE,
         market_id="fed-cut",
         market_title="Test",
         outcome=Outcome.YES,
@@ -242,7 +239,6 @@ async def test_daily_loss_cap_pauses_entries(harness: Harness) -> None:
         s.add(
             PnlRow(
                 venue="fake",
-                mode="LIVE",
                 kind="realized",
                 amount_usd=Decimal("-6"),
                 ref="test",

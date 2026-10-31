@@ -14,7 +14,6 @@ from .books import BookCache
 from .config import Settings
 from .domain import (
     MarketRef,
-    Mode,
     Outcome,
     Position,
     Rule,
@@ -75,13 +74,13 @@ class RulesEngine:
     async def run_once(self) -> list[dict[str, object]]:
         results: list[dict[str, object]] = []
         positions = self.store.list_positions()
-        by_key: dict[tuple[str, Mode, str, Outcome], Position] = {
-            (p.venue.value, p.mode, p.market_id, p.outcome): p for p in positions
+        by_key: dict[tuple[str, str, Outcome], Position] = {
+            (p.venue.value, p.market_id, p.outcome): p for p in positions
         }
         rules = self.store.list_rules(status=RuleStatus.ACTIVE) + self.store.list_rules(status=RuleStatus.BLOCKED)
         # Rules must run for every venue with positions, not just the active one.
         for rule in rules:
-            key = (rule.venue.value, rule.mode, rule.market_id, rule.outcome)
+            key = (rule.venue.value, rule.market_id, rule.outcome)
             position = by_key.get(key)
             if position is None or position.shares <= 0:
                 self.store.mark_rule(rule.id, RuleStatus.DONE, "position closed")
@@ -167,7 +166,6 @@ class RulesEngine:
                 sibling.id != rule.id
                 and sibling.market_id == rule.market_id
                 and sibling.venue is rule.venue
-                and sibling.mode is rule.mode
                 and sibling.status in {RuleStatus.ACTIVE, RuleStatus.BLOCKED}
             ):
                 self.store.cancel_rule(sibling.id)

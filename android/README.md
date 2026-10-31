@@ -37,7 +37,7 @@ directly — no WebView.
   Orders). Web links in replies are tappable, but only after a dialog shows the real address; long chats
   load in pages ("Load earlier messages"). Chats from before this change stay on the device and open as before; sending a message in
   one starts its server copy. Slash commands (`/status`, `/positions`, ...) work as always.
-- **Settings** — a Security section with the mode, the app lock (on/off and the
+- **Settings** — a Security section with the app lock (on/off and the
   background timeout), the per-trade cap, the hard ceiling (raisable with a
   step-up token), the funds capability status and the heartbeat/resting-orders
   state.

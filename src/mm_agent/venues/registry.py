@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config import Settings
-from ..domain import DoctorReport, DoctorStatus, MarketRef, Mode, VenueId, utcnow
+from ..domain import DoctorReport, DoctorStatus, MarketRef, VenueId, utcnow
 from ..events import EventBus
 from ..store import Store
 from ..util import get_logger
@@ -26,7 +26,6 @@ class VenueStatus:
     enabled: bool
     ready: bool
     reason: str
-    mode: Mode
     credentialed: bool = False
     doctor: DoctorReport | None = None
 
@@ -94,9 +93,6 @@ class VenueRegistry:
             return True
         return bool(self._ready.get(venue))
 
-    def mode(self, venue: VenueId) -> Mode:
-        return Mode.LIVE
-
     def reason(self, venue: VenueId) -> str:
         if not self._ready.get(venue):
             return self._reasons.get(venue, "doctor not run")
@@ -117,7 +113,6 @@ class VenueRegistry:
                 enabled=True,
                 ready=self.is_ready(venue),
                 reason=self.reason(venue),
-                mode=self.mode(venue),
                 credentialed=self.settings.credentials_present(venue),
                 doctor=self.doctors.get(venue),
             )
@@ -243,7 +238,6 @@ class VenueRegistry:
         active = self._active
         return {
             "active": active.value if active else None,
-            "mode": self.mode(active).value if active else None,
             "venues": [
                 {
                     "venue": s.venue.value,
@@ -251,7 +245,6 @@ class VenueRegistry:
                     "enabled": s.enabled,
                     "ready": s.ready,
                     "reason": s.reason,
-                    "mode": s.mode.value,
                     "credentialed": s.credentialed,
                     "doctor_status": s.doctor.status.value if s.doctor else "NOT_RUN",
                 }

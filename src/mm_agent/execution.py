@@ -15,7 +15,6 @@ from .domain import (
     ExecutionStatus,
     Market,
     MarketRef,
-    Mode,
     OrderRequest,
     OrderResult,
     OrderType,
@@ -64,7 +63,6 @@ class ExecutionGateway:
         adapter = self.registry.get(req.venue)
         local_id = self.store.create_order(
             venue=req.venue,
-            mode=req.mode,
             market_id=req.market_id,
             outcome=req.outcome,
             side=req.side,
@@ -133,7 +131,6 @@ class ExecutionGateway:
             inserted = self.store.apply_fill(
                 order_id=local_id,
                 venue=req.venue,
-                mode=req.mode,
                 market_id=req.market_id,
                 outcome=req.outcome,
                 side=req.side,
@@ -149,7 +146,6 @@ class ExecutionGateway:
             "order.updated",
             order=result.model_dump(mode="json"),
             local_order_id=local_id,
-            mode=req.mode.value,
         )
 
     async def cancel(self, order_id: str, *, actor: str) -> dict[str, Any]:
@@ -231,7 +227,6 @@ class ExecutionGateway:
                 self.store.apply_fill(
                     order_id=local["id"],
                     venue=ref.venue,
-                    mode=Mode(local["mode"]),
                     market_id=local["market_id"],
                     outcome=Outcome(local["outcome"]),
                     side=match.side,
@@ -274,7 +269,6 @@ class ExecutionGateway:
                 self.store.apply_fill(
                     order_id=local["id"],
                     venue=ref.venue,
-                    mode=Mode(local["mode"]),
                     market_id=local["market_id"],
                     outcome=Outcome(local["outcome"]),
                     side=matches[0].side,
@@ -333,7 +327,6 @@ class ExecutionGateway:
             client_order_id=f"{position.venue.value[:3]}-exit-{uuid.uuid4().hex[:20]}",
             reduce_only=True,
             order_type=OrderType.FAK,
-            mode=self.registry.mode(position.venue),
         )
         self.store.audit(
             actor, "position.exit", {"reason": reason, "ref": ref.namespaced, "size": str(position.shares)}

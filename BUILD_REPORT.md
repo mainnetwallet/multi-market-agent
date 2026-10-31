@@ -31,7 +31,7 @@ Post-audit corrections added normalized `venues`/`events`/`outcomes` tables,
 per-venue bankroll overrides, a background book-feed loop, trade-history
 reconciliation, approval blocking on UNKNOWN orders, Bengali/Banglish chat
 summaries, Brier calibration from resolved markets, exact Kalshi order tick
-bands, current Limitless fees, and a `.env` bootstrap script. A local PAPER
+bands, current Limitless fees, and a `.env` bootstrap script. A local
 instance was started and its login, `/health` HEAD, `/status`, markets, and PWA
 HTML were verified over HTTP.
 
@@ -64,7 +64,7 @@ d79d6ce phase 2: SQLAlchemy store, Alembic schema, books and scanner
 3d71a44 phase 0: scaffold, normalized domain, venue docs recon
 ```
 
-## Run PAPER now
+## Run locally
 
 ```bash
 cp .env.example .env     # set ADMIN_PASSWORD and SESSION_SECRET
@@ -73,19 +73,19 @@ python scripts/doctor.py --venue all
 python -m mm_agent.main
 ```
 
-Open `http://127.0.0.1:8080`. Everything is PAPER until an operator edits
-`LIVE_<VENUE>=true` and restarts.
+Open `http://127.0.0.1:8080`. There is no paper mode: a venue can trade only
+after its credentials are set and its authenticated doctor check passes.
 
-## Go LIVE later
+## Before the first real order
 
-Follow the README checklist. Do not enable LIVE until:
+Follow the README checklist. Do not place a real order until:
 
 1. Authenticated doctor checks pass for that venue; rerun with the venue's
    demo/opt-in order test only if you accept the risk.
 2. Kalshi sub-cent tick snapping is hardened (known gap).
 3. Limitless fee estimate is verified against a real fill.
 4. A **dedicated** low-balance trading account/wallet is in use.
-5. A $1–$2 approval has been watched end to end in PAPER first.
+5. The first order is a $1–$2 approval from a dedicated burner account, watched end to end.
 
 ## Known gaps
 

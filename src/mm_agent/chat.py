@@ -689,7 +689,7 @@ class ChatService:
         ]
         for venue in status["venues"]:
             state = "READY" if venue["ready"] else f"UNAVAILABLE ({venue['reason'] or 'no read'})"
-            lines.append(f"  {venue['venue']}: {venue['mode']} / {state}")
+            lines.append(f"  {venue['venue']}: {state}")
         lines.append("Feed:")
         for name, diag in status["feed_diag"].get("venues", {}).items():
             lines.append(f"  {name}: seen={diag['seen']} kept={diag['kept']} error={diag['error'] or '-'}")
@@ -719,7 +719,7 @@ class ChatService:
         if not positions:
             return {"reply": "No open positions.", "data": {}}
         lines = [
-            f"{p.venue.value} | {p.mode.value} | {p.outcome.value} {p.shares} @ {display_cents(p.avg_price)}"
+            f"{p.venue.value} | {p.outcome.value} {p.shares} @ {display_cents(p.avg_price)}"
             f" | {p.market_id} | {p.market_title or ''}"
             for p in positions
         ]
@@ -733,7 +733,7 @@ class ChatService:
         if not orders:
             return {"reply": "No orders.", "data": {}}
         lines = [
-            f"{o['venue']} | {o['mode']} | {o['state']} | {o['side']} {o['filled']}/{o['size']}"
+            f"{o['venue']} | {o['state']} | {o['side']} {o['filled']}/{o['size']}"
             f" @ {display_cents(o['price'])} | {o['short_id']}"
             for o in orders
         ]
@@ -765,9 +765,8 @@ class ChatService:
             result = await self.agent.registry.switch(venue, actor=actor)
         except ValueError as exc:
             raise ChatError(str(exc)) from exc
-        mode = self.agent.registry.mode(venue).value
         return {
-            "reply": f"Active venue switched to {venue.value.upper()} | {mode}. "
+            "reply": f"Active venue switched to {venue.value.upper()} | LIVE. "
             "Positions, orders and rules on other venues stay live.",
             "data": result,
         }
@@ -793,7 +792,6 @@ class ChatService:
         market = await self._find_market(match.group("q"))
         amount = Decimal(match.group("amount"))
         outcome = Outcome(match.group("outcome").upper()) if match.group("outcome") else None
-        mode = self.agent.registry.mode(market.venue)
         execute = self.settings.chat_autopilot
         if outcome is None:
             # Let the engine choose the better side.
@@ -818,7 +816,7 @@ class ChatService:
             if not execute:
                 p = result["proposal"]
                 return {
-                    "reply": f"{market.venue.value} | {mode.value} PROPOSAL {p['id'][:8]} {p['outcome']} "
+                    "reply": f"{market.venue.value} | PROPOSAL {p['id'][:8]} {p['outcome']} "
                     f"${p['amount_usd']} at {display_cents(Decimal(str(p['price'])))}. "
                     f"Approve with /approve {p['id'][:8]}.",
                     "data": result,
@@ -841,7 +839,7 @@ class ChatService:
         if not execute:
             p = proposal_result["proposal"]
             return {
-                "reply": f"{market.venue.value} | {mode.value} PROPOSAL {p['id'][:8]} {p['outcome']} "
+                "reply": f"{market.venue.value} | PROPOSAL {p['id'][:8]} {p['outcome']} "
                 f"${p['amount_usd']} at {display_cents(Decimal(str(p['price'])))}. "
                 f"Approve with /approve {p['id'][:8]}.",
                 "data": proposal_result,
@@ -1130,7 +1128,7 @@ class ChatService:
             )
             lines += [f"- {name}: {reason}" for name, reason in sorted(view.unavailable.items())]
         lines.append(
-            f"Current venue={status['active_venue']} mode={status['badge']} paused={status['paused']} "
+            f"Current venue={status['active_venue']} badge={status['badge']} paused={status['paused']} "
             f"chat_autopilot={'on' if self.settings.chat_autopilot else 'off'} "
             "(orders from chat only execute when chat_autopilot is on; otherwise they become proposals)."
         )

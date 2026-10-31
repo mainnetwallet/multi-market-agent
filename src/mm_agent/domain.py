@@ -132,12 +132,6 @@ class RuleStatus(StrEnum):
     FAILED = "FAILED"
 
 
-class Mode(StrEnum):
-    """Every order is real. Kept as a field so stored rows and API payloads keep their shape."""
-
-    LIVE = "LIVE"
-
-
 class DoctorStatus(StrEnum):
     OK = "OK"
     DEGRADED = "DEGRADED"
@@ -434,7 +428,6 @@ class Position(BaseModel):
     realized_pnl: Decimal = ZERO
     unrealized_pnl: Decimal = ZERO
     market_title: str | None = None
-    mode: Mode = Mode.LIVE
 
 
 class VenueOrder(BaseModel):
@@ -493,7 +486,6 @@ class OrderRequest(BaseModel):
     client_order_id: str
     reduce_only: bool = False
     order_type: OrderType = OrderType.GTC
-    mode: Mode = Mode.LIVE
     expires_at: datetime | None = None
     post_only: bool = False
 
@@ -623,7 +615,6 @@ class Proposal(BaseModel):
 
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     venue: VenueId
-    mode: Mode
     market_id: str
     market_title: str
     outcome: Outcome
@@ -657,7 +648,6 @@ class Rule(BaseModel):
 
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     venue: VenueId
-    mode: Mode
     market_id: str
     outcome: Outcome
     kind: RuleKind

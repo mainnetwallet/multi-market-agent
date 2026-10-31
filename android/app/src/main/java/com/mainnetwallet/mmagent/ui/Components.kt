@@ -37,11 +37,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-/** The venue + mode badge. Never ambiguous, never colour-only. */
+/** The venue badge. Every order is real, so it always says LIVE. Never ambiguous, never colour-only. */
 @Composable
 fun ModeFrame(
     venue: String,
-    mode: String,
     paused: Boolean,
     modifier: Modifier = Modifier,
     onBadgeClick: (() -> Unit)? = null,
@@ -58,10 +57,10 @@ fun ModeFrame(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Tap the badge to switch venue. The mode text stays in the badge, so it is
+            // Tap the badge to switch venue. The LIVE text stays in the badge, so it is
             // never colour-only and never ambiguous.
             Text(
-                text = "${venue.uppercase()} | $mode" + if (onBadgeClick != null) "  ▾" else "",
+                text = "${venue.uppercase()} | LIVE" + if (onBadgeClick != null) "  ▾" else "",
                 color = Color.White,
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier

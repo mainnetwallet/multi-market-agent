@@ -17,7 +17,6 @@ from .domain import (
     Market,
     MarketRef,
     MarketStatus,
-    Mode,
     OrderRequest,
     OrderType,
     Outcome,
@@ -118,8 +117,7 @@ class AgentService:
         active = self.registry.active_or_none
         payload = {
             "active_venue": active.value if active else None,
-            "badge": f"{(active.value if active else 'none').upper()} | "
-            f"{self.registry.mode(active).value if active else 'NOT READY'}",
+            "badge": f"{(active.value if active else 'none').upper()} | {'LIVE' if active else 'NOT READY'}",
             "paused": self.paused,
             "unit_guard": {"ok": self.unit_guard.ok, "reason": self.unit_guard.reason},
             "feed_diag": self.scanner.feed_diag().model_dump(mode="json"),
@@ -238,14 +236,13 @@ class AgentService:
             return {"ok": False, "reasons": ["UNIT_CHECK_FAILED"]}
         if market.venue != self.registry.active_or_none:
             return {"ok": False, "reasons": ["NOT_ACTIVE_VENUE"]}
-        mode = self.registry.mode(market.venue)
         loss_cap = self.settings.limit_bankroll(market.venue) * self.risk.caps["max_daily_loss_pct"] / Decimal("100")
-        if self.store.today_pnl(mode) <= -loss_cap:
+        if self.store.today_pnl() <= -loss_cap:
             await self.set_paused(True, actor="risk:daily-loss")
             await self.bus.publish(
                 "risk.daily_loss_cap",
                 venue=market.venue.value,
-                pnl=str(self.store.today_pnl(mode)),
+                pnl=str(self.store.today_pnl()),
                 cap_pct=str(self.risk.caps["max_daily_loss_pct"]),
             )
             return {"ok": False, "reasons": ["DAILY_LOSS_CAP_AGENT_PAUSED"]}
@@ -338,7 +335,6 @@ class AgentService:
                 uuid.uuid4().hex,
             ),
             venue=market.venue,
-            mode=self.registry.mode(market.venue),
             market_id=market.native_id,
             market_title=market.title,
             outcome=signal.outcome,
@@ -383,20 +379,19 @@ class AgentService:
         }
 
     def _size_signal(self, signal: Signal, *, max_amount_usd: Decimal | None = None) -> RiskDecision:
-        mode = self.registry.mode(signal.venue)
-        positions = self.store.list_positions(mode=mode)
+        positions = self.store.list_positions()
         market_positions = [p for p in positions if p.market_id == signal.market.native_id and p.venue == signal.venue]
         snapshot = self.risk.build_snapshot(
             venue=signal.venue,
             market=signal.market,
             bankroll=self.settings.limit_bankroll(signal.venue),
             open_positions=len(positions),
-            event_exposure=self.store.event_exposure(signal.venue, mode, signal.market.event_id),
-            total_exposure=self.store.total_exposure(mode, signal.venue),
-            daily_pnl=self.store.today_pnl(mode),
+            event_exposure=self.store.event_exposure(signal.venue, signal.market.event_id),
+            total_exposure=self.store.total_exposure(signal.venue),
+            daily_pnl=self.store.today_pnl(),
             market_open_position=bool(market_positions),
         )
-        decision = self.risk.size(signal, snapshot, venue=signal.venue, mode=mode)
+        decision = self.risk.size(signal, snapshot, venue=signal.venue)
         if not decision.approved or max_amount_usd is None:
             return decision
         if max_amount_usd < decision.size_usd:
@@ -532,7 +527,6 @@ class AgentService:
                 client_order_id=f"{proposal.venue.value[:3]}-{uuid.uuid4().hex[:22]}",
                 reduce_only=False,
                 order_type=OrderType.FAK,
-                mode=proposal.mode,
             )
             result, local_id = await self.execution.submit(request, market, proposal_id=proposal.id)
             if result.status in {ExecutionStatus.FILLED, ExecutionStatus.PARTIAL, ExecutionStatus.RESTING}:
@@ -572,7 +566,6 @@ class AgentService:
                 "fee_usd": str(result.fee_usd),
                 "message": result.message,
                 "venue": proposal.venue.value,
-                "mode": proposal.mode.value,
             }
         except Exception as exc:
             logger.exception("proposal_execution_error", proposal_id=proposal.id)
@@ -580,21 +573,20 @@ class AgentService:
             return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
 
     def _risk_blocked(self, proposal: Proposal, amount: Decimal) -> bool:
-        mode = proposal.mode
         bankroll = self.settings.limit_bankroll(proposal.venue)
-        if self.store.today_pnl(mode) <= -(bankroll * self.risk.caps["max_daily_loss_pct"] / Decimal("100")):
+        if self.store.today_pnl() <= -(bankroll * self.risk.caps["max_daily_loss_pct"] / Decimal("100")):
             return True
         if amount > self.risk.caps["max_trade_usd"]:
             return True
-        if self.store.total_exposure(mode, proposal.venue) + amount > bankroll * self.risk.caps[
+        if self.store.total_exposure(proposal.venue) + amount > bankroll * self.risk.caps[
             "max_total_exposure_pct"
         ] / Decimal("100"):
             return True
         market = self.store.get_market(proposal.venue, proposal.market_id)
-        event_exposure = self.store.event_exposure(proposal.venue, mode, market.event_id if market else None)
+        event_exposure = self.store.event_exposure(proposal.venue, market.event_id if market else None)
         if event_exposure + amount > bankroll * self.risk.caps["max_event_pct"] / Decimal("100"):
             return True
-        positions = self.store.list_positions(mode=mode)
+        positions = self.store.list_positions()
         return bool(
             len(positions) >= int(self.risk.caps["max_open_positions"])
             and not any(p.market_id == proposal.market_id for p in positions)
@@ -640,8 +632,8 @@ class AgentService:
         return {"ok": True, "proposal_id": proposal.id, "status": "REJECTED"}
 
     # --------------------------------------------------------------- positions
-    def positions(self, mode: Mode | None = None) -> list[Position]:
-        return self.store.list_positions(mode=mode)
+    def positions(self) -> list[Position]:
+        return self.store.list_positions()
 
     async def close_position(
         self,
@@ -707,7 +699,6 @@ class AgentService:
         position = positions[0]
         rule = Rule(
             venue=position.venue,
-            mode=position.mode,
             market_id=market_id,
             outcome=outcome,
             kind=kind,

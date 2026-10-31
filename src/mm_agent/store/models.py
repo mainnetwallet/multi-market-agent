@@ -1,4 +1,4 @@
-"""SQLAlchemy 2 models. Every trading row carries its venue and mode."""
+"""SQLAlchemy 2 models. Every trading row carries its venue."""
 
 from __future__ import annotations
 
@@ -167,7 +167,6 @@ class ProposalRow(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     venue: Mapped[str] = mapped_column(String(32), nullable=False)
-    mode: Mapped[str] = mapped_column(String(8), nullable=False)
     market_id: Mapped[str] = mapped_column(String(160), nullable=False)
     market_title: Mapped[str] = mapped_column(Text, nullable=False)
     outcome: Mapped[str] = mapped_column(String(8), nullable=False)
@@ -199,7 +198,6 @@ class OrderRow(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     venue: Mapped[str] = mapped_column(String(32), nullable=False)
-    mode: Mapped[str] = mapped_column(String(8), nullable=False)
     market_id: Mapped[str] = mapped_column(String(160), nullable=False)
     outcome: Mapped[str] = mapped_column(String(8), nullable=False)
     side: Mapped[str] = mapped_column(String(8), nullable=False)
@@ -254,7 +252,6 @@ class PositionRow(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     venue: Mapped[str] = mapped_column(String(32), nullable=False)
-    mode: Mapped[str] = mapped_column(String(8), nullable=False)
     market_id: Mapped[str] = mapped_column(String(160), nullable=False)
     outcome: Mapped[str] = mapped_column(String(8), nullable=False)
     market_title: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -266,7 +263,7 @@ class PositionRow(Base):
     opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
-    __table_args__ = (UniqueConstraint("venue", "mode", "market_id", "outcome", name="uq_position"),)
+    __table_args__ = (UniqueConstraint("venue", "market_id", "outcome", name="uq_position"),)
 
 
 class PnlRow(Base):
@@ -274,14 +271,13 @@ class PnlRow(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     venue: Mapped[str] = mapped_column(String(32), nullable=False)
-    mode: Mapped[str] = mapped_column(String(8), nullable=False)
     kind: Mapped[str] = mapped_column(String(24), nullable=False)
     amount_usd: Mapped[Decimal] = mapped_column(DecimalString(40), nullable=False)
     ref: Mapped[str] = mapped_column(String(160), default="", nullable=False)
     note: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
-    __table_args__ = (Index("ix_pnl_created", "venue", "mode", "created_at"),)
+    __table_args__ = (Index("ix_pnl_created", "venue", "created_at"),)
 
 
 class RuleRow(Base):
@@ -289,7 +285,6 @@ class RuleRow(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     venue: Mapped[str] = mapped_column(String(32), nullable=False)
-    mode: Mapped[str] = mapped_column(String(8), nullable=False)
     market_id: Mapped[str] = mapped_column(String(160), nullable=False)
     outcome: Mapped[str] = mapped_column(String(8), nullable=False)
     kind: Mapped[str] = mapped_column(String(24), nullable=False)
@@ -302,7 +297,7 @@ class RuleRow(Base):
     triggered_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    __table_args__ = (Index("ix_rules_venue_mode_status", "venue", "mode", "status"),)
+    __table_args__ = (Index("ix_rules_venue_status", "venue", "status"),)
 
 
 class DecisionRow(Base):
