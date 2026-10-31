@@ -294,8 +294,6 @@ fun DepositScreen(
             }
             else -> DepositDetails(info, onCopy)
         }
-        Spacer(Modifier.height(12.dp))
-        ConfirmButton("Back", enabled = true, onClick = onBack)
     }
 }
 
