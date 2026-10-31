@@ -13,72 +13,68 @@ from typing import Any
 
 MAX_MARKETS_PER_CARD = 6
 
-# Polymarket: only the three sort modes live here. They are orderings, not categories.
-# Every category tab (Politics, Sports, Culture, ...) comes from Gamma's own tag list
-# (``GET /tags?is_carousel=true``, the categories polymarket.com shows) at runtime; see
-# ``tag_tabs`` and ``PolymarketVenue.discover_tabs``. ``order`` is a Gamma sort field and
-# ``rank`` re-sorts the fetched page locally.
+# Polymarket: the tab bar mirrors polymarket.com's own header (Trending, Breaking, New, Midterms | Politics,
+# Sports, Crypto, ...). Gamma has no endpoint that returns that bar (``GET /tags?is_carousel=true`` lists only a
+# few tags), so the order below is copied from the website. To follow a change on the site, edit ``NAV_TABS``:
+# every entry is ``tag`` = the Gamma tag slug (the path segment polymarket.com links to) plus a label.
+# The slug is turned into a numeric tag id with ``GET /tags/slug/{slug}``, the documented way to filter events.
+# ``TABS`` are the sort modes (orderings, not categories); ``order`` is a Gamma sort field and ``rank``
+# re-sorts the fetched page locally.
 TABS: dict[str, dict[str, Any]] = {
     "trending": {"label": "Trending", "order": "volume24hr"},
     "breaking": {"label": "Breaking", "order": "volume24hr", "rank": "change", "fetch": 100},
     "new": {"label": "New", "order": "startDate"},
 }
 
+# Category tabs in the website's order. ``highlight`` draws the tab in the accent gradient (Midterms on the
+# site); ``separator_before`` puts the thin divider the site shows between the featured tabs and the categories.
+NAV_TABS: tuple[dict[str, Any], ...] = (
+    {"id": "midterms", "label": "Midterms", "tag": "midterms", "highlight": True},
+    {"id": "politics", "label": "Politics", "tag": "politics", "separator_before": True},
+    {"id": "sports", "label": "Sports", "tag": "sports"},
+    {"id": "crypto", "label": "Crypto", "tag": "crypto"},
+    {"id": "esports", "label": "Esports", "tag": "esports"},
+    {"id": "iran", "label": "Iran", "tag": "iran"},
+    {"id": "finance", "label": "Finance", "tag": "finance"},
+    {"id": "geopolitics", "label": "Geopolitics", "tag": "geopolitics"},
+    {"id": "tech", "label": "Tech", "tag": "tech"},
+    {"id": "elections", "label": "Elections", "tag": "elections"},
+    {"id": "culture", "label": "Culture", "tag": "pop-culture"},
+    {"id": "economy", "label": "Economy", "tag": "economy"},
+    {"id": "weather", "label": "Weather", "tag": "weather"},
+    {"id": "mentions", "label": "Mentions", "tag": "mentions"},
+    {"id": "art", "label": "Art", "tag": "art"},
+)
+NAV_BY_ID: dict[str, dict[str, Any]] = {t["id"]: t for t in NAV_TABS}
 
-def tag_tabs(rows: Any) -> list[dict[str, str]]:
-    """Gamma ``/tags`` rows -> category tabs, in the order Gamma returned them.
 
-    A tag needs an id, a slug and a label, and is dropped when Gamma marks it ``forceHide``.
-    A slug that equals a sort-mode id is dropped too, so a tag can never shadow Trending/New.
-    """
+def polymarket_tab_cfg(tab: str) -> dict[str, Any] | None:
+    """Query settings for a Polymarket tab id: a sort mode, or a website category (filtered by its tag slug)."""
 
-    if not isinstance(rows, list):
-        return []
-    out: list[dict[str, str]] = []
-    seen: set[str] = set(TABS)
-    for raw in rows:
-        if not isinstance(raw, dict) or raw.get("forceHide") is True:
-            continue
-        tag_id, slug, label = _text(raw.get("id")), _text(raw.get("slug")), _text(raw.get("label"))
-        if not tag_id or not slug or not label or slug in seen:
-            continue
-        seen.add(slug)
-        out.append({"id": slug, "label": label, "tag_id": tag_id})
-    return out
+    if tab in TABS:
+        return TABS[tab]
+    nav = NAV_BY_ID.get(tab)
+    if nav is None:
+        return None
+    return {"label": nav["label"], "tag_slug": nav["tag"], "order": "volume24hr"}
 
 
-def event_tag_tabs(
-    events: Any, *, exclude: frozenset[str] | set[str] = frozenset(), limit: int = 14, min_events: int = 2
-) -> list[dict[str, str]]:
-    """Category tabs read from the tags of live events, most common first.
+def polymarket_tab_list() -> list[dict[str, Any]]:
+    """The tab bar for the app: sort modes, then the website categories, with display flags."""
 
-    ``GET /tags?is_carousel=true`` turned out to list only a handful of tags (not the category bar), so
-    the topics that really have open markets are read from a page of the busiest active events instead.
-    A tag counts once per event, must appear in at least ``min_events`` of them, and is dropped when Gamma
-    marks it ``forceHide`` or its slug is in ``exclude`` (the sort modes). No tag name is hardcoded.
-    """
-
-    if not isinstance(events, list):
-        return []
-    counts: dict[str, int] = {}
-    found: dict[str, dict[str, str]] = {}
-    for event in events:
-        if not isinstance(event, dict):
-            continue
-        seen_here: set[str] = set()
-        for raw in event.get("tags") or []:
-            if not isinstance(raw, dict) or raw.get("forceHide") is True:
-                continue
-            tag_id, slug, label = _text(raw.get("id")), _text(raw.get("slug")), _text(raw.get("label"))
-            if not tag_id or not slug or not label or slug in exclude:
-                continue
-            if slug in seen_here:
-                continue
-            seen_here.add(slug)
-            counts[slug] = counts.get(slug, 0) + 1
-            found.setdefault(slug, {"id": slug, "label": label, "tag_id": tag_id})
-    ranked = sorted((slug for slug, n in counts.items() if n >= min_events), key=lambda slug: -counts[slug])
-    return [found[slug] for slug in ranked[:limit]]
+    tabs = [{**t, "highlight": False, "separator_before": False} for t in tab_list("polymarket")]
+    for nav in NAV_TABS:
+        tabs.append(
+            {
+                "id": nav["id"],
+                "label": nav["label"],
+                "supported": True,
+                "note": "",
+                "highlight": bool(nav.get("highlight")),
+                "separator_before": bool(nav.get("separator_before")),
+            }
+        )
+    return tabs
 
 
 # Kalshi: only the two sort modes are fixed. The categories come from Kalshi's own list

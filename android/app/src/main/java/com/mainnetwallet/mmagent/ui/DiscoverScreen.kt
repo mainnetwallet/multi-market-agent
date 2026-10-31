@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -100,7 +101,10 @@ internal object DiscoverCache {
  * server sent: an empty or failed answer is never stored.
  */
 internal object DiscoverTabsCache {
-    class Entry(val tabs: List<Pair<String, String>>, val note: String, val at: Long)
+    /** One tab as the server sent it. [highlight] draws it in the accent gradient; [separatorBefore] adds a divider. */
+    class Tab(val id: String, val label: String, val highlight: Boolean = false, val separatorBefore: Boolean = false)
+
+    class Entry(val tabs: List<Tab>, val note: String, val at: Long)
 
     const val FRESH_MS = 5 * 60_000L
     private val map = HashMap<String, Entry>()
@@ -108,19 +112,29 @@ internal object DiscoverTabsCache {
     @Synchronized
     fun get(venue: String): Entry? = map[venue]
 
-    fun parse(body: JSONObject): List<Pair<String, String>> =
+    fun parse(body: JSONObject): List<Tab> =
         ApiClient.arrayOf(body, "tabs").objects()
-            .map { it.optString("id") to it.optString("label") }
-            .filter { it.first.isNotBlank() && it.second.isNotBlank() }
+            .map {
+                Tab(
+                    id = it.optString("id"),
+                    label = it.optString("label"),
+                    highlight = it.optBoolean("highlight", false),
+                    separatorBefore = it.optBoolean("separator_before", false),
+                )
+            }
+            .filter { it.id.isNotBlank() && it.label.isNotBlank() }
 
     /** Store a server answer; returns the tabs, or an empty list (and stores nothing) when it had none. */
     @Synchronized
-    fun store(venue: String, body: JSONObject): List<Pair<String, String>> {
+    fun store(venue: String, body: JSONObject): List<Tab> {
         val tabs = parse(body)
         if (tabs.isNotEmpty()) map[venue] = Entry(tabs, body.text("note"), System.currentTimeMillis())
         return tabs
     }
 }
+
+/** Accent for a highlighted tab (Midterms on polymarket.com): periwinkle to red. */
+private val HIGHLIGHT_GRADIENT = listOf(Color(0xFF8E9BFF), Color(0xFFFF5C5C))
 
 /** A card shows at most this many outcomes of a multi-market event. */
 private const val CARD_ROWS = 3
@@ -144,7 +158,7 @@ fun DiscoverScreen(
     var tabsNote by remember(venue) { mutableStateOf(seeded?.note ?: "") }
     var tabsLoading by remember(venue) { mutableStateOf(seeded == null) }
     var tabsReloadKey by remember { mutableIntStateOf(0) }
-    var tab by rememberSaveable(venue) { mutableStateOf(seeded?.tabs?.firstOrNull()?.first ?: "") }
+    var tab by rememberSaveable(venue) { mutableStateOf(seeded?.tabs?.firstOrNull()?.id ?: "") }
     var query by rememberSaveable { mutableStateOf("") }
     var items by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -161,7 +175,7 @@ fun DiscoverScreen(
         if (cached != null && tabsReloadKey == 0 && System.currentTimeMillis() - cached.at < DiscoverTabsCache.FRESH_MS) {
             tabs = cached.tabs
             tabsNote = cached.note
-            if (tabs.none { it.first == tab }) tab = tabs.first().first
+            if (tabs.none { it.id == tab }) tab = tabs.first().id
             tabsLoading = false
             return@LaunchedEffect
         }
@@ -174,7 +188,7 @@ fun DiscoverScreen(
                 if (tabsNote.isBlank()) tabsNote = "The server returned no categories."
             } else {
                 tabs = loaded
-                if (tabs.none { it.first == tab }) tab = tabs.first().first
+                if (tabs.none { it.id == tab }) tab = tabs.first().id
             }
         } catch (e: CancellationException) {
             throw e
@@ -262,16 +276,28 @@ fun DiscoverScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            items(tabs, key = { it.first }) { (id, label) ->
-                DiscoverTab(label, selected = tab == id && query.isBlank(), onClick = {
-                    if (tab == id) {
-                        DiscoverCache.drop(DiscoverCache.key(venue, id, ""))
-                        reloadKey += 1
-                    } else {
-                        tab = id
+            items(tabs, key = { it.id }) { item ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (item.separatorBefore) {
+                        // The thin divider polymarket.com shows between its featured tabs and the categories.
+                        Box(
+                            Modifier
+                                .padding(end = 20.dp, top = 8.dp)
+                                .width(1.dp)
+                                .height(16.dp)
+                                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                        )
                     }
-                    query = ""
-                })
+                    DiscoverTab(item.label, selected = tab == item.id && query.isBlank(), highlight = item.highlight, onClick = {
+                        if (tab == item.id) {
+                            DiscoverCache.drop(DiscoverCache.key(venue, item.id, ""))
+                            reloadKey += 1
+                        } else {
+                            tab = item.id
+                        }
+                        query = ""
+                    })
+                }
             }
         }
         Box(
@@ -346,17 +372,26 @@ fun DiscoverScreen(
 }
 
 @Composable
-private fun DiscoverTab(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun DiscoverTab(label: String, selected: Boolean, highlight: Boolean = false, onClick: () -> Unit) {
     Column(
         modifier = Modifier.clickable { onClick() }.padding(top = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (highlight) {
+            // Midterms on polymarket.com: blue to red gradient text instead of the plain tab colour.
+            Text(
+                label,
+                style = MaterialTheme.typography.titleSmall.copy(brush = Brush.horizontalGradient(HIGHLIGHT_GRADIENT)),
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            )
+        } else {
+            Text(
+                label,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Spacer(Modifier.height(6.dp))
         Box(
             Modifier

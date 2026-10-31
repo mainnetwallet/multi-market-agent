@@ -56,9 +56,6 @@ CLOB = "https://clob.polymarket.com"
 
 EVENT_TAG_TTL_SECONDS = 6 * 3600
 EVENT_TAG_RETRY_SECONDS = 60
-TAG_TABS_TTL_SECONDS = 6 * 3600
-TAG_TABS_RETRY_SECONDS = 60
-TAG_SAMPLE_EVENTS = 100
 
 CATEGORY_FEE_RATES: dict[str, Decimal] = {
     "crypto": Decimal("0.07"),
@@ -197,8 +194,8 @@ class PolymarketVenue(HttpVenue):
         self._condition_index: dict[str, str] = {}
         self._event_tag_cache: dict[str, tuple[float, list[Any] | None]] = {}
         self._tag_gate = asyncio.Semaphore(4)
-        # (valid until, category tabs from Gamma /tags, note for the app); see discover_tabs
-        self._tag_tabs: tuple[float, list[dict[str, str]], str] | None = None
+        # website category slug -> numeric Gamma tag id (ids never change, so kept for the process lifetime)
+        self._nav_tag_ids: dict[str, str] = {}
         self.test_orders = False
         self._test_error: str | None = None
 
@@ -234,78 +231,32 @@ class PolymarketVenue(HttpVenue):
         next_cursor = str(offset + len(data)) if len(data) >= limit else None
         return Page(items=markets[: query.limit], next_cursor=next_cursor)
 
-    async def _tag_tab_rows(self) -> tuple[list[dict[str, str]], str]:
-        """Category tabs read from Gamma at runtime, plus a note when part of it could not be read.
+    async def _nav_tag_id(self, slug: str) -> str:
+        """Numeric Gamma tag id for a category slug (``GET /tags/slug/{slug}``), as the docs describe for filtering."""
 
-        Two live sources, nothing hardcoded: the tags of the busiest active events (the topics that
-        really have open markets, most common first) and ``GET /tags?is_carousel=true`` (extra tags
-        Polymarket flags for its carousel, which on its own is only a few). A good answer is kept for
-        hours; a failure is remembered for a minute and the last good list keeps being served meanwhile.
-        """
-
-        now = time.monotonic()
-        cached = self._tag_tabs
-        if cached is not None and cached[0] > now:
-            return cached[1], cached[2]
-        stale = cached[1] if cached is not None else []
-        notes: list[str] = []
-        derived: list[dict[str, str]] = []
-        carousel: list[dict[str, str]] = []
-        try:
-            events = await self.get_json(
-                GAMMA + "/events",
-                params={
-                    "active": "true",
-                    "closed": "false",
-                    "order": "volume24hr",
-                    "ascending": "false",
-                    "limit": TAG_SAMPLE_EVENTS,
-                },
-            )
-            if not isinstance(events, list):
-                raise VenueUnavailableError("Gamma /events returned a non-list payload")
-            derived = discover_lib.event_tag_tabs(events, exclude=set(discover_lib.TABS))
-        except Exception as exc:
-            notes.append(f"Could not read event tags: {str(exc)[:100]}")
-        try:
-            data = await self.get_json(GAMMA + "/tags", params={"is_carousel": "true", "limit": 200})
-            if not isinstance(data, list):
-                raise VenueUnavailableError("Gamma /tags returned a non-list payload")
-            carousel = discover_lib.tag_tabs(data)
-        except Exception as exc:
-            notes.append(f"Could not load Polymarket categories: {str(exc)[:100]}")
-        have = {r["id"] for r in derived}
-        rows = derived + [r for r in carousel if r["id"] not in have]
-        if not rows:
-            rows = stale
-            if not notes:
-                notes.append("Polymarket returned no category tags.")
-        note = "; ".join(notes)
-        ttl = TAG_TABS_TTL_SECONDS if rows and not notes else TAG_TABS_RETRY_SECONDS
-        self._tag_tabs = (now + ttl, rows, note)
-        return rows, note
+        cached = self._nav_tag_ids.get(slug)
+        if cached:
+            return cached
+        data = await self.get_json(GAMMA + "/tags/slug/" + slug)
+        tag_id = str(data.get("id") or "") if isinstance(data, dict) else ""
+        if not tag_id:
+            raise VenueUnavailableError(f"Polymarket has no tag with slug {slug!r}")
+        self._nav_tag_ids[slug] = tag_id
+        return tag_id
 
     async def discover_tabs(self) -> dict[str, Any]:
-        """Tabs for the app: the sort modes, then every category Gamma lists."""
+        """Tabs for the app: the sort modes, then the categories polymarket.com shows in its header."""
 
-        rows, note = await self._tag_tab_rows()
-        tabs = discover_lib.tab_list("polymarket") + [
-            {"id": r["id"], "label": r["label"], "supported": True, "note": ""} for r in rows
-        ]
-        return {"tabs": tabs, "note": note}
+        return {"tabs": discover_lib.polymarket_tab_list(), "note": ""}
 
     async def discover(self, *, tab: str, q: str | None, limit: int, offset: int) -> dict[str, Any]:
         """Polymarket-style browse: Gamma events for a tab (or a text search) as cards."""
 
         limit = min(max(limit, 1), 50)
         offset = max(offset, 0)
-        cfg = discover_lib.TABS.get(tab)
+        cfg = discover_lib.polymarket_tab_cfg(tab)
         if cfg is None:
-            tags, _ = await self._tag_tab_rows()
-            tag = next((t for t in tags if t["id"] == tab), None)
-            if tag is None:
-                raise ValueError(f"unknown tab: {tab}")
-            cfg = {"label": tag["label"], "tag_id": tag["tag_id"], "order": "volume24hr"}
+            raise ValueError(f"unknown tab: {tab}")
         query = (q or "").strip()
         if query:
             page = offset // limit + 1
@@ -325,8 +276,16 @@ class PolymarketVenue(HttpVenue):
                 "limit": fetch,
                 "offset": offset,
             }
-            if cfg.get("tag_id"):
-                params["tag_id"] = cfg["tag_id"]
+            if cfg.get("tag_slug"):
+                try:
+                    params["tag_id"] = await self._nav_tag_id(str(cfg["tag_slug"]))
+                except Exception as exc:
+                    return {
+                        "tab": tab,
+                        "items": [],
+                        "next_offset": None,
+                        "note": f"Could not load the {cfg['label']} category: {str(exc)[:100]}",
+                    }
             rows = await self.get_json(GAMMA + "/events", params=params)
             more = isinstance(rows, list) and len(rows) >= fetch
         if not isinstance(rows, list):
@@ -353,7 +312,9 @@ class PolymarketVenue(HttpVenue):
                 except Exception:
                     continue
         step = int(cfg.get("fetch", limit)) if not query else limit
-        note = "No open markets under this category right now." if not items and not query and cfg.get("tag_id") else ""
+        note = (
+            "No open markets under this category right now." if not items and not query and cfg.get("tag_slug") else ""
+        )
         return {"tab": tab, "items": items, "next_offset": offset + step if more else None, "note": note}
 
     @staticmethod

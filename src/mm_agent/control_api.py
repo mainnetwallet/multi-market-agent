@@ -414,9 +414,11 @@ def create_app(
         chosen = _discover_venue(venue)
         adapter = registry.adapters.get(chosen)
         if chosen in registry.enabled() and adapter is not None and hasattr(adapter, "discover_tabs"):
-            # Every venue's categories are read from its own API at runtime, not hardcoded.
+            # Kalshi/Limitless categories come from the venue's API; Polymarket's follow its website bar.
             result: dict[str, Any] = await adapter.discover_tabs()
             return {"venue": chosen.value, **result}
+        if chosen == VenueId.POLYMARKET:
+            return {"venue": chosen.value, "tabs": discover_lib.polymarket_tab_list()}
         return {"venue": chosen.value, "tabs": discover_lib.tab_list(chosen.value)}
 
     @app.get("/v1/discover")

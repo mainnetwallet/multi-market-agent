@@ -451,11 +451,15 @@ curl -s -X POST https://<service>/v1/orders/limit \
 ```
 
 Browse for markets with `GET /v1/discover?venue=polymarket|kalshi|limitless&tab=<id from /v1/discover/tabs>&q=&limit=&offset=`
-(public data only; `venue` defaults to the active venue) and `GET /v1/discover/tabs?venue=`. Every venue's category tabs
-are read from that venue's own API at runtime (cached 6 hours, nothing hardcoded); only the sort modes are fixed, and a
+(public data only; `venue` defaults to the active venue) and `GET /v1/discover/tabs?venue=`. Kalshi's and Limitless's category tabs
+are read from those venues' own APIs at runtime (cached 6 hours); Polymarket's follow its website (below), and a
 `note` in the tabs response says why when a list could not be read:
 
-- **Polymarket:** Trending, Breaking, New, then the tags that the busiest active events carry (`GET /events`, top 100 by 24h volume; a tag must appear on 2+ events, most common first, `forceHide` tags skipped), plus any extra tags from `GET /tags?is_carousel=true`. The carousel list alone is only a few tags, so it is not the category bar.
+- **Polymarket:** the same bar as polymarket.com's header: Trending, Breaking, New, Midterms (accent gradient), a divider, then
+  Politics, Sports, Crypto, Esports, Iran, Finance, Geopolitics, Tech, Elections, Culture, Economy, Weather, Mentions, Art.
+  Gamma has no endpoint for that bar (`GET /tags?is_carousel=true` lists only a few tags), so the order is copied from the
+  website into `NAV_TABS` in `src/mm_agent/discover.py`; each category's slug is resolved once with `GET /tags/slug/{slug}` (as the Gamma docs describe) and listed with `GET /events?tag_id=<id>`. When the
+  site changes its bar, edit that one list. Tabs carry `highlight` and `separator_before` flags for the app.
 - **Kalshi:** Trending, New, then the categories in `GET /search/tags_by_categories`. Kalshi has no category filter on
   `/events`, so a category tab scans the latest open events and keeps those whose `category` is exactly that name.
 - **Limitless:** Trending, New, Liquid, then the ids in `GET /markets/categories/count`, each named the documented way

@@ -371,7 +371,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         viewModelScope.launch {
             try {
                 val tabs = DiscoverTabsCache.store(venue, discoverTabs(venue))
-                val first = tabs.firstOrNull()?.first ?: return@launch
+                val first = tabs.firstOrNull()?.id ?: return@launch
                 DiscoverCache.store(venue, first, "", discover(venue, first, "", 0))
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
