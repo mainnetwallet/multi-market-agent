@@ -116,7 +116,13 @@ class Store:
         connect_args: dict[str, Any] = {}
         if database_url.startswith("sqlite"):
             connect_args = {"check_same_thread": False, "timeout": 30}
-        self.engine: Engine = create_engine(database_url, future=True, connect_args=connect_args)
+        # A managed Postgres closes idle connections; pre-ping replaces a dead pooled one instead of failing a query.
+        self.engine: Engine = create_engine(
+            database_url,
+            future=True,
+            connect_args=connect_args,
+            pool_pre_ping=not database_url.startswith("sqlite"),
+        )
         if database_url.startswith("sqlite"):
             event.listen(self.engine, "connect", self._sqlite_pragmas)
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False, autoflush=False, class_=Session)
