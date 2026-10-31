@@ -19,12 +19,17 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -42,7 +47,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.mainnetwallet.mmagent.data.AllowlistEntry
 import com.mainnetwallet.mmagent.data.Format
@@ -227,9 +234,10 @@ fun LazyListScope.fundsSections(
 data class DepositChoice(val chainId: String = "", val token: String = "")
 
 /**
- * The deposit sheet. For Polymarket it lists every chain and token the bridge accepts (the server reads them
- * from the bridge's own supported-assets list) and shows the address for the pair picked; other venues have one
- * route and show it directly. Nothing about chains or assets is hardcoded here.
+ * The deposit page, laid out like an exchange deposit screen: pick a network and a coin from lists, then read the
+ * QR code and address for that pair, the minimum and what happens next. For Polymarket the lists are every chain and
+ * token the bridge accepts (the server reads them from the bridge's own supported-assets list); other venues have
+ * one route and show it directly. Nothing about chains or assets is hardcoded here.
  */
 @Composable
 fun DepositScreen(
@@ -244,12 +252,16 @@ fun DepositScreen(
     onBack: () -> Unit,
 ) {
     val chains = options?.optJSONArray("chains")?.objects().orEmpty()
-    // The chip the person just tapped wins at once; before any tap, what the server answered for, then its default.
+    // The pick the person just made wins at once; before any pick, what the server answered for, then its default.
     val activeChainId = choice.chainId.ifBlank { info?.optString("chain_id").orEmpty() }
         .ifBlank { options?.optJSONObject("default")?.optString("chain_id").orEmpty() }
     val activeChain = chains.firstOrNull { it.optString("chain_id") == activeChainId }
     val tokens = activeChain?.optJSONArray("tokens")?.objects().orEmpty()
     val activeToken = choice.token.ifBlank { info?.optString("token_address").orEmpty() }
+    val activeTokenObject = tokens.firstOrNull { it.optString("address").equals(activeToken, ignoreCase = true) }
+
+    // Which list is open: "network", "coin" or none.
+    var picker by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
@@ -258,51 +270,36 @@ fun DepositScreen(
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
-        SectionHeader("Deposit", venue.uppercase())
+        FundsTopBar("Deposit", venue.uppercase(), onBack)
         ErrorNote(error)
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
         if (chains.isNotEmpty()) {
-            Text("Network", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(6.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(chains, key = { it.optString("chain_id") }) { chain ->
-                    val id = chain.optString("chain_id")
-                    ChoiceChip(
-                        label = chain.optString("chain_name"),
-                        selected = id == activeChainId,
-                        onClick = {
-                            // A new network starts on its first token, in the order the server sends them.
-                            val first = chain.optJSONArray("tokens")?.objects()?.firstOrNull()
-                            onChoose(DepositChoice(id, first?.optString("address").orEmpty()))
-                        },
-                    )
-                }
-            }
-            if (tokens.isNotEmpty()) {
-                Spacer(Modifier.height(14.dp))
-                Text("Asset", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(6.dp))
-                val duplicated = tokens.groupingBy { it.optString("symbol") }.eachCount().filterValues { it > 1 }.keys
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(tokens, key = { it.optString("address") + it.optString("symbol") }) { token ->
-                        val symbol = token.optString("symbol")
-                        val address = token.optString("address")
-                        ChoiceChip(
-                            label = if (symbol in duplicated) "$symbol ${shortMiddle(address)}" else symbol,
-                            selected = address.equals(activeToken, ignoreCase = true),
-                            onClick = { onChoose(DepositChoice(activeChainId, address)) },
-                        )
-                    }
-                }
-            }
+            SelectorField(
+                label = "Network",
+                value = activeChain?.optString("chain_name").orEmpty(),
+                avatarSymbol = activeChain?.optString("chain_name"),
+                placeholder = "Select network",
+                onClick = { picker = "network" },
+            )
             Spacer(Modifier.height(14.dp))
+            SelectorField(
+                label = "Coin",
+                value = activeTokenObject?.optString("symbol").orEmpty(),
+                avatarSymbol = activeTokenObject?.optString("symbol"),
+                hint = activeTokenObject?.optString("address")?.takeIf { it.isNotBlank() }?.let { shortMiddle(it) },
+                placeholder = "Select coin",
+                enabled = tokens.isNotEmpty(),
+                onClick = { picker = "coin" },
+            )
+            Spacer(Modifier.height(18.dp))
         }
 
         when {
             loading -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
+
             info == null || !info.optBoolean("supported") -> {
                 val reason = info?.optString("reason").orEmpty()
                 UnsupportedCard(
@@ -310,12 +307,57 @@ fun DepositScreen(
                     reason = reason.ifBlank { "This venue does not accept deposits through the API." },
                 )
             }
+
             else -> DepositDetails(info, onCopy)
         }
+        Spacer(Modifier.height(16.dp))
+    }
+
+    when (picker) {
+        "network" -> PickerSheet(
+            title = "Select network",
+            options = chains.map { chain ->
+                val symbols = chain.optJSONArray("tokens")?.objects().orEmpty().map { it.optString("symbol") }
+                PickerOption(
+                    key = chain.optString("chain_id"),
+                    title = chain.optString("chain_name"),
+                    subtitle = symbols.distinct().joinToString(", ").ifBlank { null },
+                )
+            },
+            selectedKey = activeChainId,
+            onSelect = { id ->
+                picker = null
+                // A new network starts on its first token, in the order the server sends them.
+                val first = chains.firstOrNull { it.optString("chain_id") == id }
+                    ?.optJSONArray("tokens")?.objects()?.firstOrNull()
+                onChoose(DepositChoice(id, first?.optString("address").orEmpty()))
+            },
+            onDismiss = { picker = null },
+        )
+
+        "coin" -> PickerSheet(
+            title = "Select coin",
+            options = tokens.map { token ->
+                PickerOption(
+                    key = token.optString("address"),
+                    title = token.optString("symbol"),
+                    subtitle = shortMiddle(token.optString("address")),
+                    symbol = token.optString("symbol"),
+                )
+            },
+            selectedKey = activeTokenObject?.optString("address").orEmpty(),
+            onSelect = { address ->
+                picker = null
+                onChoose(DepositChoice(activeChainId, address))
+            },
+            onDismiss = { picker = null },
+        )
+
+        else -> Unit
     }
 }
 
-/** The address card, the three steps and the warnings for the pair the server answered for. */
+/** The QR code and address card, the limits, the three steps and the warnings for the pair the server answered for. */
 @Composable
 private fun DepositDetails(info: JSONObject, onCopy: (String) -> Unit) {
     val address = info.optString("address")
@@ -330,91 +372,69 @@ private fun DepositDetails(info: JSONObject, onCopy: (String) -> Unit) {
         }
     }
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                "Send $asset on $network",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Spacer(Modifier.height(10.dp))
-            ValueRow("Minimum", Format.money(info.optString("min_amount")), emphasise = true)
-            val kind = info.optString("address_type")
-            if (kind.isNotBlank()) ValueRow("Address type", kind.uppercase())
-            if (tokenAddress.isNotBlank()) ValueRow("Token contract", shortMiddle(tokenAddress))
-            val wallet = info.optString("wallet")
-            if (wallet.isNotBlank() && wallet != "null") ValueRow("Credits wallet", shortMiddle(wallet))
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "Send to",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                Format.groupAddress(address),
-                style = MaterialTheme.typography.bodyMedium,
-                fontFamily = FontFamily.Monospace,
-            )
-            Spacer(Modifier.height(12.dp))
-            ConfirmButton(
-                if (copied) "Copied" else "Copy address",
-                enabled = address.isNotBlank(),
-                onClick = {
-                    onCopy(address)
-                    copied = true
-                },
-            )
+    FundsCard {
+        Text(
+            "Send only $asset on $network",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.height(14.dp))
+        if (address.isNotBlank()) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                QrCode(address, Modifier.size(200.dp))
+            }
+            Spacer(Modifier.height(16.dp))
         }
+        FieldLabel("Deposit address")
+        Text(
+            Format.groupAddress(address),
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = FontFamily.Monospace,
+        )
+        Spacer(Modifier.height(14.dp))
+        ConfirmButton(
+            if (copied) "Copied" else "Copy address",
+            enabled = address.isNotBlank(),
+            onClick = {
+                onCopy(address)
+                copied = true
+            },
+        )
     }
 
     Spacer(Modifier.height(12.dp))
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text("How it works", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(6.dp))
-            listOf(
-                "1  Send $asset from $network to the address above.",
-                "2  The bridge converts it and credits your Polymarket wallet.",
-                "3  The balance shows in Wallet after it lands, usually within minutes.",
-            ).forEach { step ->
-                Text(step, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(2.dp))
-            }
-        }
+    FundsCard {
+        SummaryRow("Minimum deposit", Format.money(info.optString("min_amount")))
+        val kind = info.optString("address_type")
+        if (kind.isNotBlank()) SummaryRow("Address type", kind.uppercase())
+        if (tokenAddress.isNotBlank()) SummaryRow("Token contract", shortMiddle(tokenAddress), mono = true)
+        val wallet = info.optString("wallet")
+        if (wallet.isNotBlank() && wallet != "null") SummaryRow("Credits wallet", shortMiddle(wallet), mono = true)
     }
 
     val warnings = info.optJSONArray("warnings")
     if (warnings != null && warnings.length() > 0) {
-        Spacer(Modifier.height(12.dp))
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.padding(16.dp)) {
-                Text("Before you send", style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(6.dp))
-                for (index in 0 until warnings.length()) {
-                    Text(
-                        "• ${warnings.optString(index)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Palette.Alert,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                }
-            }
+        for (index in 0 until warnings.length()) {
+            val text = warnings.optString(index)
+            if (text.isBlank()) continue
+            Spacer(Modifier.height(12.dp))
+            NoticeBanner(text)
         }
     }
-}
 
-/** "0xA0b8…eB48": enough to tell two contracts apart without filling the row. */
-private fun shortMiddle(value: String): String =
-    if (value.length <= 14) value else value.take(6) + "…" + value.takeLast(4)
+    Spacer(Modifier.height(12.dp))
+    FundsCard {
+        Text("How it works", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        StepTimeline(
+            listOf(
+                "Send $asset on $network to the address above." to StepState.ACTIVE,
+                "The bridge converts it and credits your Polymarket wallet." to StepState.PENDING,
+                "The balance shows in Wallet after it lands, usually within minutes." to StepState.PENDING,
+            ),
+        )
+    }
+}
 
 @Composable
 private fun WalletCard(
@@ -491,11 +511,23 @@ private fun WalletCard(
 /** How long the finger must stay on the withdraw button. */
 private const val WITHDRAW_HOLD_MS = 5_000L
 
+/** What the form lets through right now. The form and its pinned button read the same checks. */
+private class WithdrawChecks(state: WithdrawUiState, available: String) {
+    val parsed = state.amount.toBigDecimalOrNull()
+    val balance = available.toBigDecimalOrNull()
+    val tooMuch = parsed != null && balance != null && parsed > balance
+    val minimum = state.selectedToken?.minUsd?.toBigDecimalOrNull()
+    val belowMinimum = parsed != null && minimum != null && parsed < minimum
+    val addressInvalid = state.recipient.isNotEmpty() && state.savedId.isBlank() &&
+        !WithdrawViewModel.isEvmAddress(state.recipient)
+}
+
 /**
- * The withdraw page: amount, receiver address, chain and token on one form. The fee is quoted live for the chain
- * and token picked, so changing either shows what that route costs before anything is confirmed.
+ * The withdraw page, laid out like an exchange withdraw screen: receiver address, network and coin from lists,
+ * the amount with Max, a summary card with the fee quoted live for exactly that route, and the hold-to-withdraw
+ * button pinned at the bottom.
  *
- * Nothing leaves the account when it is confirmed: the server creates the withdrawal in a hold window
+ * Nothing leaves the account when it is confirmed: the server creates the withdrawal in a short hold window
  * that can still be cancelled, and sends it only when the window ends.
  */
 @Composable
@@ -513,13 +545,16 @@ fun WithdrawScreen(
     onCancelWithdrawal: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val checks = WithdrawChecks(state, available)
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .imePadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        SectionHeader("Withdraw", state.venue.uppercase())
+        // The back arrow does nothing while a request is in flight, like the Cancel button it replaces.
+        FundsTopBar("Withdraw", state.venue.uppercase(), onBack = { if (!state.submitting) onClose() })
         ErrorNote(state.error)
         if (!online) {
             Spacer(Modifier.height(6.dp))
@@ -530,7 +565,6 @@ fun WithdrawScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .imePadding()
                 .verticalScroll(rememberScrollState()),
         ) {
             Spacer(Modifier.height(8.dp))
@@ -548,18 +582,41 @@ fun WithdrawScreen(
                 WithdrawForm(
                     state = state,
                     available = available,
-                    online = online,
+                    checks = checks,
                     onAmountChange = onAmountChange,
                     onMax = onMax,
                     onRecipientChange = onRecipientChange,
                     onSelectChain = onSelectChain,
                     onSelectToken = onSelectToken,
                     onUseSaved = onUseSaved,
-                    onSubmit = onSubmit,
-                    onClose = onClose,
                 )
             }
             Spacer(Modifier.height(16.dp))
+        }
+
+        if (state.step != WithdrawStep.DONE) {
+            val preview = state.preview
+            Spacer(Modifier.height(8.dp))
+            HoldToConfirmButton(
+                label = "Hold 5 seconds to withdraw",
+                enabled = online && !state.submitting && state.quoteReady && !checks.tooMuch && !checks.belowMinimum,
+                busy = state.submitting,
+                danger = true,
+                holdMillis = WITHDRAW_HOLD_MS,
+                onConfirmed = onSubmit,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (preview.holdSeconds > 0) {
+                    "Keep your finger down for 5 seconds. The withdrawal then waits ${preview.holdSeconds} sec before it is sent, and you can cancel it until then."
+                } else {
+                    "Keep your finger down for 5 seconds. The withdrawal then waits briefly before it is sent, and you can cancel it until then."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
@@ -568,82 +625,34 @@ fun WithdrawScreen(
 private fun WithdrawForm(
     state: WithdrawUiState,
     available: String,
-    online: Boolean,
+    checks: WithdrawChecks,
     onAmountChange: (String) -> Unit,
     onMax: () -> Unit,
     onRecipientChange: (String) -> Unit,
     onSelectChain: (String) -> Unit,
     onSelectToken: (String) -> Unit,
     onUseSaved: (AllowlistEntry) -> Unit,
-    onSubmit: () -> Unit,
-    onClose: () -> Unit,
 ) {
-    val parsed = state.amount.toBigDecimalOrNull()
-    val balance = available.toBigDecimalOrNull()
-    val tooMuch = parsed != null && balance != null && parsed > balance
-    val minimum = state.selectedToken?.minUsd?.toBigDecimalOrNull()
-    val belowMinimum = parsed != null && minimum != null && parsed < minimum
-    val addressInvalid = state.recipient.isNotEmpty() && state.savedId.isBlank() &&
-        !WithdrawViewModel.isEvmAddress(state.recipient)
     val preview = state.preview
+    // Which list is open: "network", "coin" or none.
+    var picker by remember { mutableStateOf<String?>(null) }
 
-    // 1. Amount
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Available", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    if (balance != null) Format.money(available) else "—",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = state.amount,
-                onValueChange = onAmountChange,
-                label = { Text("Amount (USD)") },
-                singleLine = true,
-                enabled = !state.submitting,
-                isError = tooMuch || belowMinimum,
-                supportingText = {
-                    if (tooMuch) {
-                        Text("More than the available balance.")
-                    } else if (belowMinimum) {
-                        Text("The minimum for ${state.token} on ${state.selectedChain?.name.orEmpty()} is ${Format.money(state.selectedToken?.minUsd.orEmpty())}.")
-                    }
-                },
-                trailingIcon = {
-                    TextButton(onClick = onMax, enabled = !state.submitting && balance != null && balance.signum() > 0) { Text("Max") }
-                },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-
-    // 2. Receiver address
-    Spacer(Modifier.height(14.dp))
+    // 1. Receiver address
+    FieldLabel("Receiver address")
     OutlinedTextField(
         value = state.recipient,
         onValueChange = onRecipientChange,
-        label = { Text("Receiver address") },
-        placeholder = { Text("0x…") },
+        placeholder = { Text("Paste the 0x… address") },
         singleLine = true,
         enabled = !state.submitting,
-        isError = addressInvalid,
+        isError = checks.addressInvalid,
+        shape = RoundedCornerShape(14.dp),
         supportingText = {
             Text(
-                if (addressInvalid) {
+                if (checks.addressInvalid) {
                     "Not a valid EVM address: 0x followed by 40 hex characters."
                 } else {
-                    "The address that receives the money, on the chain picked below."
+                    "The address that receives the money, on the network picked below."
                 },
             )
         },
@@ -653,8 +662,7 @@ private fun WithdrawForm(
     )
     if (state.entries.isNotEmpty()) {
         Spacer(Modifier.height(6.dp))
-        Text("Saved addresses", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(6.dp))
+        FieldLabel("Saved addresses")
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(state.entries, key = { it.id }) { entry ->
                 ChoiceChip(
@@ -675,7 +683,7 @@ private fun WithdrawForm(
         )
     }
 
-    // 3. Chain and 4. token, from the bridge's own list
+    // 2. Network and 3. coin, from the bridge's own list
     Spacer(Modifier.height(14.dp))
     when {
         state.optionsLoading -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -688,109 +696,146 @@ private fun WithdrawForm(
         )
 
         else -> {
-            Text("Chain", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(6.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(state.chains, key = { it.id }) { chain ->
-                    ChoiceChip(
-                        label = chain.name,
-                        selected = chain.id == state.chainId,
-                        enabled = !state.submitting,
-                        onClick = { onSelectChain(chain.id) },
-                    )
-                }
-            }
-            val tokens = state.selectedChain?.tokens.orEmpty()
-            if (tokens.isNotEmpty()) {
-                Spacer(Modifier.height(14.dp))
-                Text("Token", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(6.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(tokens, key = { it.address + it.symbol }) { token ->
-                        ChoiceChip(
-                            label = token.symbol,
-                            selected = token.symbol.equals(state.token, ignoreCase = true),
-                            enabled = !state.submitting,
-                            onClick = { onSelectToken(token.symbol) },
-                        )
-                    }
-                }
-            }
+            SelectorField(
+                label = "Network",
+                value = state.selectedChain?.name.orEmpty(),
+                avatarSymbol = state.selectedChain?.name,
+                placeholder = "Select network",
+                enabled = !state.submitting,
+                onClick = { picker = "network" },
+            )
+            Spacer(Modifier.height(14.dp))
+            SelectorField(
+                label = "Coin",
+                value = state.selectedToken?.symbol.orEmpty(),
+                avatarSymbol = state.selectedToken?.symbol,
+                hint = state.selectedToken?.minUsd?.takeIf { it.isNotBlank() }?.let { "Minimum ${Format.money(it)}" },
+                placeholder = "Select coin",
+                enabled = !state.submitting && state.selectedChain?.tokens.orEmpty().isNotEmpty(),
+                onClick = { picker = "coin" },
+            )
         }
     }
 
-    // The fee for exactly this chain and token, quoted again whenever any input changes.
+    // 4. Amount
     Spacer(Modifier.height(14.dp))
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    Row(
         modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.padding(16.dp)) {
-            when {
-                state.quoting -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text("Getting the fee…", style = MaterialTheme.typography.bodyMedium)
-                }
-
-                state.quoteError != null -> Text(
-                    state.quoteError.orEmpty(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Palette.Alert,
-                )
-
-                state.quoteReady -> {
-                    ValueRow("Route", "${preview.asset} on ${preview.network}")
-                    ValueRow("Fee", Format.money(preview.feeUsd), emphasise = true)
-                    if ((preview.receiveUsd.toBigDecimalOrNull()?.signum() ?: 0) > 0) {
-                        ValueRow("You receive about", Format.money(preview.receiveUsd))
-                    }
-                    if (preview.etaSeconds > 0) {
-                        ValueRow("Arrives in about", "${maxOf(1, preview.etaSeconds / 60)} min")
-                    }
-                    ValueRow("Hold before sending", "${preview.holdSeconds} sec")
-                    ValueRow("Daily limit left", Format.money(preview.dailyRemainingUsd))
-                }
-
-                else -> Text(
-                    "Enter the amount, the receiver address, the chain and the token to see the fee.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        FieldLabel("Amount (USD)")
+        Text(
+            "Available ${if (checks.balance != null) Format.money(available) else "—"}",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 6.dp),
+        )
+    }
+    OutlinedTextField(
+        value = state.amount,
+        onValueChange = onAmountChange,
+        placeholder = { Text("0.00") },
+        singleLine = true,
+        enabled = !state.submitting,
+        isError = checks.tooMuch || checks.belowMinimum,
+        shape = RoundedCornerShape(14.dp),
+        textStyle = MaterialTheme.typography.titleLarge,
+        supportingText = {
+            if (checks.tooMuch) {
+                Text("More than the available balance.")
+            } else if (checks.belowMinimum) {
+                Text("The minimum for ${state.token} on ${state.selectedChain?.name.orEmpty()} is ${Format.money(state.selectedToken?.minUsd.orEmpty())}.")
             }
+        },
+        trailingIcon = {
+            TextButton(
+                onClick = onMax,
+                enabled = !state.submitting && checks.balance != null && checks.balance.signum() > 0,
+            ) { Text("Max", fontWeight = FontWeight.Bold) }
+        },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    // 5. The fee for exactly this route, quoted again whenever any input changes.
+    Spacer(Modifier.height(14.dp))
+    FundsCard {
+        when {
+            state.quoting -> Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text("Getting the fee…", style = MaterialTheme.typography.bodyMedium)
+            }
+
+            state.quoteError != null -> Text(
+                state.quoteError.orEmpty(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Palette.Alert,
+            )
+
+            state.quoteReady -> {
+                SummaryRow("Route", "${preview.asset} on ${preview.network}")
+                SummaryRow("Network fee", Format.money(preview.feeUsd))
+                if ((preview.receiveUsd.toBigDecimalOrNull()?.signum() ?: 0) > 0) {
+                    SummaryRow("You receive about", Format.money(preview.receiveUsd))
+                }
+                if (preview.etaSeconds > 0) {
+                    SummaryRow("Arrives in about", "${maxOf(1, preview.etaSeconds / 60)} min")
+                }
+                SummaryRow("Hold before sending", "${preview.holdSeconds} sec")
+                SummaryRow("Daily limit left", Format.money(preview.dailyRemainingUsd))
+            }
+
+            else -> Text(
+                "Enter the address, network, coin and amount to see the fee.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
     if (state.quoteReady) {
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Check the address against your own record. A transfer to a wrong address cannot be undone.",
-            style = MaterialTheme.typography.bodySmall,
-            color = Palette.Alert,
-        )
+        Spacer(Modifier.height(12.dp))
+        NoticeBanner("Check the address against your own record. A transfer to a wrong address cannot be undone.")
     }
 
-    // Hold to withdraw (no password)
-    Spacer(Modifier.height(14.dp))
-    HoldToConfirmButton(
-        label = "Hold 5 seconds to withdraw",
-        enabled = online && !state.submitting && state.quoteReady && !tooMuch && !belowMinimum,
-        busy = state.submitting,
-        danger = true,
-        holdMillis = WITHDRAW_HOLD_MS,
-        onConfirmed = onSubmit,
-    )
-    Spacer(Modifier.height(8.dp))
-    Text(
-        if (preview.holdSeconds > 0) {
-            "Keep your finger down for 5 seconds. The withdrawal then waits ${preview.holdSeconds} sec before it is sent, and you can cancel it until then."
-        } else {
-            "Keep your finger down for 5 seconds. The withdrawal then waits briefly before it is sent, and you can cancel it until then."
-        },
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    TextButton(onClick = onClose, enabled = !state.submitting, modifier = Modifier.fillMaxWidth()) {
-        Text("Cancel")
+    when (picker) {
+        "network" -> PickerSheet(
+            title = "Select network",
+            options = state.chains.map { chain ->
+                PickerOption(
+                    key = chain.id,
+                    title = chain.name,
+                    subtitle = chain.tokens.map { it.symbol }.distinct().joinToString(", ").ifBlank { null },
+                )
+            },
+            selectedKey = state.chainId,
+            onSelect = { id ->
+                picker = null
+                onSelectChain(id)
+            },
+            onDismiss = { picker = null },
+        )
+
+        "coin" -> PickerSheet(
+            title = "Select coin",
+            options = state.selectedChain?.tokens.orEmpty().map { token ->
+                PickerOption(
+                    key = token.symbol,
+                    title = token.symbol,
+                    subtitle = token.minUsd?.takeIf { it.isNotBlank() }?.let { "Minimum ${Format.money(it)}" },
+                    symbol = token.symbol,
+                )
+            },
+            selectedKey = state.selectedToken?.symbol.orEmpty(),
+            onSelect = { symbol ->
+                picker = null
+                onSelectToken(symbol)
+            },
+            onDismiss = { picker = null },
+        )
+
+        else -> Unit
     }
 }
 
@@ -806,28 +851,63 @@ private fun WithdrawDone(
 ) {
     val current = status.orEmpty().ifBlank { "PENDING_HOLD" }
     val cancelled = current == "CANCELLED"
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                if (cancelled) "Withdrawal cancelled" else "Withdrawal created",
-                style = MaterialTheme.typography.titleMedium,
+
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(8.dp))
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(if (cancelled) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (cancelled) Icons.Filled.Close else Icons.Filled.Check,
+                contentDescription = if (cancelled) "Cancelled" else "Created",
+                tint = if (cancelled) MaterialTheme.colorScheme.onSurfaceVariant else Color.White,
+                modifier = Modifier.size(34.dp),
             )
-            Spacer(Modifier.height(8.dp))
-            ValueRow("Status", current)
-            ValueRow("Amount", Format.money(amount), emphasise = true)
-            ValueRow("To", preview.label)
-            if (!withdrawalId.isNullOrBlank()) ValueRow("Reference", shortMiddle(withdrawalId))
-            Spacer(Modifier.height(8.dp))
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            if (cancelled) "Withdrawal cancelled" else "Withdrawal created",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            Format.money(amount),
+            style = MaterialTheme.typography.headlineSmall,
+        )
+    }
+    Spacer(Modifier.height(18.dp))
+
+    FundsCard {
+        SummaryRow("Status", current)
+        SummaryRow("To", preview.label)
+        if (!withdrawalId.isNullOrBlank()) SummaryRow("Reference", shortMiddle(withdrawalId), mono = true)
+    }
+    Spacer(Modifier.height(12.dp))
+
+    if (cancelled) {
+        Text(
+            "Nothing was sent.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else {
+        FundsCard {
+            StepTimeline(
+                listOf(
+                    "Withdrawal created" to StepState.DONE,
+                    "Hold: ${preview.holdSeconds} sec, you can still cancel" to StepState.ACTIVE,
+                    "Sent to the bridge" to StepState.PENDING,
+                    "Delivered to the receiver" to StepState.PENDING,
+                ),
+            )
+            Spacer(Modifier.height(10.dp))
             Text(
-                if (cancelled) {
-                    "Nothing was sent."
-                } else {
-                    "Nothing is sent yet. It goes out after ${preview.holdSeconds} sec unless you cancel it. " +
-                        "Follow it under Withdrawals in Wallet."
-                },
+                "Nothing is sent yet. Follow it under Withdrawals in Wallet.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
