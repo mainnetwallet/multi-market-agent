@@ -310,6 +310,8 @@ class MainActivity : FragmentActivity() {
                                     onOpenChat = { appViewModel.openChat(it) },
                                     onRenameChat = { id, title -> appViewModel.renameChat(id, title) },
                                     onDeleteChat = { appViewModel.deleteChat(it) },
+                                    onSearchChats = { appViewModel.searchChats(it) },
+                                    onLoadEarlier = { appViewModel.loadEarlier() },
                                 )
 
                                 Tab.PORTFOLIO -> PortfolioScreen(

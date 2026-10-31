@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,6 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -34,7 +36,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -65,6 +69,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -77,16 +82,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -95,6 +104,9 @@ import com.mainnetwallet.mmagent.data.ChatUiState
 import com.mainnetwallet.mmagent.data.Conversation
 import com.mainnetwallet.mmagent.data.Format
 import com.mainnetwallet.mmagent.data.ToolStep
+import java.time.Instant
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -116,9 +128,20 @@ private val COMMANDS = listOf(
     CommandChip("/help", true),
 )
 
+/** A card on the empty chat: a plain-words way to run a command. Same rule as [CommandChip]: nothing here moves money. */
+private data class Starter(val title: String, val hint: String, val text: String, val sendNow: Boolean)
+
+private val STARTERS = listOf(
+    Starter("Agent status", "Mode, venue and health", "/status", true),
+    Starter("My positions", "What I hold right now", "/positions", true),
+    Starter("Browse markets", "What is trading here", "/markets", true),
+    Starter("Research a market", "Sources, fair price and edge", "/research ", false),
+)
+
 /**
  * Chat with the agent. Slash commands run on the server and never reach the LLM.
- * The history drawer, search, rename and delete work on chats saved on this device.
+ * Chats are server conversations (the assistant sees the open chat's earlier messages); the history
+ * drawer's search, rename and delete work on them, and older chats kept only on this device still open.
  */
 @Composable
 fun ChatScreen(
@@ -129,6 +152,8 @@ fun ChatScreen(
     onOpenChat: (String) -> Unit,
     onRenameChat: (String, String) -> Unit,
     onDeleteChat: (String) -> Unit,
+    onSearchChats: suspend (String) -> List<String>?,
+    onLoadEarlier: () -> Unit,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -138,16 +163,19 @@ fun ChatScreen(
 
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
 
-    // A new message scrolls into view; the spacer after the last message makes "the end" reachable.
-    LaunchedEffect(chat.messages.size, chat.activeId) {
-        if (chat.messages.isNotEmpty()) listState.animateScrollToItem(chat.messages.size)
+    // The list has an optional "load earlier" row in front and a spacer after the last message, which makes "the end" reachable.
+    val endIndex = chat.messages.size + (if (chat.hasEarlier) 1 else 0)
+    // A new message at the end scrolls into view; older messages added in front must not.
+    val lastKey = chat.messages.lastOrNull()?.let { "${it.seq}-${it.role}-${it.at}" }
+    LaunchedEffect(lastKey, chat.activeId) {
+        if (chat.messages.isNotEmpty()) listState.animateScrollToItem(endIndex)
     }
     // While a reply streams in, follow it, but only if the reader has not scrolled away.
     val replyLength = chat.messages.lastOrNull()?.text?.length ?: 0
     LaunchedEffect(replyLength) {
         val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-        if (chat.busy && chat.messages.isNotEmpty() && lastVisible >= chat.messages.lastIndex) {
-            listState.scrollToItem(chat.messages.size)
+        if (chat.busy && chat.messages.isNotEmpty() && lastVisible >= endIndex - 1) {
+            listState.scrollToItem(endIndex)
         }
     }
 
@@ -173,6 +201,7 @@ fun ChatScreen(
                 },
                 onRename = onRenameChat,
                 onDelete = onDeleteChat,
+                onSearch = onSearchChats,
             )
         },
     ) {
@@ -197,45 +226,55 @@ fun ChatScreen(
             }
 
             if (chat.messages.isEmpty()) {
-                Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("How can I help?", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Ask about a market, or tap a command below. Slash commands answer instantly; " +
-                                "plain questions go to the assistant if one is configured.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                EmptyChat(
+                    enabled = !chat.busy,
+                    onPick = { starter -> if (starter.sendNow) onSend(starter.text) else input = starter.text },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+            } else {
+                val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        if (chat.hasEarlier) {
+                            item(key = "earlier") {
+                                TextButton(onClick = onLoadEarlier, enabled = !chat.busy, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Load earlier messages")
+                                }
+                            }
+                        }
+                        itemsIndexed(chat.messages, key = { index, m -> if (m.seq > 0) "s${m.seq}" else "$index-${m.role}-${m.at}" }) { index, message ->
+                            val previous = chat.messages.getOrNull(index - 1)
+                            // Command replies are tables and lists, not markdown: keep them aligned.
+                            val fromCommand = previous != null && previous.role == "user" && previous.text.startsWith("/")
+                            MessageRow(message, plain = fromCommand, onCopy = { clipboard.setText(AnnotatedString(it)) })
+                        }
+                        item(key = "end") { Spacer(Modifier.height(1.dp)) }
+                    }
+                    if (!atBottom) {
+                        ScrollToBottom(
+                            onClick = { scope.launch { listState.animateScrollToItem(endIndex) } },
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
                         )
                     }
                 }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    itemsIndexed(chat.messages, key = { index, m -> "$index-${m.role}-${m.at}" }) { index, message ->
-                        val previous = chat.messages.getOrNull(index - 1)
-                        // Command replies are tables and lists, not markdown: keep them aligned.
-                        val fromCommand = previous != null && previous.role == "user" && previous.text.startsWith("/")
-                        MessageRow(message, plain = fromCommand, onCopy = { clipboard.setText(AnnotatedString(it)) })
-                    }
-                    item(key = "end") { Spacer(Modifier.height(1.dp)) }
-                }
-            }
 
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(COMMANDS) { chip ->
-                    ChoiceChip(
-                        label = chip.text.trim(),
-                        selected = false,
-                        enabled = !chat.busy,
-                        onClick = { if (chip.sendNow) onSend(chip.text) else input = chip.text },
-                    )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(COMMANDS) { chip ->
+                        ChoiceChip(
+                            label = chip.text.trim(),
+                            selected = false,
+                            enabled = !chat.busy,
+                            onClick = { if (chip.sendNow) onSend(chip.text) else input = chip.text },
+                        )
+                    }
                 }
             }
 
@@ -250,46 +289,111 @@ fun ChatScreen(
     }
 }
 
+// ------------------------------------------------------------------ empty state
+
+@Composable
+private fun EmptyChat(enabled: Boolean, onPick: (Starter) -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.padding(horizontal = 20.dp), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.verticalScroll(rememberScrollState()).padding(vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier.size(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.height(16.dp))
+            Text("How can I help?", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Ask about a market, or start with one of these. Slash commands answer instantly; " +
+                    "plain questions go to the assistant if one is configured.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(20.dp))
+            STARTERS.chunked(2).forEach { pair ->
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    pair.forEach { starter -> StarterCard(starter, enabled, Modifier.weight(1f)) { onPick(starter) } }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StarterCard(starter: Starter, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(starter.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+        Text(starter.hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun ScrollToBottom(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Filled.ArrowDownward, contentDescription = "Scroll to latest", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
+    }
+}
+
 // ------------------------------------------------------------------ composer
 
+/** One rounded field with the send/stop button inside it, as in ChatGPT and Claude. */
 @Composable
 private fun Composer(input: String, onInput: (String) -> Unit, busy: Boolean, onSend: () -> Unit, onStop: () -> Unit) {
     val shape = RoundedCornerShape(26.dp)
     val canAct = busy || input.isNotBlank()
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+            .padding(end = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
+        TextField(
+            value = input,
+            onValueChange = onInput,
+            placeholder = { Text("Message or /command") },
+            maxLines = 6,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            keyboardActions = KeyboardActions(onSend = { onSend() }),
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent,
+                disabledContainerColor = Color.Transparent,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+                disabledIndicatorColor = Color.Transparent,
+            ),
+            modifier = Modifier.weight(1f),
+        )
         Box(
             modifier = Modifier
-                .weight(1f)
-                .clip(shape)
-                .background(MaterialTheme.colorScheme.surface)
-                .border(1.dp, MaterialTheme.colorScheme.outline, shape),
-        ) {
-            TextField(
-                value = input,
-                onValueChange = onInput,
-                placeholder = { Text("Message or /command") },
-                maxLines = 6,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    disabledContainerColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        Spacer(Modifier.width(8.dp))
-        Box(
-            modifier = Modifier
-                .padding(bottom = 4.dp)
-                .size(48.dp)
+                .padding(bottom = 2.dp)
+                .size(40.dp)
                 .clip(CircleShape)
                 .background(if (canAct) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
                 .clickable(enabled = canAct, role = Role.Button) { if (busy) onStop() else onSend() },
@@ -450,24 +554,28 @@ private fun MarkdownText(text: String, onCopy: (String) -> Unit) {
     val codeBackground = MaterialTheme.colorScheme.surfaceVariant
     val linkColor = MaterialTheme.colorScheme.secondary
     val onSurface = MaterialTheme.colorScheme.onSurface
+    // A tapped link is opened only after the reader has seen where it really goes.
+    var pendingLink by remember { mutableStateOf<String?>(null) }
+    val onLink: (String) -> Unit = { pendingLink = it }
+    pendingLink?.let { url -> LinkDialog(url, onDismiss = { pendingLink = null }) }
     SelectionContainer {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             blocks.forEach { block ->
                 when (block) {
                     is MdBlock.Heading -> Text(
-                        inlineMarkdown(block.text, codeBackground, linkColor),
+                        inlineMarkdown(block.text, codeBackground, linkColor, onLink),
                         style = if (block.level <= 2) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall,
                         color = onSurface,
                     )
                     is MdBlock.Paragraph -> Text(
-                        inlineMarkdown(block.text, codeBackground, linkColor),
+                        inlineMarkdown(block.text, codeBackground, linkColor, onLink),
                         style = MaterialTheme.typography.bodyLarge,
                         color = onSurface,
                     )
                     is MdBlock.Bullet -> Row(modifier = Modifier.padding(start = (block.indent * 16).dp)) {
                         Text(block.marker, style = MaterialTheme.typography.bodyLarge, color = onSurface, modifier = Modifier.width(24.dp))
                         Text(
-                            inlineMarkdown(block.text, codeBackground, linkColor),
+                            inlineMarkdown(block.text, codeBackground, linkColor, onLink),
                             style = MaterialTheme.typography.bodyLarge,
                             color = onSurface,
                             modifier = Modifier.weight(1f),
@@ -476,14 +584,14 @@ private fun MarkdownText(text: String, onCopy: (String) -> Unit) {
                     is MdBlock.Quote -> Row(modifier = Modifier.height(IntrinsicSize.Min)) {
                         Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outline))
                         Text(
-                            inlineMarkdown(block.text, codeBackground, linkColor),
+                            inlineMarkdown(block.text, codeBackground, linkColor, onLink),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(start = 10.dp),
                         )
                     }
                     is MdBlock.Table -> Text(
-                        block.rows.joinToString("\n"),
+                        formatTable(block.rows),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
                         softWrap = false,
@@ -501,6 +609,35 @@ private fun MarkdownText(text: String, onCopy: (String) -> Unit) {
             }
         }
     }
+}
+
+/** The address a link really opens, shown before it is opened: the label the assistant wrote may say something else. */
+@Composable
+private fun LinkDialog(url: String, onDismiss: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Open this link?") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(linkHost(url) ?: url, style = MaterialTheme.typography.titleMedium)
+                Text(url, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("The assistant wrote this link. Check the address before you open it.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    runCatching { uriHandler.openUri(url) }
+                    onDismiss()
+                },
+            ) { Text("Open") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -673,6 +810,68 @@ internal fun filterConversations(chats: List<Conversation>, query: String): List
     return chats.filter { chat -> chat.title.lowercase().contains(needle) || chat.messages.any { it.text.lowercase().contains(needle) } }
 }
 
+/** A search for [query]: chats that match here (title or cached text), plus those the server matched (it also reads messages not cached on this device). */
+internal fun searchConversations(chats: List<Conversation>, query: String, serverIds: Set<String>): List<Conversation> {
+    val local = filterConversations(chats, query)
+    if (query.isBlank() || serverIds.isEmpty()) return local
+    val keep = local.mapTo(HashSet()) { it.id } + serverIds
+    return chats.filter { it.id in keep }
+}
+
+/** The history list's heading for a chat last used at [updatedAt] (epoch millis), as ChatGPT groups them. */
+internal fun chatGroup(updatedAt: Long, now: Long, zone: ZoneId = ZoneId.systemDefault()): String {
+    if (updatedAt <= 0L) return "Older"
+    val day = Instant.ofEpochMilli(updatedAt).atZone(zone).toLocalDate()
+    val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    val days = ChronoUnit.DAYS.between(day, today)
+    return when {
+        days <= 0L -> "Today"
+        days == 1L -> "Yesterday"
+        days < 7L -> "Previous 7 days"
+        days < 30L -> "Previous 30 days"
+        else -> "Older"
+    }
+}
+
+/**
+ * A markdown table as aligned monospace text: every cell padded to its column and a rule under the
+ * header. Emphasis marks are dropped because the text is monospace and they would only skew the columns.
+ */
+internal fun formatTable(rows: List<String>): String {
+    fun cells(row: String): List<String> =
+        row.trim().removePrefix("|").removeSuffix("|").split("|").map { it.replace("**", "").replace("`", "").trim() }
+    fun isRule(row: List<String>) = row.isNotEmpty() && row.all { c -> c.isNotEmpty() && c.all { it == '-' || it == ':' } }
+    val parsed = rows.map { cells(it) }
+    val data = parsed.filterNot { isRule(it) }
+    if (data.isEmpty()) return rows.joinToString("\n")
+    val columns = data.maxOf { it.size }
+    val widths = (0 until columns).map { c -> data.maxOf { r -> r.getOrNull(c)?.length ?: 0 }.coerceAtLeast(1) }
+    fun line(row: List<String>) = (0 until columns).joinToString("  ") { c -> (row.getOrNull(c) ?: "").padEnd(widths[c]) }.trimEnd()
+    val hasHeader = parsed.size > 1 && isRule(parsed[1])
+    val out = mutableListOf<String>()
+    data.forEachIndexed { i, row ->
+        out.add(line(row))
+        if (i == 0 && hasHeader) out.add(widths.joinToString("  ") { "─".repeat(it) })
+    }
+    return out.joinToString("\n")
+}
+
+/** The host a link points at, or null if it has none. Anything before an `@` is not the host, so a look-alike is shown as what it is. */
+internal fun linkHost(url: String): String? = try {
+    java.net.URI(url).host?.takeIf { it.isNotBlank() }
+} catch (e: Exception) {
+    null
+}
+
+/** The address of a Markdown link if it is a plain web link (http or https, with a host, no spaces), else null: other schemes are never made tappable. */
+internal fun safeLinkUrl(raw: String): String? {
+    val url = raw.trim()
+    if (url.isEmpty() || url.length > 2000 || url.any { it.isWhitespace() || it.isISOControl() }) return null
+    val lower = url.lowercase()
+    if (!lower.startsWith("https://") && !lower.startsWith("http://")) return null
+    return if (linkHost(url) != null) url else null
+}
+
 private val TOOL_LABELS = mapOf(
     "get_status" to "Checking status",
     "list_markets" to "Searching markets",
@@ -701,8 +900,11 @@ internal fun toolLabel(name: String): String = TOOL_LABELS[name] ?: name.replace
 
 // MARKDOWN-PURE-END
 
-/** `code`, **bold**, *italic* and [label](url). Links are underlined; the address itself is not shown. */
-internal fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Color): AnnotatedString = buildAnnotatedString {
+/**
+ * `code`, **bold**, *italic* and [label](url). Links are underlined and show only their label; with [onLink] a
+ * plain web link is tappable and reports its address (the screen asks before opening it).
+ */
+internal fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Color, onLink: ((String) -> Unit)? = null): AnnotatedString = buildAnnotatedString {
     var i = 0
     while (i < text.length) {
         val c = text[i]
@@ -717,7 +919,7 @@ internal fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Colo
             val end = text.indexOf("**", i + 2)
             if (end > i + 2) {
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                    append(inlineMarkdown(text.substring(i + 2, end), codeBackground, linkColor))
+                    append(inlineMarkdown(text.substring(i + 2, end), codeBackground, linkColor, onLink))
                 }
                 i = end + 2
                 continue
@@ -733,7 +935,15 @@ internal fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Colo
             val mid = text.indexOf("](", i + 1)
             val end = if (mid > i) text.indexOf(')', mid + 2) else -1
             if (mid > i + 1 && end > mid && !text.substring(i + 1, mid).contains('\n')) {
-                withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) { append(text.substring(i + 1, mid)) }
+                val label = text.substring(i + 1, mid)
+                val url = if (onLink != null) safeLinkUrl(text.substring(mid + 2, end)) else null
+                withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) {
+                    if (url != null && onLink != null) {
+                        withLink(LinkAnnotation.Url(url, linkInteractionListener = { onLink(url) })) { append(label) }
+                    } else {
+                        append(label)
+                    }
+                }
                 i = end + 1
                 continue
             }
@@ -771,11 +981,24 @@ private fun ChatHistoryDrawer(
     onOpen: (String) -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
+    onSearch: suspend (String) -> List<String>?,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var renaming by remember { mutableStateOf<Conversation?>(null) }
     var deleting by remember { mutableStateOf<Conversation?>(null) }
-    val shown = remember(chat.conversations, query) { filterConversations(chat.conversations, query) }
+    // The server also reads messages that are not cached here; its answer counts only for the text it was asked.
+    var served by remember { mutableStateOf("" to emptySet<String>()) }
+    LaunchedEffect(query) {
+        if (query.isBlank()) {
+            served = "" to emptySet()
+        } else {
+            delay(300)
+            served = query to (onSearch(query)?.toSet() ?: emptySet())
+        }
+    }
+    val serverIds = if (served.first == query) served.second else emptySet()
+    val shown = remember(chat.conversations, query, serverIds) { searchConversations(chat.conversations, query, serverIds) }
+    val now = remember(chat.conversations) { System.currentTimeMillis() }
 
     ModalDrawerSheet {
         Text("Chats", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp))
@@ -813,46 +1036,31 @@ private fun ChatHistoryDrawer(
                     )
                 }
             }
-            items(shown, key = { it.id }) { conversation ->
-                val active = conversation.id == chat.activeId
-                var menu by remember { mutableStateOf(false) }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
-                        .clickable(enabled = !chat.busy || active) { onOpen(conversation.id) }
-                        .padding(start = 16.dp, end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        conversation.title,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(vertical = 12.dp),
-                    )
-                    Box {
-                        IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Chat options") }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Rename") },
-                                leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
-                                onClick = {
-                                    menu = false
-                                    renaming = conversation
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Delete") },
-                                leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                                enabled = !(chat.busy && active),
-                                onClick = {
-                                    menu = false
-                                    deleting = conversation
-                                },
-                            )
-                        }
+            var group: String? = null
+            for (conversation in shown) {
+                val label = chatGroup(conversation.updatedAt, now)
+                if (label != group) {
+                    group = label
+                    item(key = "group-$label") {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+                        )
                     }
+                }
+                item(key = conversation.id) {
+                    val active = conversation.id == chat.activeId
+                    ChatHistoryRow(
+                        conversation = conversation,
+                        active = active,
+                        canOpen = !chat.busy || active,
+                        canDelete = !(chat.busy && active),
+                        onOpen = { onOpen(conversation.id) },
+                        onRename = { renaming = conversation },
+                        onDelete = { deleting = conversation },
+                    )
                 }
             }
         }
@@ -880,7 +1088,12 @@ private fun ChatHistoryDrawer(
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("Delete this chat?") },
-            text = { Text("\"${target.title}\" will be removed from this device.") },
+            text = {
+                Text(
+                    if (target.synced) "\"${target.title}\" and its messages will be deleted from the server."
+                    else "\"${target.title}\" will be removed from this device.",
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -891,5 +1104,56 @@ private fun ChatHistoryDrawer(
             },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun ChatHistoryRow(
+    conversation: Conversation,
+    active: Boolean,
+    canOpen: Boolean,
+    canDelete: Boolean,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
+            .clickable(enabled = canOpen, onClick = onOpen)
+            .padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            conversation.title,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(vertical = 12.dp),
+        )
+        Box {
+            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Chat options") }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                    onClick = {
+                        menu = false
+                        onRename()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Delete") },
+                    leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                    enabled = canDelete,
+                    onClick = {
+                        menu = false
+                        onDelete()
+                    },
+                )
+            }
+        }
     }
 }
