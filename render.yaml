@@ -69,8 +69,8 @@ services:
         sync: false
       - key: FUNDS_WITHDRAWAL_DAILY_LIMIT_USD
         value: "25"
-      - key: FUNDS_WITHDRAWAL_HOLD_MINUTES
-        value: "10"
+      - key: FUNDS_WITHDRAWAL_HOLD_SECONDS
+        value: "5"
       - key: FUNDS_ALLOWLIST_COOLING_HOURS
         value: "24"
     disk:

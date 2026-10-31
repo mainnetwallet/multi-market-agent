@@ -92,7 +92,6 @@
     <string name="withdraw_eta">ETA</string>
     <string name="withdraw_hold_window">Hold window</string>
     <string name="withdraw_daily_left">Daily limit left</string>
-    <string name="withdraw_password">Password (never stored)</string>
     <string name="withdraw_step_up">Step up</string>
     <string name="withdraw_hold_to_send">Hold to send</string>
     <string name="withdraw_send">Send</string>

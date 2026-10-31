@@ -60,15 +60,6 @@ class WithdrawViewModelTest {
     }
 
     @Test
-    fun theStepUpTokenIsHeldForTheConfirmCall() {
-        // The token arrives from the server after a successful password check; the
-        // ViewModel keeps it so the single-use token is sent exactly once.
-        vm.setVenue("polymarket")
-        vm.setAmount("10")
-        assertEquals(null, vm.state.value.stepUpToken)
-    }
-
-    @Test
     fun theAmountKeepsOnlyDigitsAndOneDecimalPoint() {
         vm.setAmount("1,2a3.4.5")
         assertEquals("123.45", vm.state.value.amount)
@@ -109,7 +100,7 @@ class WithdrawViewModelTest {
         vm.setVenue("polymarket")
         vm.setAmount("10")
         var result: Boolean? = null
-        vm.submit("password") { result = it }
+        vm.submit { result = it }
         assertEquals(false, result)
         assertTrue(!vm.state.value.submitting)
     }

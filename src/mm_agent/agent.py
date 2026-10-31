@@ -765,7 +765,7 @@ class AgentService:
                     await self.funds.refresh_submitted()
             except Exception:
                 logger.exception("funds_loop_error")
-            await asyncio.sleep(30)
+            await asyncio.sleep(5)
 
     async def reconcile_pending_unknown(self) -> None:
         for order in self.store.orders_needing_reconcile():

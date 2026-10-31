@@ -40,7 +40,8 @@ on 2026-10-30.
 6. **Every money-moving POST needs an `Idempotency-Key`.** The server stores
    key → result for 24 h and replays the first result, so a retry after a timeout
    can never double-submit.
-7. **Step-up auth for anything that moves money or raises a limit.** A step-up
+7. **Step-up auth for anything that raises a limit or changes the allowlist.** (Withdrawals
+   need no password: only a 5-second press-and-hold in the app and a short server hold.) A step-up
    token is single-use, bound to the session and to one action, and expires in
    120 s. The password is never stored or logged.
 8. **Funds are off by default.** The funds module (`FUNDS_ENABLED=true`) uses its
@@ -499,7 +500,7 @@ reason unless `FUNDS_ENABLED=true`. It uses its own signer secret
 FUNDS_ENABLED=true
 FUNDS_SIGNER_PRIVATE_KEY=0x...
 FUNDS_WITHDRAWAL_DAILY_LIMIT_USD=25
-FUNDS_WITHDRAWAL_HOLD_MINUTES=10
+FUNDS_WITHDRAWAL_HOLD_SECONDS=5
 FUNDS_ALLOWLIST_COOLING_HOURS=24
 FUNDS_REQUIRE_ALLOWLIST=false   # true = only allowlisted addresses can receive
 ```
@@ -535,7 +536,7 @@ visible rather than making it for you.
 
 ## Withdraw page
 
-The app's Withdraw page is one form: **amount, receiver address, chain, token**, then the password and
+The app's Withdraw page is one form: **amount, receiver address, chain, token**, then a 5-second
 hold-to-withdraw. The chains and tokens come from the bridge's own list (`GET /v1/funds/{venue}/withdraw/options`,
 EVM chains only, a symbol listed twice on one chain is left out), and the fee is quoted live for the chain and
 token picked, so changing either shows what that route costs before anything is confirmed. Saved (allowlisted)
@@ -545,7 +546,7 @@ The API takes the same fields: `POST /v1/funds/withdraw/preview` and `POST /v1/f
 `address_id` (a saved address) or `recipient` + `network` (chain id or name) + `asset` (token symbol).
 A typed-in receiver is refused when `FUNDS_REQUIRE_ALLOWLIST=true`, when the address is not a valid EVM address,
 when the chain/token is not on the bridge's list, or when the amount is below the token's minimum. The password
-step-up, idempotency key, hold window, daily limit and audit trail apply either way.
+idempotency key, hold window, daily limit and audit trail apply either way; no password or step-up token is needed to withdraw.
 
 ---
 

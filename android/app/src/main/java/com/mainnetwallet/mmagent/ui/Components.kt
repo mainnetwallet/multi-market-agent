@@ -1,11 +1,15 @@
 package com.mainnetwallet.mmagent.ui
 
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -45,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The top bar: a compact venue badge, then (optionally) the market search, then the extras (PAUSED, settings).
@@ -160,6 +166,9 @@ fun RowScope.HeaderSearchField(query: String, onQueryChange: (String) -> Unit) {
 /**
  * Press-and-hold to confirm. Used for every action that adds risk or moves money
  * out. Risk-reducing actions (cancel, pause) use a normal button instead.
+ *
+ * By default the finger is dragged across the button. With [holdMillis] set, the button is confirmed by
+ * keeping the finger down for that long instead; lifting early starts over.
  */
 @Composable
 fun HoldToConfirmButton(
@@ -167,11 +176,19 @@ fun HoldToConfirmButton(
     enabled: Boolean,
     busy: Boolean = false,
     danger: Boolean = false,
+    holdMillis: Long? = null,
     onConfirmed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var progress by remember { mutableFloatStateOf(0f) }
-    val animated by animateFloatAsState(targetValue = progress, label = "holdProgress")
+    var holding by remember { mutableStateOf(false) }
+    val dragProgress by animateFloatAsState(targetValue = progress, label = "holdProgress")
+    val timedProgress by animateFloatAsState(
+        targetValue = if (holding) 1f else 0f,
+        animationSpec = if (holding) tween(durationMillis = (holdMillis ?: 0L).toInt(), easing = LinearEasing) else snap(),
+        label = "timedHoldProgress",
+    )
+    val animated = if (holdMillis != null) timedProgress else dragProgress
 
     Box(
         modifier = modifier
@@ -185,12 +202,27 @@ fun HoldToConfirmButton(
                     else -> MaterialTheme.colorScheme.primary
                 }
             )
-            .pointerInput(enabled, busy) {
+            .pointerInput(enabled, busy, holdMillis) {
                 if (!enabled || busy) return@pointerInput
                 val width = size.width.toFloat()
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
+                    if (holdMillis != null) {
+                        // Keep the finger down for the whole time; lifting early cancels.
+                        var released = false
+                        holding = true
+                        withTimeoutOrNull(holdMillis) {
+                            waitForUpOrCancellation()
+                            released = true
+                        }
+                        holding = false
+                        if (!released) {
+                            onConfirmed()
+                            waitForUpOrCancellation()
+                        }
+                        return@awaitEachGesture
+                    }
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -206,7 +238,13 @@ fun HoldToConfirmButton(
                     progress = 0f
                 }
             }
-            .semantics { contentDescription = "$label. Press and hold to confirm." },
+            .semantics {
+                contentDescription = if (holdMillis != null) {
+                    "$label. Press and hold for ${holdMillis / 1000} seconds to confirm."
+                } else {
+                    "$label. Press and hold to confirm."
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Box(

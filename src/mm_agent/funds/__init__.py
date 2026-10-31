@@ -620,7 +620,7 @@ class FundsService:
             "address_id": entry.get("address_id") or "",
             "direct": bool(entry.get("direct")),
             "eta_seconds": eta,
-            "hold_minutes": self.settings.funds_withdrawal_hold_minutes,
+            "hold_seconds": self.settings.funds_withdrawal_hold_seconds,
             "daily_limit_usd": str(daily_limit),
             "daily_used_usd": str(used),
             "daily_remaining_usd": str(remaining),
@@ -813,8 +813,8 @@ class FundsService:
         )
         from datetime import timedelta
 
-        hold_minutes = self.settings.funds_withdrawal_hold_minutes
-        hold_until = utcnow() + timedelta(minutes=hold_minutes)
+        hold_seconds = self.settings.funds_withdrawal_hold_seconds
+        hold_until = utcnow() + timedelta(seconds=hold_seconds)
         withdrawal_id = self.store.create_withdrawal(
             venue=venue.value,
             amount_usd=amount,

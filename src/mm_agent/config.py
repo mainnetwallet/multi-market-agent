@@ -149,10 +149,11 @@ class Settings(BaseSettings):
     funds_relayer_api_key: str = ""
     funds_relayer_api_key_address: str = ""
     funds_withdrawal_daily_limit_usd: Decimal = Decimal("25")
-    funds_withdrawal_hold_minutes: int = 10
+    funds_withdrawal_hold_seconds: int = 5
     funds_allowlist_cooling_hours: int = 24
-    # False: a withdrawal may name its receiver address, chain and token directly (password step-up, hold
-    # window and daily limit still apply). True: only addresses already on the allowlist can receive.
+    # False: a withdrawal may name its receiver address, chain and token directly (the hold window and
+    # daily limit still apply; no password is asked). True: only addresses already on the allowlist can
+    # receive.
     funds_require_allowlist: bool = False
     funds_polymarket_bridge_url: str = "https://bridge.polymarket.com"
     funds_polymarket_builder_code: str = ""

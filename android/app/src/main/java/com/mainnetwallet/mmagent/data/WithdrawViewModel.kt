@@ -47,7 +47,7 @@ data class WithdrawPreview(
     val recipient: String = "",
     val label: String = "",
     val etaSeconds: Int = 0,
-    val holdMinutes: Int = 0,
+    val holdSeconds: Int = 0,
     val dailyLimitUsd: String = "0",
     val dailyRemainingUsd: String = "0",
 )
@@ -73,7 +73,6 @@ data class WithdrawUiState(
     val quoteKey: String = "",
     val quoting: Boolean = false,
     val quoteError: String? = null,
-    val stepUpToken: String? = null,
     val submitting: Boolean = false,
     val error: String? = null,
     val withdrawalId: String? = null,
@@ -97,7 +96,7 @@ data class WithdrawUiState(
 
 /**
  * The withdraw page: amount, receiver address, chain and token on one form, with the fee quoted live for the
- * chain and token picked, then the password and a hold-to-confirm.
+ * chain and token picked, then a hold-to-confirm. No password is asked.
  *
  * The idempotency key is generated once per intent (it changes whenever an input changes) and reused if the
  * operator taps again after a timeout, so a retry can never create a second withdrawal.
@@ -166,8 +165,7 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
     /** Any change to what is on the form: a new intent, a new idempotency key, a fresh fee. */
     private fun changeInputs(transform: WithdrawUiState.() -> WithdrawUiState) {
         val next = _state.value.transform()
-        // A step-up token is bound to one confirmation, so it does not outlive a changed form.
-        _state.value = next.copy(idempotencyKey = UUID.randomUUID().toString(), stepUpToken = null, error = null)
+        _state.value = next.copy(idempotencyKey = UUID.randomUUID().toString(), error = null)
         refreshQuote()
     }
 
@@ -339,7 +337,7 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
                         recipient = response.optString("recipient"),
                         label = response.optString("label"),
                         etaSeconds = response.optInt("eta_seconds"),
-                        holdMinutes = response.optInt("hold_minutes"),
+                        holdSeconds = response.optInt("hold_seconds"),
                         dailyLimitUsd = response.optString("daily_limit_usd", "0"),
                         dailyRemainingUsd = response.optString("daily_remaining_usd", "0"),
                     ),
@@ -354,16 +352,14 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
     }
 
     /**
-     * Withdraw: the password is exchanged for a single-use step-up token, then the withdrawal is created with it
-     * in the `X-Stepup-Token` header. Nothing is sent yet: the server holds the withdrawal for a window in which
-     * it can still be cancelled.
+     * Withdraw: the withdrawal is created directly, no password. Nothing is sent yet: the server holds the
+     * withdrawal for a short window in which it can still be cancelled.
      *
-     * Only a fee quoted for the exact inputs on screen is accepted. A definite answer from the server (a 4xx) may
-     * have spent the token, so it is dropped and the password is asked for again. A timeout or a 5xx is uncertain:
-     * the token and the idempotency key are kept, and pressing again replays the same request, so it can never
-     * create a second withdrawal.
+     * Only a fee quoted for the exact inputs on screen is accepted. A timeout or a 5xx is uncertain: the
+     * idempotency key is kept, and pressing again replays the same request, so it can never create a second
+     * withdrawal.
      */
-    fun submit(password: String, onDone: (Boolean) -> Unit = {}) {
+    fun submit(onDone: (Boolean) -> Unit = {}) {
         val current = _state.value
         if (current.submitting) return
         if (!current.quoteReady) {
@@ -371,37 +367,17 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
             onDone(false)
             return
         }
-        if (password.isBlank() && current.stepUpToken.isNullOrBlank()) return
         _state.value = current.copy(submitting = true, error = null)
         viewModelScope.launch {
-            var token = current.stepUpToken
-            if (token.isNullOrBlank()) {
-                try {
-                    val response = api.post(
-                        "/v1/auth/stepup",
-                        ApiClient.jsonOf("password" to password, "action" to "withdraw"),
-                    )
-                    token = response.optString("stepup_token")
-                    _state.value = _state.value.copy(stepUpToken = token)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    _state.value = _state.value.copy(submitting = false, error = e.message)
-                    onDone(false)
-                    return@launch
-                }
-            }
             try {
                 val response = api.post(
                     "/v1/funds/withdraw",
                     requestBody(current),
                     idempotencyKey = current.idempotencyKey,
-                    stepupToken = token,
                 )
                 _state.value = _state.value.copy(
                     submitting = false,
                     step = WithdrawStep.DONE,
-                    stepUpToken = null,
                     withdrawalId = response.optString("id"),
                     status = response.optString("status", "PENDING_HOLD"),
                 )
@@ -416,7 +392,7 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
                             "pressing again cannot create a second one.",
                     )
                 } else {
-                    _state.value = _state.value.copy(submitting = false, stepUpToken = null, error = e.message)
+                    _state.value = _state.value.copy(submitting = false, error = e.message)
                 }
                 onDone(false)
             } catch (e: IOException) {

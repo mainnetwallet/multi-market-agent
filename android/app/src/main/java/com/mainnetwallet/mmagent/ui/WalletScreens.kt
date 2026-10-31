@@ -43,7 +43,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mainnetwallet.mmagent.data.AllowlistEntry
 import com.mainnetwallet.mmagent.data.Format
@@ -489,6 +488,9 @@ private fun WalletCard(
     }
 }
 
+/** How long the finger must stay on the withdraw button. */
+private const val WITHDRAW_HOLD_MS = 5_000L
+
 /**
  * The withdraw page: amount, receiver address, chain and token on one form. The fee is quoted live for the chain
  * and token picked, so changing either shows what that route costs before anything is confirmed.
@@ -507,7 +509,7 @@ fun WithdrawScreen(
     onSelectChain: (String) -> Unit,
     onSelectToken: (String) -> Unit,
     onUseSaved: (AllowlistEntry) -> Unit,
-    onSubmit: (String) -> Unit,
+    onSubmit: () -> Unit,
     onCancelWithdrawal: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -573,12 +575,9 @@ private fun WithdrawForm(
     onSelectChain: (String) -> Unit,
     onSelectToken: (String) -> Unit,
     onUseSaved: (AllowlistEntry) -> Unit,
-    onSubmit: (String) -> Unit,
+    onSubmit: () -> Unit,
     onClose: () -> Unit,
 ) {
-    // The password lives only in this field. It is cleared as soon as it has been sent.
-    var password by remember { mutableStateOf("") }
-
     val parsed = state.amount.toBigDecimalOrNull()
     val balance = available.toBigDecimalOrNull()
     val tooMuch = parsed != null && balance != null && parsed > balance
@@ -749,7 +748,7 @@ private fun WithdrawForm(
                     if (preview.etaSeconds > 0) {
                         ValueRow("Arrives in about", "${maxOf(1, preview.etaSeconds / 60)} min")
                     }
-                    ValueRow("Hold before sending", "${preview.holdMinutes} min")
+                    ValueRow("Hold before sending", "${preview.holdSeconds} sec")
                     ValueRow("Daily limit left", Format.money(preview.dailyRemainingUsd))
                 }
 
@@ -770,37 +769,22 @@ private fun WithdrawForm(
         )
     }
 
-    // Password, then hold to withdraw
+    // Hold to withdraw (no password)
     Spacer(Modifier.height(14.dp))
-    OutlinedTextField(
-        value = password,
-        onValueChange = { password = it },
-        label = { Text("Your password") },
-        supportingText = { Text("Asked again for every withdrawal. Never stored.") },
-        singleLine = true,
-        enabled = !state.submitting,
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Spacer(Modifier.height(12.dp))
     HoldToConfirmButton(
-        label = "Hold to withdraw",
-        enabled = online && !state.submitting && state.quoteReady && !tooMuch && !belowMinimum &&
-            (password.isNotBlank() || !state.stepUpToken.isNullOrBlank()),
+        label = "Hold 5 seconds to withdraw",
+        enabled = online && !state.submitting && state.quoteReady && !tooMuch && !belowMinimum,
         busy = state.submitting,
         danger = true,
-        onConfirmed = {
-            onSubmit(password)
-            password = ""
-        },
+        holdMillis = WITHDRAW_HOLD_MS,
+        onConfirmed = onSubmit,
     )
     Spacer(Modifier.height(8.dp))
     Text(
-        if (preview.holdMinutes > 0) {
-            "This creates the withdrawal. It waits ${preview.holdMinutes} min before it is sent, and you can cancel it until then."
+        if (preview.holdSeconds > 0) {
+            "Keep your finger down for 5 seconds. The withdrawal then waits ${preview.holdSeconds} sec before it is sent, and you can cancel it until then."
         } else {
-            "This creates the withdrawal. It waits before it is sent, and you can cancel it until then."
+            "Keep your finger down for 5 seconds. The withdrawal then waits briefly before it is sent, and you can cancel it until then."
         },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -841,7 +825,7 @@ private fun WithdrawDone(
                 if (cancelled) {
                     "Nothing was sent."
                 } else {
-                    "Nothing is sent yet. It goes out after ${preview.holdMinutes} min unless you cancel it. " +
+                    "Nothing is sent yet. It goes out after ${preview.holdSeconds} sec unless you cancel it. " +
                         "Follow it under Withdrawals in Wallet."
                 },
                 style = MaterialTheme.typography.bodySmall,

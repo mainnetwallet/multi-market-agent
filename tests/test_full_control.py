@@ -553,13 +553,10 @@ def test_a_withdrawal_records_a_decimal_amount(harness: Harness, bridge: object)
         },
         headers={"X-Stepup-Token": token},
     ).json()["id"]
-    withdraw_token = client.post("/v1/auth/stepup", json={"password": "test-password", "action": "withdraw"}).json()[
-        "stepup_token"
-    ]
     response = client.post(
         "/v1/funds/withdraw",
         json={"venue": "polymarket", "amount": "1.00", "address_id": entry_id},
-        headers={"Idempotency-Key": "wd-1", "X-Stepup-Token": withdraw_token},
+        headers={"Idempotency-Key": "wd-1"},
     )
     # Whatever the outcome, the request must never crash on the Decimal amount.
     assert response.status_code in (200, 400), response.text

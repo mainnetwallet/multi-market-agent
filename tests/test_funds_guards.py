@@ -285,6 +285,34 @@ async def test_a_venue_without_a_withdrawal_api_refuses_a_typed_in_receiver(
     assert exc.value.code == "unsupported_withdraw"
 
 
+async def test_a_withdrawal_needs_no_password_and_holds_only_five_seconds(
+    harness: Harness, bridge: _BridgeStub
+) -> None:
+    """No step-up token is asked for a withdrawal; the short hold is the only delay."""
+
+    harness.settings.__dict__["funds_enabled"] = True
+    harness.settings.__dict__["funds_allowlist_cooling_hours"] = 0
+    client = make_client(harness)
+    entry_id = _allowlist(client)
+
+    created = client.post(
+        "/v1/funds/withdraw",
+        json={"venue": "polymarket", "amount": "5", "address_id": entry_id},
+        headers={"Idempotency-Key": "wd-nopw"},
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["status"] == "PENDING_HOLD"
+    record = harness.store.get_withdrawal(body["id"])
+    assert record is not None
+    from datetime import UTC, datetime
+
+    hold_until = record["hold_until"]
+    if hold_until.tzinfo is None:
+        hold_until = hold_until.replace(tzinfo=UTC)
+    assert (hold_until - datetime.now(UTC)).total_seconds() <= 6
+
+
 # ── daily limit ─────────────────────────────────────────────────────────────
 
 
@@ -298,13 +326,10 @@ async def test_the_daily_limit_is_checked_when_the_money_moves(harness: Harness,
     entry_id = _allowlist(client)
 
     funds = FundsService(harness.settings, harness.store)
-    withdraw_token = client.post("/v1/auth/stepup", json={"password": "test-password", "action": "withdraw"}).json()[
-        "stepup_token"
-    ]
     created = client.post(
         "/v1/funds/withdraw",
         json={"venue": "polymarket", "amount": "20", "address_id": entry_id},
-        headers={"Idempotency-Key": "wd-1", "X-Stepup-Token": withdraw_token},
+        headers={"Idempotency-Key": "wd-1"},
     )
     assert created.status_code == 200, created.text
 

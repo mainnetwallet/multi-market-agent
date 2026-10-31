@@ -272,8 +272,8 @@ class MainActivity : FragmentActivity() {
                                     onSelectChain = { withdrawVm.selectChain(it) },
                                     onSelectToken = { withdrawVm.selectToken(it) },
                                     onUseSaved = { withdrawVm.useSaved(it) },
-                                    onSubmit = { password ->
-                                        withdrawVm.submit(password) { ok -> if (ok) appViewModel.refresh() }
+                                    onSubmit = {
+                                        withdrawVm.submit { ok -> if (ok) appViewModel.refresh() }
                                     },
                                     onCancelWithdrawal = { withdrawVm.cancelCreated { appViewModel.refresh() } },
                                     onClose = { overlay = null; withdrawVm.reset() },

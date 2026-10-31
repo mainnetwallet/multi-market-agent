@@ -50,7 +50,6 @@ HUNDRED = Decimal("100")
 
 STEPUP_TTL_SECONDS = 120
 STEPUP_ACTIONS = (
-    "withdraw",
     "allowlist_add",
     "ceiling_raise",
     "approvals",

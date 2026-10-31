@@ -954,14 +954,12 @@ def create_app(
         body: WithdrawBody,
         request: Request,
         user: str = Depends(require_auth),
-        x_stepup: str | None = Header(None, alias="X-Stepup-Token"),
     ) -> Any:
         payload = body.model_dump(mode="json")
         try:
             stored, request_hash = full.idempotent(_idempotency_key(request), "funds.withdraw", payload)
             if stored is not None:
                 return {"ok": True, "replayed": True, **stored}
-            full.require_stepup(x_stepup, _session_id(request, user), "withdraw")
             result = await funds.create_withdrawal(
                 venue=body.venue,
                 amount=body.amount,
