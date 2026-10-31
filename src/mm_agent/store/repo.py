@@ -89,6 +89,10 @@ PROPOSAL_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
+# Keys of a conversation's state that survive from one answer to the next.
+CHAT_KEPT_STATE = frozenset({"pins", "task", "checkpoint"})
+
+
 class ConversationNotFound(LookupError):
     """No such conversation for this owner. Another owner's id looks exactly the same."""
 
@@ -1347,7 +1351,10 @@ class Store:
                     ConversationRow.owner == owner,
                     ConversationRow.status != "running",
                 )
-                .values(status="running", state={"started_at": utcnow().isoformat(), "tools": []})
+                .values(
+                    status="running",
+                    state={**self._kept_state(row.state), "started_at": utcnow().isoformat(), "tools": []},
+                )
             )
         if rowcount(claimed) != 1:
             raise ConversationBusy(str(conversation_id))
@@ -1358,7 +1365,21 @@ class Store:
         with self.session() as s:
             row = self._owned(s, owner, conversation_id)
             row.status = status
-            row.state = redact({**state, "finished_at": utcnow().isoformat()})
+            row.state = redact({**self._kept_state(row.state), **state, "finished_at": utcnow().isoformat()})
+
+    @staticmethod
+    def _kept_state(state: dict[str, Any] | None) -> dict[str, Any]:
+        """Per-run bookkeeping resets with every answer; the chat's own working memory does not."""
+
+        return {k: v for k, v in (state or {}).items() if k in CHAT_KEPT_STATE}
+
+    def chat_patch_state(self, owner: str, conversation_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """Merge [patch] into this chat's state (pins, task, checkpoint). Scoped like every chat call."""
+
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            row.state = redact({**(row.state or {}), **patch})
+            return dict(row.state)
 
     def chat_interrupt_stale_runs(self) -> int:
         """At startup nothing can still be running: mark answers cut off by a restart."""
