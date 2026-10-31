@@ -1175,6 +1175,11 @@ def create_app(
         except Exception:
             return
 
+    @app.head("/", include_in_schema=False)
+    async def index_head() -> Response:
+        # Hosting probes (Render's port check) send HEAD / and log a 405 without this.
+        return Response(status_code=200)
+
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def index() -> Any:
         if not STATIC.exists():
