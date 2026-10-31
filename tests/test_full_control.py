@@ -282,6 +282,15 @@ def test_a_withdrawal_to_an_unknown_address_is_refused(harness: Harness, bridge:
     assert preview.json()["error"]["code"] == "not_allowlisted"
 
 
+EVM_USDC_ETH = "0x" + "a1" * 20
+EVM_TUSD = "0x" + "b2" * 20
+EVM_USDC_POLY = "0x" + "c3" * 20
+EVM_USDCE_POLY = "0x" + "d4" * 20
+EVM_USDC_BASE = "0x" + "e5" * 20
+SOL_USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+TRON_USDT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+
+
 def _multi_chain_assets() -> list[dict]:
     def asset(chain_id: str, chain: str, symbol: str, address: str, minimum: int) -> dict:
         return {
@@ -291,47 +300,82 @@ def _multi_chain_assets() -> list[dict]:
             "minCheckoutUsd": minimum,
         }
 
+    # The names and ids here are test data only; the code under test must not know any of them.
     return [
-        asset("1", "Ethereum", "TUSD", "0xTUSD", 7),
-        asset("1", "Ethereum", "USDC", "0xETHUSDC", 7),
-        asset("1151111081099710", "Solana", "USDC", "SoLUSDC", 2),
-        asset("137", "Polygon", "USDC", "0xPOLYUSDC", 2),
-        asset("137", "Polygon", "USDC.e", "0xPOLYUSDCE", 2),
-        asset("8453", "Base", "USDC", "0xBASEUSDC", 2),
+        asset("c1", "Chain One", "TUSD", EVM_TUSD, 7),
+        asset("c1", "Chain One", "USDC", EVM_USDC_ETH, 7),
+        asset("c2", "Chain Two", "USDC", SOL_USDC, 2),
+        asset("c3", "Chain Three", "USDC", EVM_USDC_POLY, 2),
+        asset("c3", "Chain Three", "USDC.e", EVM_USDCE_POLY, 2),
+        asset("c4", "Chain Four", "USDC", EVM_USDC_BASE, 2),
+        asset("c5", "Chain Five", "USDT", TRON_USDT, 9),
+        asset("c6", "Chain Six", "XCOIN", "native", 9),
     ]
 
 
-def test_deposit_options_list_every_chain_and_token(harness: Harness, bridge: object) -> None:
+def _deposit_client(harness: Harness, bridge: object) -> TestClient:
     bridge.assets = _multi_chain_assets()  # type: ignore[attr-defined]
     harness.settings.__dict__["funds_enabled"] = True
-    client = make_client(harness)
+    harness.settings.__dict__["polymarket_wallet_address"] = "0x" + "ab" * 20
+    return make_client(harness)
+
+
+def test_deposit_options_come_from_the_bridge_list_in_a_data_derived_order(harness: Harness, bridge: object) -> None:
+    client = _deposit_client(harness, bridge)
     body = client.get("/v1/funds/polymarket/deposit/options").json()
-    assert [c["chain_name"] for c in body["chains"]] == ["Polygon", "Ethereum", "Base", "Solana"]
+    # Lowest minimum first, then more tokens, then the bridge's own order.
+    assert [c["chain_id"] for c in body["chains"]] == ["c3", "c2", "c4", "c1", "c5", "c6"]
+    # Tokens listed on the most chains first: USDC (4 chains) before USDC.e (1).
     assert [t["symbol"] for t in body["chains"][0]["tokens"]] == ["USDC", "USDC.e"]
-    assert [t["symbol"] for t in body["chains"][1]["tokens"]] == ["USDC", "TUSD"]
-    assert body["chains"][3]["address_type"] == "svm"
-    assert body["default"] == {"chain_id": "137", "token": "0xPOLYUSDC"}
+    assert [t["symbol"] for t in body["chains"][3]["tokens"]] == ["USDC", "TUSD"]
+    assert body["default"] == {"chain_id": "c3", "token": EVM_USDC_POLY}
 
 
-def test_deposit_defaults_to_polygon_usdc_not_the_first_listed_asset(harness: Harness, bridge: object) -> None:
-    bridge.assets = _multi_chain_assets()  # type: ignore[attr-defined]
-    harness.settings.__dict__["funds_enabled"] = True
-    harness.settings.__dict__["polymarket_wallet_address"] = "0x" + "ab" * 20
-    client = make_client(harness)
+def test_deposit_default_is_not_just_the_first_listed_asset(harness: Harness, bridge: object) -> None:
+    client = _deposit_client(harness, bridge)
     body = client.get("/v1/funds/polymarket/deposit").json()
-    assert (body["network"], body["asset"], body["min_amount"]) == ("Polygon", "USDC", "2")
+    assert (body["network"], body["asset"], body["min_amount"]) == ("Chain Three", "USDC", "2")
 
 
-def test_deposit_switches_chain_and_picks_the_matching_address_type(harness: Harness, bridge: object) -> None:
-    bridge.assets = _multi_chain_assets()  # type: ignore[attr-defined]
-    harness.settings.__dict__["funds_enabled"] = True
-    harness.settings.__dict__["polymarket_wallet_address"] = "0x" + "ab" * 20
-    client = make_client(harness)
-    sol = client.get("/v1/funds/polymarket/deposit", params={"network": "1151111081099710"}).json()
-    assert sol["supported"] and sol["address_type"] == "svm" and sol["address"].startswith("7xKX")
-    eth = client.get("/v1/funds/polymarket/deposit", params={"network": "Ethereum", "token": "0xtusd"}).json()
-    assert (eth["asset"], eth["address_type"], eth["min_amount"]) == ("TUSD", "evm", "7")
-    bad = client.get("/v1/funds/polymarket/deposit", params={"network": "Base", "asset": "TUSD"}).json()
+def test_deposit_address_type_is_derived_from_the_data(harness: Harness, bridge: object) -> None:
+    from tests.conftest import BRIDGE_ADDRESS, BRIDGE_BTC_ADDRESS, BRIDGE_SVM_ADDRESS, BRIDGE_TRON_ADDRESS
+
+    client = _deposit_client(harness, bridge)
+
+    def pick(network: str, **extra: str) -> dict:
+        return client.get("/v1/funds/polymarket/deposit", params={"network": network, **extra}).json()
+
+    assert pick("c3")["address"] == BRIDGE_ADDRESS
+    assert pick("c1", token=EVM_TUSD.upper().replace("0X", "0x"))["asset"] == "TUSD"
+    sol = pick("c2")
+    assert (sol["address_type"], sol["address"]) == ("svm", BRIDGE_SVM_ADDRESS)
+    # Tron's token looks like a Solana address too; it is resolved because svm is already taken.
+    tron = pick("c5")
+    assert (tron["address_type"], tron["address"]) == ("tron", BRIDGE_TRON_ADDRESS)
+    # A token with no recognisable address format gets the one key nobody else uses.
+    btc = pick("c6")
+    assert (btc["address_type"], btc["address"]) == ("btc", BRIDGE_BTC_ADDRESS)
+
+
+def test_deposit_refuses_a_chain_it_cannot_place_for_certain(harness: Harness, bridge: object) -> None:
+    client = _deposit_client(harness, bridge)
+    bridge.assets.append(  # type: ignore[attr-defined]
+        {
+            "chainId": "c7",
+            "chainName": "Chain Seven",
+            "token": {"name": "Y", "symbol": "Y", "address": "mystery", "decimals": 6},
+            "minCheckoutUsd": 3,
+        }
+    )
+    body = client.get("/v1/funds/polymarket/deposit", params={"network": "c7"}).json()
+    assert body["supported"] is False and "with certainty" in body["reason"]
+    # The other unknown chain is refused as well rather than guessed: two chains, one free key.
+    assert client.get("/v1/funds/polymarket/deposit", params={"network": "c6"}).json()["supported"] is False
+
+
+def test_deposit_rejects_a_token_that_is_not_on_that_chain(harness: Harness, bridge: object) -> None:
+    client = _deposit_client(harness, bridge)
+    bad = client.get("/v1/funds/polymarket/deposit", params={"network": "c4", "asset": "TUSD"}).json()
     assert bad["supported"] is False
 
 

@@ -502,12 +502,14 @@ FUNDS_WITHDRAWAL_HOLD_MINUTES=10
 FUNDS_ALLOWLIST_COOLING_HOURS=24
 ```
 
-**Deposits.** `GET /v1/funds/{venue}/deposit/options` lists every chain and token the venue accepts (for
-Polymarket, the bridge's own `/supported-assets`, grouped by chain with each chain's address type and minimum).
-`GET /v1/funds/{venue}/deposit?network=<chain id or name>&token=<contract>` (or `asset=<symbol>`) returns the address
-for that pair: `POST /deposit` gives one bridge address per type (`evm`, `svm`, `btc`, `tron`) and the chain decides
-which one is shown. With nothing chosen the default is Polygon USDC. The app's Deposit sheet switches chain and token
-from that list; history reads the status of every bridge address.
+**Deposits.** Nothing in the deposit flow names a chain or a token; it all comes from the bridge.
+`GET /v1/funds/{venue}/deposit/options` lists every chain and token in the bridge's own `/supported-assets`,
+ordered from the data alone (lowest minimum first, then chains with more tokens; tokens listed on the most
+chains first). `GET /v1/funds/{venue}/deposit?network=<chain id or name>&token=<contract>` (or `asset=<symbol>`)
+returns the address for that pair. The bridge's asset list does not say which of the `POST /deposit` addresses
+(`evm`, `svm`, `btc`, `tron`) a chain uses, so that is derived: from the syntax of the chain's token contract
+addresses, then by elimination among the keys the bridge returned. If it cannot be placed with certainty the
+deposit is refused instead of guessed. History reads the status of every bridge address.
 
 A withdrawal goes `PENDING_HOLD` → `SUBMITTED` → `CONFIRMED`, or `FAILED` /
 `CANCELLED` / `UNKNOWN`. It is submitted exactly once and never auto-retried;

@@ -254,7 +254,7 @@ fun DepositScreen(
                         label = chain.optString("chain_name"),
                         selected = id == activeChainId,
                         onClick = {
-                            // A new network starts on its first token (USDC where the chain has it).
+                            // A new network starts on its first token, in the order the server sends them.
                             val first = chain.optJSONArray("tokens")?.objects()?.firstOrNull()
                             onChoose(DepositChoice(id, first?.optString("address").orEmpty()))
                         },
@@ -362,7 +362,7 @@ private fun DepositDetails(info: JSONObject, onCopy: (String) -> Unit) {
             Spacer(Modifier.height(6.dp))
             listOf(
                 "1  Send $asset from $network to the address above.",
-                "2  The bridge converts it to pUSD on Polygon.",
+                "2  The bridge converts it and credits your Polymarket wallet.",
                 "3  The balance shows in Wallet after it lands, usually within minutes.",
             ).forEach { step ->
                 Text(step, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
