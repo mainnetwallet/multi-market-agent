@@ -38,6 +38,46 @@ def test_polymarket_gamma_parser() -> None:
     assert market.fee_info["taker_rate"] == "0.05"
 
 
+@pytest.mark.parametrize(
+    ("raw", "event", "expected"),
+    [
+        ({"category": "Crypto"}, {}, "Crypto"),
+        ({"category": ""}, {"category": "Sports"}, "Sports"),
+        ({}, {"tags": [{"label": "NBA", "slug": "nba"}, {"label": "Sports", "slug": "sports"}]}, "Sports"),
+        ({"categories": [{"label": "Politics", "slug": "politics"}]}, {}, "Politics"),
+        ({"tags": ["crypto", "bitcoin"]}, {}, "Crypto"),
+        # Several schedule names: the highest taker rate wins, so a fee is never understated.
+        ({"category": "Politics", "tags": [{"slug": "crypto"}]}, {}, "Crypto"),
+        # A name outside the schedule is kept; nothing at all becomes "Other".
+        ({"category": "US-current-affairs"}, {}, "US-current-affairs"),
+        ({}, {}, "Other"),
+        ({"tags": [{"label": "Trump"}], "category": None}, {"tags": None}, "Other"),
+    ],
+)
+def test_polymarket_category_resolution(raw: dict, event: dict, expected: str) -> None:
+    from mm_agent.venues.polymarket import resolve_category
+
+    assert resolve_category(raw, event) == expected
+
+
+def test_polymarket_fee_rate_follows_resolved_category() -> None:
+    venue = PolymarketVenue(make_settings(__import__("pathlib").Path(".")))
+    market = venue.parse_gamma_market(
+        {
+            "id": "55",
+            "question": "BTC up?",
+            "clobTokenIds": '["1", "2"]',
+            "outcomes": '["Yes", "No"]',
+            "active": True,
+            "closed": False,
+            "acceptingOrders": True,
+            "events": [{"id": "e", "tags": [{"label": "Crypto", "slug": "crypto"}]}],
+        }
+    )
+    assert market.category == "Crypto"
+    assert market.fee_info["taker_rate"] == "0.07"
+
+
 def test_polymarket_v2_position_ids() -> None:
     venue = PolymarketVenue(make_settings(__import__("pathlib").Path(".")))
     market = venue.parse_gamma_market(
