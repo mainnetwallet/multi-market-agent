@@ -19,6 +19,7 @@ def test_health_head_and_auth(harness: Harness) -> None:
     client = make_client(harness)
     assert client.get("/health").status_code == 200
     assert client.head("/health").status_code == 200
+    assert client.head("/").status_code == 200
     assert client.get("/v1/status").status_code == 401
     assert client.post("/v1/auth/login", json={"username": "operator", "password": "wrong"}).status_code == 401
     login = client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})

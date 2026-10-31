@@ -68,6 +68,45 @@ CATEGORY_FEE_RATES: dict[str, Decimal] = {
 }
 
 
+def _labels(items: Any) -> list[str]:
+    """Labels and slugs from a Gamma list of ``{"label": ..., "slug": ...}`` objects (or plain strings)."""
+    out: list[str] = []
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if isinstance(item, dict):
+            out.extend(str(item[key]) for key in ("label", "slug") if item.get(key))
+        elif item:
+            out.append(str(item))
+    return out
+
+
+def resolve_category(raw: dict[str, Any], event: dict[str, Any]) -> str:
+    """Pick the fee category for a Gamma market.
+
+    Gamma fills ``category`` on some markets and leaves it empty on others, so look at
+    every place it can appear: the market's ``category``, its ``categories`` and ``tags``,
+    then the parent event's ``category`` and ``tags``. A name that is in the fee schedule
+    wins over one that is not. If several schedule names appear, the one with the highest
+    taker rate is used, so a fee is never underestimated. With nothing usable the result is
+    the first non-empty name found, or "Other".
+    """
+    named: list[str] = []
+    for source in (raw.get("category"), event.get("category")):
+        if source and str(source).strip():
+            named.append(str(source).strip())
+    tagged = _labels(raw.get("categories")) + _labels(raw.get("tags"))
+    tagged += _labels(event.get("categories")) + _labels(event.get("tags"))
+    known = {
+        key
+        for key in (name.strip().lower() for name in (*named, *tagged))
+        if key in CATEGORY_FEE_RATES and key != "other"
+    }
+    if known:
+        return max(known, key=lambda key: CATEGORY_FEE_RATES[key]).title()
+    return named[0] if named else "Other"
+
+
 def _handle_summary(handle: Any) -> dict[str, Any]:
     """Reduce a SDK transaction handle to the few fields the operator needs."""
 
@@ -240,11 +279,9 @@ class PolymarketVenue(HttpVenue):
             status = MarketStatus.PAUSED
         else:
             status = MarketStatus.OPEN
-        category = str(raw.get("category") or "").strip()
         events = raw.get("events") or []
         event = events[0] if events and isinstance(events[0], dict) else {}
-        if not category:
-            category = str(event.get("category") or "Other")
+        category = resolve_category(raw, event)
         tick_raw = raw.get("orderPriceMinTickSize") or raw.get("minimumTickSize") or "0.01"
         tick = Decimal(str(tick_raw))
         fee_rate = CATEGORY_FEE_RATES.get(category.lower(), CATEGORY_FEE_RATES["other"])
