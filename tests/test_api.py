@@ -148,6 +148,16 @@ def test_chat_stream_reports_tool_progress_and_tokens(harness: Harness) -> None:
     assert events[-2] == ("message", events[-2][1]) and events[-2][1]["reply"] == "All good."
 
 
+def test_chat_stream_post_takes_a_long_message_in_the_body(harness: Harness) -> None:
+    client = make_client(harness)
+    client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})
+    # 3000 Bengali characters would be ~27 KB once URL-encoded; the body has no such limit.
+    long_text = "/status " + "\u0995" * 3000
+    events = _sse(client.post("/v1/chat/stream", json={"message": long_text}).text)
+    assert [name for name, _ in events][-2:] == ["message", "done"]
+    assert client.post("/v1/chat/stream", json={"message": ""}).status_code == 422
+
+
 async def test_stop_prevents_a_new_tool_from_starting(harness: Harness) -> None:
     stop = {"now": False}
     # The operator presses Stop while the model is deciding to pause the agent.

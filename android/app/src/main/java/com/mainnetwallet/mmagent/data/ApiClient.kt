@@ -62,10 +62,11 @@ class ApiClient(
      * Read a Server-Sent Events response. [onEvent] gets each event name with its JSON data, on an
      * OkHttp thread. Cancelling the calling coroutine closes the connection; that is how Stop works.
      */
-    suspend fun stream(path: String, onEvent: (event: String, data: JSONObject) -> Unit) {
+    suspend fun stream(path: String, body: JSONObject? = null, onEvent: (event: String, data: JSONObject) -> Unit) {
         val builder = Request.Builder()
             .url(baseUrl.trimEnd('/') + path)
             .header("Accept", "text/event-stream")
+        if (body != null) builder.post(body.toString().toRequestBody("application/json".toMediaType()))
         val token = tokenProvider()
         if (!token.isNullOrBlank()) {
             builder.header("Authorization", "Bearer $token")

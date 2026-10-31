@@ -1004,8 +1004,7 @@ def create_app(
     async def chat_message(body: ChatBody, request: Request, user: str = Depends(require_auth)) -> dict[str, Any]:
         return await chat.handle(body.message, actor=f"web:{user}", source="web_chat")
 
-    @app.get("/v1/chat/stream")
-    async def chat_stream(message: str, request: Request, user: str = Depends(require_auth)) -> StreamingResponse:
+    def chat_event_stream(message: str, user: str) -> StreamingResponse:
         async def event_stream() -> Any:
             yield 'event: status\ndata: {"state":"working"}\n\n'
 
@@ -1027,6 +1026,7 @@ def create_app(
             # Keep a reference: if the app disconnects, the task still ends cleanly.
             _CHAT_TASKS.add(task)
             task.add_done_callback(_CHAT_TASKS.discard)
+            getter: asyncio.Future[tuple[str, dict[str, Any]]] | None = None
             try:
                 while True:
                     if task.done() and queue.empty():
@@ -1047,6 +1047,8 @@ def create_app(
                 yield "event: message\ndata: " + json.dumps(redact(result), default=str) + "\n\n"
                 yield "event: done\ndata: {}\n\n"
             finally:
+                if getter is not None and not getter.done():
+                    getter.cancel()
                 # The app pressed Stop (or lost the connection). Never cancel the task: a trade
                 # that already started must finish. It just may not start anything new.
                 if not task.done():
@@ -1057,6 +1059,18 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.get("/v1/chat/stream")
+    async def chat_stream(message: str, request: Request, user: str = Depends(require_auth)) -> StreamingResponse:
+        return chat_event_stream(message, user)
+
+    # Same stream with the message in the body: a long or non-Latin message does not fit in a URL,
+    # and the text stays out of access logs. The Android app uses this form.
+    @app.post("/v1/chat/stream")
+    async def chat_stream_post(
+        body: ChatBody, request: Request, user: str = Depends(require_auth)
+    ) -> StreamingResponse:
+        return chat_event_stream(body.message, user)
 
     @app.websocket("/v1/ws")
     async def websocket(ws: WebSocket) -> None:

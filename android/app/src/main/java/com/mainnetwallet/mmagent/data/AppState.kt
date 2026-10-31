@@ -20,7 +20,6 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
-import java.net.URLEncoder
 
 /** What the app knows about the server right now. */
 data class AgentStatus(
@@ -518,7 +517,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         chatJob = viewModelScope.launch {
             var reply: String? = null
             try {
-                api.stream("/v1/chat/stream?message=" + URLEncoder.encode(message, "UTF-8")) { event, data ->
+                api.stream("/v1/chat/stream", ApiClient.jsonOf("message" to message)) { event, data ->
                     when (event) {
                         "delta" -> updateReply { it.copy(text = it.text + data.optString("text")) }
                         "tool" -> updateReply {
