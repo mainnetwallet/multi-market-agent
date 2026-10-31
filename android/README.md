@@ -64,7 +64,7 @@ login screen.
 ## Install and update
 
 Every push to `main` that touches `android/**` builds a **signed release APK** and
-publishes it on the repo's **Releases** page (tag `android-latest`).
+publishes it on the repo's **Releases** page (one release per version, tag `android-v<version>`; older releases are kept).
 
 - Download the `.apk` from Releases on your phone and open it. Installing a newer
   release over an older one updates the app and keeps your login.

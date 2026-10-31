@@ -108,7 +108,6 @@ jobs:
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: android-latest
     steps:
       # The app and the server ship together: the new APK reads endpoints the new server adds, so the
       # release waits until Render is serving this exact commit. If a newer commit is already live,
@@ -162,11 +161,16 @@ jobs:
           NOTES="Signed release APK, version $VERSION (build #${{ github.run_number }}), commit ${GITHUB_SHA::7}. The -debug.apk is the debug build of the same commit; it installs next to the release app and does not replace it.
 
           Install: download the .apk on your phone and open it. Installing over an older release updates it and keeps your login. Releases before this one were signed with a different key, so uninstall those once first."
-          # Recreate the release each time so the tag always points at the newest commit.
-          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
-          gh release create "$TAG" "$APK" "$DEBUG_APK" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Android app $VERSION" \
-            --notes "$NOTES" \
-            --latest
+          # One release per version, kept for good: the tag carries the version, so a new build never
+          # replaces an older one. Only a re-run of the same build (same version) refreshes its own files.
+          TAG="android-v$VERSION"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" "$DEBUG_APK" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "$APK" "$DEBUG_APK" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Android app $VERSION" \
+              --notes "$NOTES" \
+              --latest
+          fi
