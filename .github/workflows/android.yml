@@ -145,17 +145,26 @@ jobs:
           name: mm-agent-release-apk
           path: dist
 
+      - uses: actions/download-artifact@v7
+        if: steps.deploy.outputs.ready == 'true'
+        with:
+          name: mm-agent-debug-apk
+          path: dist-debug
+
       - name: Publish to GitHub Releases
         if: steps.deploy.outputs.ready == 'true'
         run: |
           APK="$(ls dist/*.apk | head -1)"
           VERSION="$(basename "$APK" .apk | sed 's/^mm-agent-//')"
-          NOTES="Signed release APK, version $VERSION (build #${{ github.run_number }}), commit ${GITHUB_SHA::7}.
+          # The debug build has its own application id (.debug), so it installs next to the release app.
+          DEBUG_APK="dist-debug/mm-agent-$VERSION-debug.apk"
+          cp dist-debug/app-debug.apk "$DEBUG_APK"
+          NOTES="Signed release APK, version $VERSION (build #${{ github.run_number }}), commit ${GITHUB_SHA::7}. The -debug.apk is the debug build of the same commit; it installs next to the release app and does not replace it.
 
           Install: download the .apk on your phone and open it. Installing over an older release updates it and keeps your login. Releases before this one were signed with a different key, so uninstall those once first."
           # Recreate the release each time so the tag always points at the newest commit.
           gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
-          gh release create "$TAG" "$APK" \
+          gh release create "$TAG" "$APK" "$DEBUG_APK" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Android app $VERSION" \
