@@ -580,6 +580,13 @@ idempotency key, hold window, daily limit and audit trail apply either way; no p
 - **Venue-native WebSockets:** the book feed currently uses short-interval REST
   refreshes through the adapter `subscribe_books` contract, not each venue's
   native stream. Native WS can replace the feed without changing the pipeline.
+- **Account streams:** Polymarket (user channel), Kalshi (`fill`, `user_orders`, `market_positions`) and
+  Limitless (`subscribe_positions`) wake the account sync the moment the venue reports a change; the 3 s poll
+  stays as the safety net and `/status` shows `streaming` and `stream_error` per venue. Limitless's stream
+  needs market slugs, so it covers markets the account already holds; a position in a brand-new market, and
+  Limitless resting orders (its adapter reads them per market only), are found by the poll or not at all.
+  The stream code is tested against local fake servers; **none of the three has been run against a live
+  account.**
 - **Android push notifications** are not implemented; background alerts rely on
   Telegram/email/uptime monitoring. The app talks to the Control API directly and
   works with the Render HTTPS deployment.

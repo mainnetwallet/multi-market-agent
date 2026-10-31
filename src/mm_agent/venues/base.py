@@ -84,6 +84,28 @@ class Venue(ABC):
     @abstractmethod
     async def get_open_orders(self, ref: MarketRef | None = None) -> list[VenueOrder]: ...
 
+    async def get_account_snapshot(self) -> tuple[list[Any], list[VenueOrder], bool, bool]:
+        """Everything the venue says the account holds right now.
+
+        Returns ``(positions, open_orders, positions_complete, orders_complete)``. The two flags say
+        whether the lists are the whole account; a venue that paged past what it could read reports
+        ``False`` so the caller never treats a missing row as closed. Adapters override this when
+        they can read the full account in fewer calls or know about paging.
+        """
+
+        positions = await self.get_positions()
+        orders = await self.get_open_orders()
+        return positions, orders, True, True
+
+    def account_events(self) -> AsyncIterator[None] | None:
+        """Optional native push: an iterator that yields each time the account changes.
+
+        ``None`` (the default) means the venue has no account stream and the caller polls. A yield
+        carries no data; it only says "read the account again now".
+        """
+
+        return None
+
     async def get_recent_trades(self, ref: MarketRef) -> list[VenueTrade]:
         """Terminal fills for reconciliation. Adapters override when supported."""
 

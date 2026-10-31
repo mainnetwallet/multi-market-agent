@@ -517,6 +517,28 @@ def create_app(
     async def positions(_: str = Depends(require_auth)) -> dict[str, Any]:
         return {"positions": [p.model_dump(mode="json") for p in agent.positions()]}
 
+    @app.post("/v1/account/sync")
+    async def account_sync(venue: VenueId | None = None, _: str = Depends(require_auth)) -> dict[str, Any]:
+        """Read the venue's own account now (positions, resting orders, balance) and update the app's copy.
+
+        This is a read: it places nothing. Pull-to-refresh uses it so a trade made on the venue's website
+        shows without waiting for the next sync.
+        """
+
+        targets = [venue] if venue else [v for v in registry.enabled() if registry.is_ready(v)]
+        results: list[dict[str, Any]] = []
+        for target in targets:
+            if not registry.is_ready(target):
+                results.append({"venue": target.value, "ok": False, "reason": registry.reason(target)})
+                continue
+            try:
+                results.append({"ok": True, **await agent.account_sync.sync_once(target)})
+            except Exception as exc:
+                results.append(
+                    {"venue": target.value, "ok": False, "reason": f"{type(exc).__name__}: {str(exc)[:160]}"}
+                )
+        return {"results": results}
+
     @app.post("/v1/positions/close")
     async def close_position(body: CloseBody, request: Request, _: str = Depends(require_auth)) -> dict[str, Any]:
         result = await agent.close_position(

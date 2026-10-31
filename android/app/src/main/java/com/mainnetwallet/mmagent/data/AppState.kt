@@ -551,6 +551,32 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
      * keeps the last good data instead of blanking its screen. A manual refresh
      * shows the spinner.
      */
+    /**
+     * A push from the server ("the account changed"): read everything again now.
+     *
+     * Unlike the timer tick, an event that arrives while a refresh is already running must not be
+     * dropped, because that refresh may have read the server before the change. It is remembered and one
+     * more refresh runs as soon as the current one ends, so a burst of events costs one extra read, never
+     * a stale screen.
+     */
+    fun liveRefresh() {
+        if (token.isNullOrBlank()) return
+        if (refreshJob?.isActive == true) {
+            livePending = true
+            return
+        }
+        refresh(silent = true)
+        refreshJob?.invokeOnCompletion {
+            if (livePending) {
+                livePending = false
+                viewModelScope.launch { liveRefresh() }
+            }
+        }
+    }
+
+    @Volatile
+    private var livePending = false
+
     fun refresh(silent: Boolean = false) {
         if (token.isNullOrBlank()) return
         if (refreshJob?.isActive == true) {

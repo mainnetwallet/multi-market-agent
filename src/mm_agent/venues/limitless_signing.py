@@ -63,6 +63,22 @@ def auth_headers(method: str, path_with_query: str, body: str = "") -> dict[str,
     }
 
 
+def ws_auth_headers() -> dict[str, str]:
+    """Headers that sign the Socket.IO handshake (fixed path, empty body), fresh on every connection.
+
+    Needs only the API token, not the wallet key: the stream reads, it never trades.
+    """
+
+    token_id = os.environ.get("LMTS_TOKEN_ID", "").strip()
+    secret = os.environ.get("LMTS_TOKEN_SECRET", "").strip()
+    if not token_id or not secret:
+        raise RuntimeError("LMTS_TOKEN_ID and LMTS_TOKEN_SECRET are required")
+    timestamp = datetime.now(UTC).isoformat()
+    message = f"{timestamp}\nGET\n/socket.io/?EIO=4&transport=websocket\n"
+    signature = base64.b64encode(hmac.new(base64.b64decode(secret), message.encode(), hashlib.sha256).digest()).decode()
+    return {"lmts-api-key": token_id, "lmts-timestamp": timestamp, "lmts-signature": signature}
+
+
 def sign_order(
     *,
     salt: str,

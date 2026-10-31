@@ -33,6 +33,7 @@ from ..domain import (
     RuleStatus,
     Side,
     VenueId,
+    VenueOrder,
     utcnow,
 )
 from ..util import get_logger, redact, redact_text
@@ -109,6 +110,32 @@ SUMMARY_MAX_CHARS = 6000
 
 def _dec(value: Decimal | None) -> Decimal:
     return value if value is not None else Decimal("0")
+
+
+def _position_delta(
+    key: tuple[str, str], title: str | None, old_shares: Decimal, old_avg: Decimal, p: Position
+) -> dict[str, Any]:
+    """What a position change looked like: size moved, and the price it most likely happened at."""
+
+    delta = p.shares - old_shares
+    price = p.avg_price
+    if delta > 0:
+        cost = p.shares * p.avg_price - old_shares * old_avg
+        derived = cost / delta
+        price = derived if Decimal("0") <= derived <= Decimal("1") else p.avg_price
+    elif p.current_price is not None:
+        price = p.current_price
+    else:
+        price = old_avg
+    return {
+        "market_id": key[0],
+        "outcome": key[1],
+        "title": title,
+        "delta": delta,
+        "old": old_shares,
+        "new": p.shares,
+        "price": price,
+    }
 
 
 class Store:
@@ -998,6 +1025,235 @@ class Store:
             if row:
                 row.current_price = price
                 row.updated_at = utcnow()
+
+    # ------------------------------------------------- account sync (venue is the truth)
+    def sync_positions(
+        self,
+        venue: VenueId,
+        snapshot: list[Position],
+        *,
+        complete: bool,
+        protect: frozenset[tuple[str, str]] = frozenset(),
+    ) -> dict[str, Any]:
+        """Make the stored positions match what the venue reports.
+
+        The venue is the source of truth: a trade made on the venue's own website, or an order that filled
+        while the agent was not looking, changes the account without the agent ever seeing a fill. Rows in
+        ``protect`` (``(market_id, outcome)``) are left alone, because an order of ours on that market has
+        an outcome the agent has not applied yet and overwriting it here would count the fill twice. A
+        position missing from the snapshot is closed only when ``complete`` says the whole list was read.
+
+        Returns ``{"changed": [...], "moved": {...}}``: every key that differs (price included) and the
+        subset whose size or cost changed, which is what an order that vanished is matched against.
+        """
+
+        changed: list[tuple[str, str]] = []
+        moved: set[tuple[str, str]] = set()
+        deltas: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        with self.session() as s:
+            existing = {
+                (r.market_id, r.outcome): r
+                for r in s.scalars(select(PositionRow).where(PositionRow.venue == venue.value)).all()
+            }
+            for p in snapshot:
+                if p.shares <= 0:
+                    continue
+                key = (p.market_id, p.outcome.value)
+                seen.add(key)
+                if key in protect:
+                    continue
+                row = existing.get(key)
+                if row is None:
+                    s.add(
+                        PositionRow(
+                            venue=venue.value,
+                            market_id=p.market_id,
+                            outcome=p.outcome.value,
+                            market_title=p.market_title,
+                            shares=p.shares,
+                            avg_price=p.avg_price,
+                            realized_pnl=p.realized_pnl,
+                            current_price=p.current_price,
+                            status="OPEN",
+                        )
+                    )
+                    changed.append(key)
+                    moved.add(key)
+                    deltas.append(_position_delta(key, p.market_title, Decimal("0"), Decimal("0"), p))
+                    continue
+                old_shares, old_avg = _dec(row.shares), _dec(row.avg_price)
+                size_changed = (
+                    _dec(row.shares) != p.shares or _dec(row.avg_price) != p.avg_price or row.status != "OPEN"
+                )
+                price_changed = p.current_price is not None and row.current_price != p.current_price
+                title_changed = bool(p.market_title) and row.market_title != p.market_title
+                if not (size_changed or price_changed or title_changed):
+                    continue
+                if old_shares != p.shares:
+                    deltas.append(_position_delta(key, p.market_title or row.market_title, old_shares, old_avg, p))
+                row.shares = p.shares
+                row.avg_price = p.avg_price
+                row.status = "OPEN"
+                if p.current_price is not None:
+                    row.current_price = p.current_price
+                if p.realized_pnl != 0:
+                    row.realized_pnl = p.realized_pnl
+                if p.market_title:
+                    row.market_title = p.market_title
+                row.updated_at = utcnow()
+                changed.append(key)
+                if size_changed:
+                    moved.add(key)
+            if complete:
+                for key, row in existing.items():
+                    if key in seen or key in protect or _dec(row.shares) <= 0:
+                        continue
+                    old_shares = _dec(row.shares)
+                    deltas.append(
+                        {
+                            "market_id": key[0],
+                            "outcome": key[1],
+                            "title": row.market_title,
+                            "delta": -old_shares,
+                            "old": old_shares,
+                            "new": Decimal("0"),
+                            "price": _dec(row.current_price) if row.current_price else _dec(row.avg_price),
+                        }
+                    )
+                    row.shares = Decimal("0")
+                    row.status = "CLOSED"
+                    row.updated_at = utcnow()
+                    changed.append(key)
+                    moved.add(key)
+        return {"changed": changed, "moved": moved, "deltas": deltas}
+
+    def record_external_fills(self, venue: VenueId, deltas: list[dict[str, Any]]) -> int:
+        """Put position changes made outside the agent into the trade history.
+
+        The position row is already correct (``sync_positions`` wrote it), so this only adds an ``ext:``
+        order plus one fill per change and never touches a position. The venue does not hand us the
+        trade here, so the price is derived from the position's cost basis; the order is marked
+        ``derived`` so nothing mistakes it for a venue-reported fill.
+        """
+
+        count = 0
+        with self.session() as s:
+            for d in deltas:
+                size = abs(Decimal(d["delta"]))
+                if size <= 0:
+                    continue
+                side = Side.BUY if Decimal(d["delta"]) > 0 else Side.SELL
+                price = Decimal(d["price"])
+                client_id = f"ext:{venue.value}:pos:{uuid.uuid4().hex}"
+                row = OrderRow(
+                    venue=venue.value,
+                    market_id=d["market_id"],
+                    outcome=d["outcome"],
+                    side=side.value,
+                    price=price,
+                    size=size,
+                    filled=size,
+                    state="FILLED",
+                    client_order_id=client_id,
+                    raw_redacted={"source": "external", "derived": True},
+                    submitted_at=utcnow(),
+                )
+                s.add(row)
+                s.flush()
+                s.add(
+                    FillRow(
+                        order_id=row.id,
+                        venue=venue.value,
+                        market_id=d["market_id"],
+                        outcome=d["outcome"],
+                        side=side.value,
+                        price=price,
+                        size=size,
+                        venue_fill_id=f"sync-{client_id}",
+                        market_title=d.get("title"),
+                    )
+                )
+                count += 1
+        return count
+
+    def sync_open_orders(
+        self,
+        venue: VenueId,
+        orders: list[VenueOrder],
+        *,
+        complete: bool,
+        moved: set[tuple[str, str]] | None,
+        settle_after_seconds: int = 10,
+    ) -> list[str]:
+        """Mirror the venue's resting orders, including ones placed on the venue's own website.
+
+        An order the agent does not know is stored with a ``ext:`` client id so it shows in the app, can be
+        cancelled from it, and counts toward "in orders". A resting order that is no longer on the venue is
+        closed: FILLED when the position it would move did move in this same read (``moved``), otherwise
+        CANCELLED. ``moved`` is ``None`` when the positions could not be read in full, and then nothing is
+        closed, because a guess would be worse than waiting one more cycle. Returns the local ids changed.
+        """
+
+        from ..domain import stable_id
+
+        touched: list[str] = []
+        live = {o.order_id: o for o in orders}
+        cutoff = utcnow() - timedelta(seconds=settle_after_seconds)
+        with self.session() as s:
+            rows = s.scalars(
+                select(OrderRow).where(OrderRow.venue == venue.value, OrderRow.state.in_(("OPEN", "PARTIAL")))
+            ).all()
+            by_venue_id = {r.venue_order_id: r for r in rows if r.venue_order_id}
+            for order_id, order in live.items():
+                row = by_venue_id.get(order_id)
+                state = "PARTIAL" if order.filled > 0 else "OPEN"
+                if row is None:
+                    client_id = f"ext:{venue.value}:{order_id}"
+                    if s.scalar(select(OrderRow.id).where(OrderRow.client_order_id == client_id)) is not None:
+                        # Seen before as an external order that was later closed; a same-id order does not come back.
+                        continue
+                    local_id = stable_id("order", venue.value, client_id)
+                    s.add(
+                        OrderRow(
+                            id=local_id,
+                            venue=venue.value,
+                            market_id=order.market_id,
+                            outcome=(order.outcome or Outcome.YES).value,
+                            side=order.side.value,
+                            price=order.price,
+                            size=order.size,
+                            filled=order.filled,
+                            state=state,
+                            client_order_id=client_id,
+                            venue_order_id=order_id,
+                            raw_redacted={"source": "external"},
+                            created_at=order.created_at or utcnow(),
+                            submitted_at=order.created_at or utcnow(),
+                        )
+                    )
+                    touched.append(local_id)
+                    continue
+                if row.state == "PARTIAL" and order.filled <= _dec(row.filled) and row.state == state:
+                    continue
+                if _dec(row.filled) != order.filled or row.state != state:
+                    row.filled = max(order.filled, _dec(row.filled))
+                    row.state = state
+                    row.updated_at = utcnow()
+                    touched.append(row.id)
+            if complete and moved is not None:
+                for row in rows:
+                    if not row.venue_order_id or row.venue_order_id in live:
+                        continue
+                    if row.updated_at is not None and row.updated_at > cutoff:
+                        continue
+                    key = (row.market_id, row.outcome)
+                    row.state = "FILLED" if key in moved else "CANCELLED"
+                    if row.state == "FILLED":
+                        row.filled = row.size
+                    row.updated_at = utcnow()
+                    touched.append(row.id)
+        return touched
 
     # ----------------------------------------------------------------- rules
     def create_rule(self, rule: Rule) -> None:
