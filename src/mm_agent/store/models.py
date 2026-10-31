@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     TypeDecorator,
@@ -29,18 +30,32 @@ class Base(DeclarativeBase):
 
 
 class DecimalString(TypeDecorator[Decimal]):
-    """Exact decimal storage. Floats never touch money columns."""
+    """Exact decimal storage. Floats never touch money columns.
+
+    SQLite has no exact decimal type, so it keeps the text form. PostgreSQL gets an
+    unconstrained NUMERIC, which is exact and lets the database SUM and compare the
+    values (a text column cannot be summed there).
+    """
 
     impl = String(40)
     cache_ok = True
 
-    def process_bind_param(self, value: Decimal | None, dialect: Any) -> str | None:
+    def load_dialect_impl(self, dialect: Any) -> Any:
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(Numeric(asdecimal=True))
+        return dialect.type_descriptor(String(40))
+
+    def process_bind_param(self, value: Decimal | None, dialect: Any) -> Decimal | str | None:
         if value is None:
             return None
+        if dialect.name == "postgresql":
+            return value if isinstance(value, Decimal) else Decimal(str(value))
         return format(value, "f")
 
-    def process_result_value(self, value: str | None, dialect: Any) -> Decimal | None:
-        return Decimal(value) if value is not None else None
+    def process_result_value(self, value: Decimal | str | None, dialect: Any) -> Decimal | None:
+        if value is None:
+            return None
+        return value if isinstance(value, Decimal) else Decimal(str(value))
 
 
 class UTCDateTime(TypeDecorator[datetime]):

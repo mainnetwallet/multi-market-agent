@@ -10,6 +10,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
+from sqlalchemy.engine import make_url
 
 from .agent import AgentService
 from .books import BookCache, UnitGuard
@@ -92,7 +93,11 @@ def build_runtime(
             await shutdown()
 
     async def startup() -> None:
-        logger.info("startup", env=settings.app_env, database=settings.database_url.split("?")[0])
+        logger.info(
+            "startup",
+            env=settings.app_env,
+            database=make_url(settings.database_url).render_as_string(hide_password=True).split("?")[0],
+        )
         # An answer that was running when the server stopped did not finish; say so when it is reopened.
         interrupted = store.chat_interrupt_stale_runs()
         if interrupted:
