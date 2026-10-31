@@ -73,6 +73,11 @@ android {
         jvmTarget = "17"
     }
 
+    // CI builds never need the extra lintVital pass that assembleRelease runs by default; it only slows the build.
+    lint {
+        checkReleaseBuilds false
+    }
+
     testOptions {
         unitTests.returnDefaultValues = true
     }

@@ -37,8 +37,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install SDK packages
+      - name: Install SDK packages (only if the runner image lacks them)
         run: |
+          if [ -d "$ANDROID_HOME/platforms/android-35" ] && [ -d "$ANDROID_HOME/build-tools/35.0.0" ]; then
+            echo "SDK platform 35 and build-tools 35.0.0 already on the runner"
+            exit 0
+          fi
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -1)"
           if [ -z "$SDKMANAGER" ]; then
             echo "sdkmanager not found" >&2
@@ -75,8 +79,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install SDK packages
+      - name: Install SDK packages (only if the runner image lacks them)
         run: |
+          if [ -d "$ANDROID_HOME/platforms/android-35" ] && [ -d "$ANDROID_HOME/build-tools/35.0.0" ]; then
+            echo "SDK platform 35 and build-tools 35.0.0 already on the runner"
+            exit 0
+          fi
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -1)"
           if [ -z "$SDKMANAGER" ]; then
             echo "sdkmanager not found" >&2
@@ -85,9 +93,11 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 
+      # The debug job (not on the critical path) writes the Gradle cache; this one only reads it.
       - uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: "8.9"
+          cache-read-only: true
 
       - name: Build signed release APK
         env:
