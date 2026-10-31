@@ -110,12 +110,43 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: android-latest
     steps:
+      # The app and the server ship together: the new APK reads endpoints the new server adds, so the
+      # release waits until Render is serving this exact commit. If a newer commit is already live,
+      # this one was superseded and its own run (or the newer run) publishes instead.
+      - name: Wait for the server deploy of this commit
+        id: deploy
+        env:
+          BASE_URL: ${{ vars.ANDROID_BASE_URL || 'https://multi-market-agent.onrender.com' }}
+        run: |
+          for i in $(seq 1 60); do
+            LIVE="$(curl -fsS --max-time 20 "$BASE_URL/health" 2>/dev/null | jq -r '.commit // empty' 2>/dev/null || true)"
+            if [ "$LIVE" = "$GITHUB_SHA" ]; then
+              echo "Server is serving $GITHUB_SHA"
+              echo "ready=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ -n "$LIVE" ]; then
+              STATUS="$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$LIVE" --jq .status 2>/dev/null || true)"
+              if [ "$STATUS" = "ahead" ]; then
+                echo "::notice::Server already runs a newer commit ($LIVE); not publishing the APK of $GITHUB_SHA."
+                echo "ready=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+            echo "Attempt $i: server reports '${LIVE:-nothing}', waiting for $GITHUB_SHA"
+            sleep 20
+          done
+          echo "::error::Server did not report commit $GITHUB_SHA within 20 minutes; APK not published."
+          exit 1
+
       - uses: actions/download-artifact@v7
+        if: steps.deploy.outputs.ready == 'true'
         with:
           name: mm-agent-release-apk
           path: dist
 
       - name: Publish to GitHub Releases
+        if: steps.deploy.outputs.ready == 'true'
         run: |
           APK="$(ls dist/*.apk | head -1)"
           VERSION="$(basename "$APK" .apk | sed 's/^mm-agent-//')"

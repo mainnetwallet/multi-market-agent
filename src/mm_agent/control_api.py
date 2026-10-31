@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import os
 import time
 from collections import defaultdict, deque
 from datetime import datetime
@@ -272,7 +273,13 @@ def create_app(
 
     @app.get("/health", include_in_schema=False)
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "time": utcnow().isoformat(), "version": "0.1.0"}
+        # Render sets RENDER_GIT_COMMIT for the running deploy; CI waits for it before publishing the APK.
+        return {
+            "status": "ok",
+            "time": utcnow().isoformat(),
+            "version": "0.1.0",
+            "commit": os.environ.get("RENDER_GIT_COMMIT", ""),
+        }
 
     @app.head("/health", include_in_schema=False)
     async def health_head() -> Response:

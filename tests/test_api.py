@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 from itsdangerous import URLSafeTimedSerializer
 
@@ -13,6 +14,14 @@ from tests.conftest import Harness
 def make_client(harness: Harness) -> TestClient:
     app = create_app(harness.settings, harness.agent, harness.scanner, harness.registry, harness.chat, harness.bus)
     return TestClient(app)
+
+
+def test_health_reports_deployed_commit(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = make_client(harness)
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "abc1234")
+    assert client.get("/health").json()["commit"] == "abc1234"
+    monkeypatch.delenv("RENDER_GIT_COMMIT")
+    assert client.get("/health").json()["commit"] == ""
 
 
 def test_health_head_and_auth(harness: Harness) -> None:
