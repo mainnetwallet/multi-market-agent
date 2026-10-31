@@ -128,6 +128,8 @@ class _BridgeStub:
             },
         ]
         self.status_rows = status_rows or []
+        # Address types `POST /deposit` returns; None means all four. The OpenAPI schema lists only evm/svm/btc.
+        self.deposit_keys: set[str] | None = None
         self.quotes: list[dict] = []
         self.withdraws: list[dict] = []
 
@@ -150,18 +152,15 @@ class _BridgeStub:
             body = {"address": {"evm": BRIDGE_ADDRESS}, "note": "Send funds to these addresses."}
             return httpx.Response(201, json=body, request=httpx.Request("POST", str(url)))
         if str(url).endswith("/deposit"):
-            return httpx.Response(
-                201,
-                json={
-                    "address": {
-                        "evm": BRIDGE_ADDRESS,
-                        "svm": BRIDGE_SVM_ADDRESS,
-                        "tron": BRIDGE_TRON_ADDRESS,
-                        "btc": BRIDGE_BTC_ADDRESS,
-                    }
-                },
-                request=httpx.Request("POST", str(url)),
-            )
+            addresses = {
+                "evm": BRIDGE_ADDRESS,
+                "svm": BRIDGE_SVM_ADDRESS,
+                "tron": BRIDGE_TRON_ADDRESS,
+                "btc": BRIDGE_BTC_ADDRESS,
+            }
+            if self.deposit_keys is not None:
+                addresses = {kind: value for kind, value in addresses.items() if kind in self.deposit_keys}
+            return httpx.Response(201, json={"address": addresses}, request=httpx.Request("POST", str(url)))
         return httpx.Response(200, json={}, request=httpx.Request("POST", str(url)))
 
 

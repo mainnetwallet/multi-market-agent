@@ -509,7 +509,11 @@ chains first). `GET /v1/funds/{venue}/deposit?network=<chain id or name>&token=<
 returns the address for that pair. The bridge's asset list does not say which of the `POST /deposit` addresses
 (`evm`, `svm`, `btc`, `tron`) a chain uses, so that is derived: from the syntax of the chain's token contract
 addresses, then by elimination among the keys the bridge returned. If it cannot be placed with certainty the
-deposit is refused instead of guessed. History reads the status of every bridge address.
+deposit is refused instead of guessed. The native-asset marker `0xEeee…` and all-zero addresses are ignored
+when reading a chain's address type, a Bitcoin-format (`bc1…`) token means the `btc` key, and a chain with an
+unreadable or contradicting token is refused. Only the `evm` key serves many chains: Bitcoin and Lightning list
+the same token address, so both are refused until the list can tell them apart (deposit those on polymarket.com).
+The options list leaves out chains that would be refused. History reads the status of every bridge address.
 
 A withdrawal goes `PENDING_HOLD` → `SUBMITTED` → `CONFIRMED`, or `FAILED` /
 `CANCELLED` / `UNKNOWN`. It is submitted exactly once and never auto-retried;

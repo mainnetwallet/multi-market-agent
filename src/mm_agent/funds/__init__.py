@@ -11,6 +11,7 @@ transaction hash and asks the operator to look, nothing resends.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -236,20 +237,54 @@ class FundsService:
 
     _EVM_ADDRESS = re.compile(r"0x[0-9a-fA-F]{40}")
     _BASE58_ADDRESS = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
+    _BECH32_ADDRESS = re.compile(r"(?:bc1|tb1)[02-9ac-hj-np-z]{11,71}", re.IGNORECASE)
+    # The bridge lists a chain's native asset under `0xEeee...` and a pseudo-chain with no token contract
+    # (a perps account) under an all-zero address. Such a marker looks like an EVM address on every chain,
+    # so it says nothing about which kind of address the chain really uses.
+    _MARKER_ADDRESS = re.compile(r"0x(?:[eE]{40}|0+)")
 
     @classmethod
     def _address_families(cls, token_address: str) -> set[str]:
         """Which bridge address types a token contract address can belong to, from its syntax alone.
 
         The bridge's asset list says nothing about a chain's address type, so it is read from the token
-        address: `0x` plus 40 hex is an EVM address; Base58 of 32 to 44 characters is a Solana address, and a
-        34-character one starting with `T` can also be a Tron address. An unrecognised format gives no answer.
+        address: `0x` plus 40 hex is an EVM address; `bc1`/`tb1` plus bech32 characters is a Bitcoin address;
+        Base58 of 32 to 44 characters is a Solana address, and a 34-character one starting with `T` can also
+        be a Tron address. An unrecognised format gives no answer.
         """
         if cls._EVM_ADDRESS.fullmatch(token_address):
             return {"evm"}
+        if cls._BECH32_ADDRESS.fullmatch(token_address):
+            return {"btc"}
         if cls._BASE58_ADDRESS.fullmatch(token_address):
             return {"svm", "tron"} if len(token_address) == 34 and token_address.startswith("T") else {"svm"}
         return set()
+
+    @classmethod
+    def _chain_families(cls, chain: dict[str, Any]) -> tuple[str, set[str]]:
+        """What a chain's token addresses say about its bridge address type.
+
+        `("known", families)`: the readable tokens agree on at least one address type. `("blank", set())`: no
+        token has a recognisable format. `("refuse", set())`: the evidence is missing or contradicts itself, which
+        is a chain with only marker addresses, a readable token next to an unreadable one, or tokens that
+        disagree. An unreadable token is never skipped, because skipping it can put a chain on the wrong type.
+        """
+        families: set[str] | None = None
+        unreadable = 0
+        for token in chain["tokens"]:
+            address = str(token["address"])
+            if cls._MARKER_ADDRESS.fullmatch(address):
+                continue
+            found = cls._address_families(address)
+            if not found:
+                unreadable += 1
+                continue
+            families = found if families is None else families & found
+        if families is None:
+            return ("blank", set()) if unreadable else ("refuse", set())
+        if unreadable or not families:
+            return "refuse", set()
+        return "known", families
 
     @classmethod
     def _resolve_address_types(cls, chains: list[dict[str, Any]], keys: set[str]) -> dict[str, str]:
@@ -258,19 +293,30 @@ class FundsService:
         A chain is resolved only when that is certain: its tokens' address syntax leaves one key, or every key
         it could use but one is already taken by a chain whose syntax was certain. Anything else is left out, and
         the deposit is refused for it rather than guessed, because a wrong address loses money.
+
+        Only the `evm` key serves many chains. Any other key claimed by two chains (Bitcoin and Lightning list
+        the same token address, and the list cannot tell them apart) is refused for both.
         """
+        certain: dict[str, str] = {}
         candidates: dict[str, set[str]] = {}
         recognised: set[str] = set()
         for chain in chains:
-            families: set[str] | None = None
-            for token in chain["tokens"]:
-                found = cls._address_families(str(token["address"]))
-                if found:
-                    families = found if families is None else families & found
-            if families is not None:
-                recognised.add(str(chain["chain_id"]))
-            candidates[str(chain["chain_id"])] = (families if families is not None else set(keys)) & keys
-        resolved = {cid: next(iter(c)) for cid, c in candidates.items() if cid in recognised and len(c) == 1}
+            cid = str(chain["chain_id"])
+            state, families = cls._chain_families(chain)
+            if state == "refuse":
+                continue
+            if state == "blank":
+                candidates[cid] = set(keys)
+                continue
+            recognised.add(cid)
+            if len(families) == 1:
+                # The syntax alone leaves one type. If the bridge did not return that key, there is no address.
+                only = next(iter(families))
+                if only in keys:
+                    certain[cid] = only
+                continue
+            candidates[cid] = families & keys
+        resolved = dict(certain)
         progress = True
         while progress:
             progress = False
@@ -292,7 +338,8 @@ class FundsService:
                         break
                 if progress:
                     break
-        return resolved
+        claims = Counter(key for key in resolved.values() if key != "evm")
+        return {cid: key for cid, key in resolved.items() if key == "evm" or claims[key] == 1}
 
     async def deposit_options(self, venue: VenueId) -> dict[str, Any]:
         """Every chain and token the venue accepts, as the venue's own list says. Polymarket only."""
@@ -308,7 +355,12 @@ class FundsService:
                 "official_url": "https://docs.polymarket.com/trading/bridge/supported-assets",
                 "reason": f"Could not read the bridge's supported assets: {type(exc).__name__}",
             }
+        # Offer only chains whose deposit address can be placed with certainty (see _resolve_address_types), so
+        # the app does not list a chain that would then be refused. Placement here assumes every address type
+        # exists; the deposit route still checks against the keys the bridge actually returns.
         chains = self._group_assets(assets)
+        placeable = self._resolve_address_types(chains, {"evm", "svm", "btc", "tron"})
+        chains = [chain for chain in chains if str(chain["chain_id"]) in placeable]
         default = None
         if chains:
             default = {"chain_id": chains[0]["chain_id"], "token": chains[0]["tokens"][0]["address"]}

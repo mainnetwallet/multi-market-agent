@@ -373,6 +373,95 @@ def test_deposit_refuses_a_chain_it_cannot_place_for_certain(harness: Harness, b
     assert client.get("/v1/funds/polymarket/deposit", params={"network": "c6"}).json()["supported"] is False
 
 
+NATIVE_MARKER = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+BTC_MARKER = "bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmql8k8"
+
+
+def _live_shaped_assets() -> list[dict]:
+    """The shapes the live /supported-assets list has: native markers on every chain, a Bitcoin-format
+    token on both Bitcoin and Lightning, and pseudo-chains with only a zero address."""
+
+    def asset(chain_id: str, chain: str, symbol: str, address: str, minimum: float = 2) -> dict:
+        return {
+            "chainId": chain_id,
+            "chainName": chain,
+            "token": {"name": symbol, "symbol": symbol, "address": address, "decimals": 6},
+            "minCheckoutUsd": minimum,
+        }
+
+    return [
+        asset("c1", "Chain One", "ETH", NATIVE_MARKER),
+        asset("c1", "Chain One", "USDC", EVM_USDC_BASE),
+        asset("c2", "Chain Two", "SOL", NATIVE_MARKER),
+        asset("c2", "Chain Two", "SOL", "1" * 32),
+        asset("c2", "Chain Two", "USDC", SOL_USDC),
+        asset("c3", "Chain Three", "TRX", NATIVE_MARKER),
+        asset("c3", "Chain Three", "USDT", TRON_USDT),
+        asset("c4", "Chain Four", "BTC", NATIVE_MARKER, 3.6),
+        asset("c4", "Chain Four", "BTC", BTC_MARKER, 3.6),
+        asset("c5", "Chain Five", "BTC", NATIVE_MARKER),
+        asset("c5", "Chain Five", "BTC", BTC_MARKER),
+        asset("c6", "Chain Six", "USDC", "0x" + "0" * 32),
+        asset("c7", "Chain Seven", "USDG", "0x" + "0" * 40),
+    ]
+
+
+def test_deposit_native_markers_do_not_hide_the_real_address_type(harness: Harness, bridge: object) -> None:
+    from tests.conftest import BRIDGE_ADDRESS, BRIDGE_SVM_ADDRESS, BRIDGE_TRON_ADDRESS
+
+    client = _deposit_client(harness, bridge)
+    bridge.assets = _live_shaped_assets()  # type: ignore[attr-defined]
+
+    def pick(network: str) -> dict:
+        return client.get("/v1/funds/polymarket/deposit", params={"network": network}).json()
+
+    assert pick("c1")["address"] == BRIDGE_ADDRESS
+    sol = pick("c2")
+    assert (sol["address_type"], sol["address"]) == ("svm", BRIDGE_SVM_ADDRESS)
+    tron = pick("c3")
+    assert (tron["address_type"], tron["address"]) == ("tron", BRIDGE_TRON_ADDRESS)
+
+
+def test_deposit_never_shows_an_evm_address_for_a_bitcoin_format_chain(harness: Harness, bridge: object) -> None:
+    from tests.conftest import BRIDGE_ADDRESS
+
+    client = _deposit_client(harness, bridge)
+    bridge.assets = _live_shaped_assets()  # type: ignore[attr-defined]
+    # c4 and c5 list the same Bitcoin-format token, so the list cannot say which one the btc key serves:
+    # both are refused, and neither is ever given the evm address.
+    for network in ("c4", "c5"):
+        body = client.get("/v1/funds/polymarket/deposit", params={"network": network}).json()
+        assert body["supported"] is False and body["address"] != BRIDGE_ADDRESS
+
+
+def test_deposit_refuses_a_chain_that_has_only_marker_addresses(harness: Harness, bridge: object) -> None:
+    client = _deposit_client(harness, bridge)
+    bridge.assets = _live_shaped_assets()  # type: ignore[attr-defined]
+    for network in ("c6", "c7"):
+        body = client.get("/v1/funds/polymarket/deposit", params={"network": network}).json()
+        assert body["supported"] is False and "with certainty" in body["reason"]
+
+
+def test_deposit_does_not_give_tron_the_solana_address_when_the_bridge_has_no_tron_key(
+    harness: Harness, bridge: object
+) -> None:
+    from tests.conftest import BRIDGE_SVM_ADDRESS
+
+    client = _deposit_client(harness, bridge)
+    bridge.assets = _live_shaped_assets()  # type: ignore[attr-defined]
+    bridge.deposit_keys = {"evm", "svm", "btc"}  # type: ignore[attr-defined]
+    body = client.get("/v1/funds/polymarket/deposit", params={"network": "c3"}).json()
+    assert body["supported"] is False and body["address"] != BRIDGE_SVM_ADDRESS
+    assert client.get("/v1/funds/polymarket/deposit", params={"network": "c2"}).json()["address"] == BRIDGE_SVM_ADDRESS
+
+
+def test_deposit_options_leave_out_chains_that_would_be_refused(harness: Harness, bridge: object) -> None:
+    client = _deposit_client(harness, bridge)
+    bridge.assets = _live_shaped_assets()  # type: ignore[attr-defined]
+    body = client.get("/v1/funds/polymarket/deposit/options").json()
+    assert sorted(c["chain_id"] for c in body["chains"]) == ["c1", "c2", "c3"]
+
+
 def test_deposit_rejects_a_token_that_is_not_on_that_chain(harness: Harness, bridge: object) -> None:
     client = _deposit_client(harness, bridge)
     bad = client.get("/v1/funds/polymarket/deposit", params={"network": "c4", "asset": "TUSD"}).json()
