@@ -344,6 +344,10 @@ person or a tool is fenced as DATA and can never change the rules.
   plan, interrupted-run state, summary and retrieved messages take what is left, then recent history. Long
   chats fold older messages into a summary by count, size or tokens; a failed summary falls back to a plain
   extract. Nothing is deleted.
+  The count is an estimate, not the model's tokenizer, and dense JSON can cost more than it assumes. If the
+  provider still refuses a request as too long (HTTP 400/413), it is rebuilt with less history and shorter
+  tool results and asked again, at most twice per model call and for the rest of that answer. The refused
+  request produced nothing, so no tool or trade runs twice.
 - **Standing instructions.** Lasting operator rules ("always", "never", "from now on"...) are pinned in the
   chat's state when their message is folded, so summarizing cannot lose them.
 - **Retrieval.** Folded messages of this chat that share words with the new message (4+ letters) are fetched
@@ -526,6 +530,8 @@ visible rather than making it for you.
 - **Android push notifications** are not implemented; background alerts rely on
   Telegram/email/uptime monitoring. The app talks to the Control API directly and
   works with the Render HTTPS deployment.
+- **Token counts are estimates**, not tokenizer-exact; the overflow retry above is the safety net, and it
+  needs a provider whose too-long error says so (HTTP 413, or 400 naming the context/token limit).
 - **Cross-venue market matching** is not built. No automatic arbitrage.
 - **The Polymarket order heartbeat is deliberately off.** Its first accepted send
   enables timeout cancellation for every open order and there is no disarm, so a

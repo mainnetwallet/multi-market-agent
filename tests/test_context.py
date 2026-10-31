@@ -22,7 +22,14 @@ from mm_agent.chat import (
     merge_pins,
     neutralize,
 )
-from mm_agent.llm import LLMReply, estimate_tokens, messages_tokens
+from mm_agent.llm import (
+    LLMContextOverflow,
+    LLMReply,
+    LLMUnavailable,
+    estimate_tokens,
+    http_error,
+    messages_tokens,
+)
 from mm_agent.store import ConversationNotFound
 from tests.conftest import Harness
 
@@ -37,7 +44,7 @@ class _Model:
     name = "test-model"
 
     def __init__(
-        self, *, summary: str | None = "SUMMARY-OF-OLD-MESSAGES", script: list[LLMReply] | None = None
+        self, *, summary: str | None = "SUMMARY-OF-OLD-MESSAGES", script: list[LLMReply | Exception] | None = None
     ) -> None:
         self.calls: list[list[dict[str, Any]]] = []
         self.tool_sets: list[list[dict[str, Any]]] = []
@@ -56,7 +63,10 @@ class _Model:
         self.calls.append(copy.deepcopy(messages))  # the loop keeps mutating the list it passes
         self.tool_sets.append(copy.deepcopy(tools))
         if self.script:
-            return self.script.pop(0)
+            item = self.script.pop(0)
+            if isinstance(item, BaseException):
+                raise item
+            return item
         return LLMReply(content="re: " + str(messages[-1]["content"])[:60])
 
 
@@ -968,3 +978,82 @@ def test_old_checkpoint_calls_are_trimmed_reads_first_and_unsettled_calls_kept()
         scope.add_call({"id": f"t{i}", "name": "place_trade", "key": f"t{i}", "side_effect": True, "state": "done"})
     ids = [c["id"] for c in scope.checkpoint()["calls"]]
     assert len(ids) == 40 and "stuck" in ids and all(f"t{i}" in ids for i in range(10))
+
+
+# ------------------------------------------------ provider says the request is too long
+TOO_LONG = "LLM HTTP 400: This model's maximum context length is 65536 tokens"
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "overflow"),
+    [
+        (400, "This model's maximum context length is 65536 tokens, you sent 70000", True),
+        (400, '{"error":{"code":"context_length_exceeded"}}', True),
+        (400, "prompt is too long: 210000 tokens > 200000 maximum", True),
+        (413, "Request Entity Too Large", True),
+        (400, "invalid tool schema", False),  # a bad request that is not about length
+        (500, "maximum context length", False),  # a server fault is not a refusal to read it
+        (401, "token limit reached for this key", False),
+    ],
+)
+def test_only_a_real_length_refusal_is_called_an_overflow(status: int, body: str, overflow: bool) -> None:
+    error = http_error(status, body)
+    assert isinstance(error, LLMUnavailable)
+    assert isinstance(error, LLMContextOverflow) is overflow
+
+
+async def test_a_provider_length_refusal_is_retried_with_a_smaller_request(harness: Harness) -> None:
+    _window(harness, 6000, 500)
+    model = _Model(script=[LLMContextOverflow(TOO_LONG), LLMReply(content="answered")])
+    cid = _install(harness, model)
+    _fill(harness, cid, 60, size=400)
+
+    result = await harness.chat.handle("and now?", actor=OWNER, conversation_id=cid)
+
+    assert result["reply"] == "answered"
+    assert len(model.calls) == 2
+    first, second = model.calls
+    assert messages_tokens(second) < messages_tokens(first)  # it really got smaller
+    assert second[0]["content"].startswith(SYSTEM_INSTRUCTIONS) and second[-1]["content"] == "and now?"
+    assert len(second) < len(first)  # the oldest history went first
+    assert harness.agent.store.chat_get(OWNER, cid)["state"]["context"]["overflow_retries"] == 1
+    stored = [m["text"] for m in harness.agent.store.chat_messages(OWNER, cid, limit=500)]
+    assert stored.count("and now?") == 1 and stored[-1] == "answered"  # asked twice, stored once
+
+
+async def test_a_refusal_that_is_not_about_length_is_not_retried(harness: Harness) -> None:
+    model = _Model(script=[LLMUnavailable("LLM HTTP 400: invalid tool schema")])
+    cid = _install(harness, model)
+
+    result = await harness.chat.handle("hello", actor=OWNER, conversation_id=cid)
+
+    assert len(model.calls) == 1
+    assert "Assistant unavailable" in result["reply"] and result["data"]["error"] is True
+
+
+async def test_length_retries_are_bounded(harness: Harness) -> None:
+    model = _Model(script=[LLMContextOverflow(TOO_LONG) for _ in range(6)])
+    cid = _install(harness, model)
+
+    result = await harness.chat.handle("hello", actor=OWNER, conversation_id=cid)
+
+    assert len(model.calls) == 3  # the first try and two smaller ones, then it gives up
+    assert "Assistant unavailable" in result["reply"]
+    assert harness.agent.store.chat_get(OWNER, cid)["status"] == "error"
+
+
+async def test_a_length_retry_after_a_tool_round_never_repeats_the_trade(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _count_buys(harness, monkeypatch)
+    model = _Model(script=[_call("place_trade", TRADE, "t1"), LLMContextOverflow(TOO_LONG), LLMReply(content="bought")])
+    cid = _install(harness, model)
+
+    result = await harness.chat.handle("buy 1 yes on fed-cut", actor=OWNER, conversation_id=cid)
+
+    assert result["reply"] == "bought"
+    assert len(seen) == 1  # the money moved once, although the model was asked twice after it
+    assert len(model.calls) == 3
+    retried = model.calls[2]
+    assert "FILLED" in _tool_results(retried)["t1"]  # the retry still carries the trade's result
+    assert [c["state"] for c in _checkpoint(harness, cid)["calls"]] == ["done"]
