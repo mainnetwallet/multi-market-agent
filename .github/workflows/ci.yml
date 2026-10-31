@@ -10,8 +10,14 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same PR makes the older run pointless; main runs are never cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  quality:
+  # lint, test, audit and docker-smoke run at the same time on separate runners.
+  lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -20,6 +26,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
         run: |
           python -m pip install --upgrade pip "setuptools>=84" wheel
@@ -30,18 +37,33 @@ jobs:
         run: ruff format --check src tests scripts
       - name: Mypy
         run: mypy src
+
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip "setuptools>=84" wheel
+          pip install -e ".[dev]"
       - name: Pytest
         run: |
           set +e
           pytest -q --tb=short -rfE 2>&1 | tee /tmp/pytest.log
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
-            python - <<'EOF'
+            python - <<'PYEOF'
           t = open('/tmp/pytest.log', encoding='utf-8', errors='replace').read()
           lines = [l for l in t.splitlines() if l.startswith(('FAILED', 'ERROR', 'E  ')) or 'Error' in l]
           msg = '\n'.join(lines[:30]) or t[-2000:]
           print('::error title=pytest-failure::' + msg.replace('%', '%25').replace('\r', '').replace('\n', '%0A'))
-          EOF
+          PYEOF
           fi
           exit $code
       - name: Alembic upgrade on a fresh database
@@ -51,6 +73,21 @@ jobs:
           mkdir -p data
           alembic upgrade head
           alembic check
+
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip "setuptools>=84" wheel
+          pip install -e ".[dev]"
       - name: Dependency audit
         run: pip-audit
 
