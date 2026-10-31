@@ -1,5 +1,6 @@
 package com.mainnetwallet.mmagent
 
+import com.mainnetwallet.mmagent.data.AllowlistEntry
 import com.mainnetwallet.mmagent.data.WithdrawStep
 import com.mainnetwallet.mmagent.data.WithdrawViewModel
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,36 @@ class WithdrawViewModelTest {
     fun removingArecipientIsOfferedWithoutAStepUp() {
         // Removal reduces risk, so the server takes no step-up token for it.
         vm.reset()
+        assertEquals(WithdrawStep.AMOUNT, vm.state.value.step)
+    }
+
+    @Test
+    fun theAmountKeepsOnlyDigitsAndOneDecimalPoint() {
+        vm.setAmount("1,2a3.4.5")
+        assertEquals("123.45", vm.state.value.amount)
+    }
+
+    @Test
+    fun maxIsTheAvailableBalanceRoundedDownToCents() {
+        vm.setMax("12.3499")
+        assertEquals("12.34", vm.state.value.amount)
+        vm.setMax("0")
+        assertEquals("12.34", vm.state.value.amount)
+    }
+
+    @Test
+    fun anAddressInItsCoolingPeriodCannotBeUsedYet() {
+        val later = java.time.Instant.now().plusSeconds(3_600).toString()
+        val earlier = java.time.Instant.now().minusSeconds(3_600).toString()
+        fun entry(usableAt: String?) = AllowlistEntry("1", "cold", "0xabc", "Base", "USDC", usableAt)
+        assertTrue(!entry(later).isUsable())
+        assertTrue(entry(earlier).isUsable())
+        assertTrue(entry(null).isUsable())
+    }
+
+    @Test
+    fun goingBackFromTheReviewReturnsToTheAmount() {
+        vm.back()
         assertEquals(WithdrawStep.AMOUNT, vm.state.value.step)
     }
 }

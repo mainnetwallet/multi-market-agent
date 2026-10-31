@@ -7,6 +7,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.io.IOException
+import java.math.RoundingMode
+import java.time.Instant
 import java.util.UUID
 
 /** Where the withdrawal flow currently is. */
@@ -19,7 +22,13 @@ data class AllowlistEntry(
     val network: String,
     val asset: String,
     val usableAt: String?,
-)
+) {
+    /** False while the address is still in its cooling period. An unreadable time counts as usable: the server decides. */
+    fun isUsable(now: Instant = Instant.now()): Boolean {
+        val at = Format.parseInstant(usableAt) ?: return true
+        return !at.isAfter(now)
+    }
+}
 
 data class WithdrawPreview(
     val feeUsd: String = "0",
@@ -63,8 +72,19 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
         _state.value = _state.value.copy(venue = venue)
     }
 
+    /** Keeps only digits and a single decimal point, so a typo cannot reach the server as an amount. */
     fun setAmount(amount: String) {
-        _state.value = _state.value.copy(amount = amount)
+        val cleaned = amount.filter { it.isDigit() || it == '.' }
+        val dot = cleaned.indexOf('.')
+        val single = if (dot < 0) cleaned else cleaned.substring(0, dot + 1) + cleaned.substring(dot + 1).replace(".", "")
+        _state.value = _state.value.copy(amount = single.take(18))
+    }
+
+    /** The whole available balance, rounded down to cents. */
+    fun setMax(available: String) {
+        val value = available.toBigDecimalOrNull() ?: return
+        if (value.signum() <= 0) return
+        _state.value = _state.value.copy(amount = value.setScale(2, RoundingMode.DOWN).toPlainString())
     }
 
     fun setAddress(entry: AllowlistEntry) {
@@ -85,7 +105,11 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
                         usableAt = obj.optString("usable_at").takeIf { it.isNotBlank() && it != "null" },
                     )
                 }
-                _state.value = _state.value.copy(entries = entries)
+                val current = _state.value
+                // Keep the pick if it is still usable; otherwise the only usable address is picked for the operator.
+                val chosen = entries.firstOrNull { it.id == current.addressId && it.isUsable() }
+                    ?: entries.singleOrNull { it.isUsable() }
+                _state.value = current.copy(entries = entries, addressId = chosen?.id.orEmpty())
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message)
             }
@@ -153,14 +177,27 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
     fun preview(onReady: () -> Unit = {}) {
         val current = _state.value
         if (current.submitting || current.addressId.isBlank()) return
-        _state.value = current.copy(submitting = true, error = null)
+        val amount = current.amount.trim()
+        val parsed = amount.toBigDecimalOrNull()
+        if (parsed == null || parsed.signum() <= 0) {
+            _state.value = current.copy(error = "Enter an amount greater than zero.")
+            return
+        }
+        // A preview starts a new intent, so it gets a new idempotency key: a changed amount or recipient
+        // must never be answered with the stored result of an earlier attempt.
+        _state.value = current.copy(
+            submitting = true,
+            error = null,
+            amount = amount,
+            idempotencyKey = UUID.randomUUID().toString(),
+        )
         viewModelScope.launch {
             try {
                 val response = api.post(
                     "/v1/funds/withdraw/preview",
                     ApiClient.jsonOf(
                         "venue" to current.venue,
-                        "amount" to current.amount,
+                        "amount" to amount,
                         "address_id" to current.addressId,
                     )
                 )
@@ -213,7 +250,26 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
-    /** Hold-to-confirm sends the withdrawal. The step-up token is single-use. */
+    /** Back one step. A step-up token is dropped on the way: it is bound to one confirmation. */
+    fun back() {
+        val current = _state.value
+        if (current.submitting) return
+        _state.value = when (current.step) {
+            WithdrawStep.PREVIEW -> current.copy(step = WithdrawStep.AMOUNT, error = null)
+            WithdrawStep.STEP_UP, WithdrawStep.CONFIRMING ->
+                current.copy(step = WithdrawStep.PREVIEW, stepUpToken = null, error = null)
+            else -> current
+        }
+    }
+
+    /**
+     * Hold-to-confirm creates the withdrawal. The step-up token is single-use and goes out in the
+     * `X-Stepup-Token` header; without it the server refuses every withdrawal.
+     *
+     * A definite answer from the server (a 4xx) may have spent the token, so the flow returns to the review
+     * step and asks for the password again. A timeout or a 5xx is uncertain: the token and the idempotency
+     * key are kept, and pressing again replays the same request, so it can never create a second withdrawal.
+     */
     fun confirm(onDone: (Boolean) -> Unit = {}) {
         val current = _state.value
         val token = current.stepUpToken
@@ -228,20 +284,62 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
                         "amount" to current.amount,
                         "address_id" to current.addressId,
                     ),
-                    current.idempotencyKey,
+                    idempotencyKey = current.idempotencyKey,
+                    stepupToken = token,
                 )
                 _state.value = _state.value.copy(
                     submitting = false,
                     step = WithdrawStep.DONE,
+                    stepUpToken = null,
                     withdrawalId = response.optString("id"),
                     status = response.optString("status", "PENDING_HOLD"),
                 )
                 onDone(true)
             } catch (e: ApiClient.ApiException) {
-                _state.value = _state.value.copy(submitting = false, error = e.message)
+                if (e.status >= 500) {
+                    _state.value = _state.value.copy(
+                        submitting = false,
+                        step = WithdrawStep.STEP_UP,
+                        error = (e.message ?: "Server error.") + " Check Withdrawals before pressing again; " +
+                            "pressing again cannot create a second one.",
+                    )
+                } else {
+                    _state.value = _state.value.copy(
+                        submitting = false,
+                        step = WithdrawStep.PREVIEW,
+                        stepUpToken = null,
+                        error = e.message,
+                    )
+                }
+                onDone(false)
+            } catch (e: IOException) {
+                _state.value = _state.value.copy(
+                    submitting = false,
+                    step = WithdrawStep.STEP_UP,
+                    error = "Could not reach the server, so it is not known whether the withdrawal was created. " +
+                        "Check Withdrawals, or press again: the same request cannot create a second one.",
+                )
                 onDone(false)
             } catch (e: Exception) {
-                _state.value = _state.value.copy(submitting = false, error = e.message)
+                _state.value = _state.value.copy(submitting = false, step = WithdrawStep.STEP_UP, error = e.message)
+                onDone(false)
+            }
+        }
+    }
+
+    /** Cancel the withdrawal just created, while it is still in its hold window. */
+    fun cancelCreated(onDone: (Boolean) -> Unit = {}) {
+        val current = _state.value
+        val id = current.withdrawalId
+        if (current.submitting || id.isNullOrBlank()) return
+        _state.value = current.copy(submitting = true, error = null)
+        viewModelScope.launch {
+            try {
+                api.post("/v1/funds/withdrawals/$id/cancel", JSONObject())
+                _state.value = _state.value.copy(submitting = false, status = "CANCELLED")
+                onDone(true)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(submitting = false, error = e.message ?: "Cancel failed.")
                 onDone(false)
             }
         }

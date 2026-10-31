@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,11 +18,13 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,6 +40,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.mainnetwallet.mmagent.data.AllowlistEntry
 import com.mainnetwallet.mmagent.data.Format
@@ -470,192 +476,382 @@ private fun WalletCard(
     }
 }
 
-/** The withdraw review sheet: everything the operator must see before sending. */
+/**
+ * The withdraw flow, three steps: amount and recipient, review with the password, then hold to confirm.
+ *
+ * Nothing leaves the account when it is confirmed: the server creates the withdrawal in a hold window
+ * that can still be cancelled, and sends it only when the window ends.
+ */
 @Composable
 fun WithdrawReviewScreen(
     venue: String,
     amount: String,
+    available: String,
+    selectedId: String,
     entries: List<AllowlistEntry>,
     preview: WithdrawPreview,
     step: WithdrawStep,
     error: String?,
     online: Boolean,
     submitting: Boolean,
+    status: String?,
+    withdrawalId: String?,
     onAmountChange: (String) -> Unit,
+    onMax: () -> Unit,
     onSelectAddress: (AllowlistEntry) -> Unit,
     onPreview: () -> Unit,
     onStepUp: (String) -> Unit,
     onConfirm: () -> Unit,
-    onCancel: () -> Unit,
+    onBack: () -> Unit,
+    onCancelWithdrawal: () -> Unit,
+    onClose: () -> Unit,
 ) {
     var password by remember { mutableStateOf("") }
-    val isLive = venue.isNotBlank()
+    // The password lives only in this field. It is cleared once the step-up has been asked for.
+    LaunchedEffect(step) {
+        if (step != WithdrawStep.PREVIEW) password = ""
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         SectionHeader("Withdraw", venue.uppercase())
+        if (step != WithdrawStep.DONE) {
+            WithdrawProgress(
+                when (step) {
+                    WithdrawStep.AMOUNT -> 0
+                    WithdrawStep.PREVIEW -> 1
+                    else -> 2
+                },
+            )
+            Spacer(Modifier.height(10.dp))
+        }
         ErrorNote(error)
         if (!online) {
-            ErrorNote("The server is unreachable. Withdrawing is disabled until it answers again.")
+            Spacer(Modifier.height(6.dp))
+            ErrorNote("The server is unreachable. Withdrawing is off until it answers again.")
         }
 
-        when (step) {
-            WithdrawStep.AMOUNT -> {
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = amount,
-                    onValueChange = onAmountChange,
-                    label = { Text("Amount") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .imePadding()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Spacer(Modifier.height(8.dp))
+            when (step) {
+                WithdrawStep.AMOUNT -> WithdrawAmountStep(
+                    amount = amount,
+                    available = available,
+                    selectedId = selectedId,
+                    entries = entries,
+                    online = online,
+                    submitting = submitting,
+                    onAmountChange = onAmountChange,
+                    onMax = onMax,
+                    onSelectAddress = onSelectAddress,
+                    onPreview = onPreview,
+                    onClose = onClose,
                 )
-                Spacer(Modifier.height(12.dp))
-                SectionHeader("Recipient", "Must already be on the allowlist")
-                if (entries.isEmpty()) {
-                    Text(
-                        "No allowlisted address yet. Add one in Settings first; a new address waits out a cooling period.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+                WithdrawStep.PREVIEW -> {
+                    WithdrawSummary(venue, amount, preview, full = true)
+                    Spacer(Modifier.height(14.dp))
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("Your password") },
+                        supportingText = { Text("Asked again for every withdrawal. Never stored.") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                } else {
-                    entries.forEach { entry ->
-                        val selected = entry.id == entries.firstOrNull { it.id == entry.id }?.id
-                        RowCard(
-                            title = entry.label,
-                            subtitle = "${entry.network} · ${entry.asset}",
-                            detail = Format.groupAddress(entry.address),
-                            accent = if (selected) MaterialTheme.colorScheme.primary else null,
-                            onClick = { onSelectAddress(entry) },
-                        )
-                        Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
+                    ConfirmButton(
+                        label = "Continue",
+                        enabled = password.isNotBlank() && online,
+                        busy = submitting,
+                        onClick = { onStepUp(password) },
+                    )
+                    TextButton(onClick = onBack, enabled = !submitting, modifier = Modifier.fillMaxWidth()) {
+                        Text("Back")
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                ConfirmButton(
-                    label = "Preview withdrawal",
-                    enabled = amount.isNotBlank() && entries.isNotEmpty() && online,
-                    busy = submitting,
-                    onClick = onPreview,
-                )
-            }
 
-            WithdrawStep.PREVIEW -> {
-                Spacer(Modifier.height(8.dp))
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        ValueRow("Venue", venue.uppercase())
-                        ValueRow("Amount", Format.money(amount), emphasise = true)
-                        ValueRow("Network", preview.network)
-                        ValueRow("Token", preview.asset)
-                        ValueRow("Fee", Format.money(preview.feeUsd))
-                        ValueRow("ETA", "${preview.etaSeconds} s")
-                        ValueRow("Hold window", "${preview.holdMinutes} min")
-                        ValueRow("Daily limit left", Format.money(preview.dailyRemainingUsd))
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            "Recipient (${preview.label})",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            Format.groupAddress(preview.recipient),
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("Password (never stored)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(12.dp))
-                ConfirmButton(
-                    label = "Step up",
-                    enabled = password.isNotBlank(),
-                    busy = submitting,
-                    onClick = { onStepUp(password) },
-                )
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = onCancel) { Text("Back") }
-            }
-
-            WithdrawStep.STEP_UP, WithdrawStep.CONFIRMING -> {
-                Spacer(Modifier.height(8.dp))
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        ValueRow("Amount", Format.money(amount), emphasise = true)
-                        ValueRow("Network", preview.network)
-                        ValueRow("Token", preview.asset)
-                        ValueRow("Fee", Format.money(preview.feeUsd))
-                        ValueRow("Recipient", Format.groupAddress(preview.recipient))
-                        ValueRow("Hold window", "${preview.holdMinutes} min")
-                    }
-                }
-                Spacer(Modifier.height(16.dp))
-                if (isLive) {
+                WithdrawStep.STEP_UP, WithdrawStep.CONFIRMING -> {
+                    WithdrawSummary(venue, amount, preview, full = false)
+                    Spacer(Modifier.height(16.dp))
                     HoldToConfirmButton(
-                        label = "Hold to send",
+                        label = "Hold to withdraw",
                         enabled = !submitting && online,
                         busy = submitting,
                         danger = true,
                         onConfirmed = onConfirm,
                     )
-                } else {
-                    ConfirmButton(
-                        label = "Send",
-                        enabled = !submitting && online,
-                        busy = submitting,
-                        danger = true,
-                        onClick = onConfirm,
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "This creates the withdrawal. It waits ${preview.holdMinutes} min before it is sent, " +
+                            "and you can cancel it until then.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Nothing is sent yet: the withdrawal waits out its hold window first.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            WithdrawStep.DONE -> {
-                Spacer(Modifier.height(20.dp))
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Withdrawal created", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
-                        ValueRow("Status", "PENDING_HOLD")
-                        ValueRow("Amount", Format.money(amount))
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Nothing is sent yet: the withdrawal waits out its hold window first. " +
-                                "It can be cancelled until then.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    TextButton(onClick = onBack, enabled = !submitting, modifier = Modifier.fillMaxWidth()) {
+                        Text("Back")
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                ConfirmButton("Done", enabled = true, onClick = onCancel)
+
+                WithdrawStep.DONE -> WithdrawDone(
+                    amount = amount,
+                    preview = preview,
+                    status = status,
+                    withdrawalId = withdrawalId,
+                    submitting = submitting,
+                    onCancelWithdrawal = onCancelWithdrawal,
+                    onClose = onClose,
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+/** Three labelled stages; the ones reached so far are tinted. */
+@Composable
+private fun WithdrawProgress(current: Int) {
+    val labels = listOf("1  Amount", "2  Review", "3  Confirm")
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+        labels.forEachIndexed { index, label ->
+            val reached = index <= current
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                textAlign = TextAlign.Center,
+                color = if (reached) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (reached) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        },
+                    )
+                    .padding(vertical = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun WithdrawAmountStep(
+    amount: String,
+    available: String,
+    selectedId: String,
+    entries: List<AllowlistEntry>,
+    online: Boolean,
+    submitting: Boolean,
+    onAmountChange: (String) -> Unit,
+    onMax: () -> Unit,
+    onSelectAddress: (AllowlistEntry) -> Unit,
+    onPreview: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val parsed = amount.toBigDecimalOrNull()
+    val balance = available.toBigDecimalOrNull()
+    val tooMuch = parsed != null && balance != null && parsed > balance
+    val selected = entries.firstOrNull { it.id == selectedId }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Available", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (balance != null) Format.money(available) else "—",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = amount,
+                onValueChange = onAmountChange,
+                label = { Text("Amount (USD)") },
+                singleLine = true,
+                isError = tooMuch,
+                supportingText = { if (tooMuch) Text("More than the available balance.") },
+                trailingIcon = {
+                    TextButton(onClick = onMax, enabled = balance != null && balance.signum() > 0) { Text("Max") }
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+
+    Spacer(Modifier.height(12.dp))
+    SectionHeader("Send to", "Allowlisted addresses only")
+    if (entries.isEmpty()) {
+        UnsupportedCard(
+            title = "No recipient yet",
+            reason = "Add an address under Wallet first. A new address waits out a cooling period before it can be used.",
+        )
+    } else {
+        entries.forEach { entry ->
+            val usable = entry.isUsable()
+            val isSelected = entry.id == selectedId
+            RowCard(
+                title = entry.label,
+                subtitle = "${entry.network} · ${entry.asset}",
+                detail = Format.groupAddress(entry.address),
+                accent = if (isSelected) MaterialTheme.colorScheme.primary else null,
+                onClick = if (usable) ({ onSelectAddress(entry) }) else null,
+                trailing = {
+                    when {
+                        isSelected -> Text(
+                            "Selected",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+
+                        !usable -> Text(
+                            "Ready in ${Format.countdown(entry.usableAt)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Palette.Alert,
+                        )
+
+                        else -> Unit
+                    }
+                },
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+    }
+
+    Spacer(Modifier.height(12.dp))
+    ConfirmButton(
+        label = "Review withdrawal",
+        enabled = parsed != null && parsed.signum() > 0 && !tooMuch && selected != null && selected.isUsable() && online,
+        busy = submitting,
+        onClick = onPreview,
+    )
+    TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+}
+
+/** The amount, the recipient and what the server said about fee and timing. [full] adds the limits. */
+@Composable
+private fun WithdrawSummary(venue: String, amount: String, preview: WithdrawPreview, full: Boolean) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                Format.money(amount),
+                style = MaterialTheme.typography.headlineMedium,
+            )
+            Text(
+                "from ${venue.uppercase()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "To ${preview.label}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                Format.groupAddress(preview.recipient),
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+            )
+            Spacer(Modifier.height(10.dp))
+            ValueRow("Network", preview.network)
+            ValueRow("Token", preview.asset)
+            ValueRow("Fee", Format.money(preview.feeUsd))
+            if (preview.etaSeconds > 0) {
+                ValueRow("Arrives in about", "${maxOf(1, preview.etaSeconds / 60)} min")
+            }
+            ValueRow("Hold before sending", "${preview.holdMinutes} min")
+            if (full) {
+                ValueRow("Daily limit left", Format.money(preview.dailyRemainingUsd))
             }
         }
     }
+    if (full) {
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Check the address against your own record. A transfer to a wrong address cannot be undone.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Palette.Alert,
+        )
+    }
+}
+
+@Composable
+private fun WithdrawDone(
+    amount: String,
+    preview: WithdrawPreview,
+    status: String?,
+    withdrawalId: String?,
+    submitting: Boolean,
+    onCancelWithdrawal: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val current = status.orEmpty().ifBlank { "PENDING_HOLD" }
+    val cancelled = current == "CANCELLED"
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                if (cancelled) "Withdrawal cancelled" else "Withdrawal created",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            ValueRow("Status", current)
+            ValueRow("Amount", Format.money(amount), emphasise = true)
+            ValueRow("To", preview.label)
+            if (!withdrawalId.isNullOrBlank()) ValueRow("Reference", shortMiddle(withdrawalId))
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (cancelled) {
+                    "Nothing was sent."
+                } else {
+                    "Nothing is sent yet. It goes out after ${preview.holdMinutes} min unless you cancel it. " +
+                        "Follow it under Withdrawals in Wallet."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+    if (current == "PENDING_HOLD") {
+        OutlinedButton(
+            onClick = onCancelWithdrawal,
+            enabled = !submitting,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = RoundedCornerShape(14.dp),
+        ) {
+            Text(if (submitting) "Cancelling…" else "Cancel withdrawal")
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+    ConfirmButton("Done", enabled = true, onClick = onClose)
 }
 
 /** The trade sheet: side, outcome, order-type chips, price, size, and the estimate. */
