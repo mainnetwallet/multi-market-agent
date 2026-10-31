@@ -59,6 +59,8 @@ class AccountSync:
         self._last_balance: dict[VenueId, tuple[str, str]] = {}
         self._diag: dict[str, dict[str, Any]] = {}
         self._streaming: set[VenueId] = set()
+        # A venue's first read after start is the baseline: what it already holds is not "new".
+        self._baselined: set[VenueId] = set()
 
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
@@ -229,6 +231,7 @@ class AccountSync:
                 complete=orders_complete,
                 moved=result["moved"] if positions_complete else None,
             )
+            external = self._record_external(venue, result["deltas"])
             balance = await self._balance(venue)
             changed_positions = len(result["changed"])
             diag = self._diag.setdefault(
@@ -264,12 +267,50 @@ class AccountSync:
                     orders_changed=len(touched),
                     balance=balance,
                 )
+            if external:
+                await self.bus.publish("account.external_change", venue=venue.value, trades=external)
             return {
                 "venue": venue.value,
                 "positions_changed": changed_positions,
                 "orders_changed": len(touched),
                 "balance_changed": balance is not None,
             }
+
+    def _record_external(self, venue: VenueId, deltas: list[dict[str, Any]]) -> list[dict[str, str]]:
+        """Position changes the agent did not make: add them to the trade history, return them for the alert.
+
+        The first read after start only sets the baseline, so what the venue already held when the server
+        came up is not reported as new trades.
+        """
+
+        if venue not in self._baselined:
+            self._baselined.add(venue)
+            return []
+        if not deltas:
+            return []
+        try:
+            self.store.record_external_fills(venue, deltas)
+        except Exception as exc:
+            logger.warning("external_fill_record_failed", venue=venue.value, error=str(exc)[:160])
+        self.store.audit(
+            "account_sync",
+            "account.external_change",
+            {"venue": venue.value, "count": len(deltas)},
+        )
+        if not self.settings.account_sync_alert_external:
+            return []
+        return [
+            {
+                "market_id": str(d["market_id"]),
+                "outcome": str(d["outcome"]),
+                "title": str(d.get("title") or d["market_id"]),
+                "side": "BUY" if Decimal(d["delta"]) > 0 else "SELL",
+                "shares": str(abs(Decimal(d["delta"])).normalize()),
+                "price": str(Decimal(d["price"]).quantize(Decimal("0.001"))),
+                "position_after": str(Decimal(d["new"]).normalize()),
+            }
+            for d in deltas
+        ]
 
     async def _balance(self, venue: VenueId) -> dict[str, str] | None:
         """The balance when it differs from the last read, else ``None`` (and a failed read is not an update)."""

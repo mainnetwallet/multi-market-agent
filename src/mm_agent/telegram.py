@@ -208,10 +208,29 @@ class TelegramBot:
                 await self._send(
                     f"🚨 UNKNOWN order on {order.get('venue')}. Do not retry; reconcile before new orders."
                 )
+        elif event.topic == "account.external_change":
+            await self._send_external_change(event)
         elif event.topic == "scanner.tick":
             for venue, diag in (event.payload.get("feed_diag", {}).get("venues") or {}).items():
                 if diag.get("error"):
                     await self._send(f"⚠ Feed error on {venue}: {diag['error']}")
+
+    async def _send_external_change(self, event: Event) -> None:
+        """Tell the operator about a trade made outside the agent, e.g. on the venue's own website."""
+
+        venue = str(event.payload.get("venue") or "").upper()
+        lines = [f"📱 {venue}: account changed outside the agent"]
+        trades = event.payload.get("trades") or []
+        for trade in trades[:8]:
+            verb = "bought" if trade.get("side") == "BUY" else "sold/closed"
+            lines.append(
+                f"{verb} {trade.get('shares')} {trade.get('outcome')} @ ~{trade.get('price')} "
+                f"(now {trade.get('position_after')}) · {str(trade.get('title'))[:90]}"
+            )
+        if len(trades) > 8:
+            lines.append(f"…and {len(trades) - 8} more")
+        lines.append("Price is derived from the position, not a venue fill. If this was not you, use /panic.")
+        await self._send("\n".join(lines))
 
     async def _send_proposal(self, proposal: Proposal) -> None:
         text = (

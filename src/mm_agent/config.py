@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     account_sync_enabled: bool = True
     account_sync_interval_seconds: float = 3.0
     account_sync_other_interval_seconds: float = 15.0
+    account_sync_alert_external: bool = True
     proposal_ttl_seconds: int = 300
     auto_propose: bool = True
     proposals_per_cycle: int = 2

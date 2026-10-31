@@ -74,7 +74,7 @@ def test_incomplete_read_never_closes_a_position(store: Store) -> None:
 def test_unchanged_read_changes_nothing(store: Store) -> None:
     store.sync_positions(V, [pos(current_price=D("0.5"))], complete=True)
     again = store.sync_positions(V, [pos(current_price=D("0.5"))], complete=True)
-    assert again == {"changed": [], "moved": set()}
+    assert again["changed"] == [] and again["moved"] == set() and again["deltas"] == []
 
 
 def test_price_only_change_is_live_but_not_a_move(store: Store) -> None:
@@ -226,3 +226,57 @@ async def test_trigger_wakes_the_loop_immediately(harness: Harness) -> None:
         assert harness.store.list_positions(venue=V)[0].shares == D("3")
     finally:
         await sync.stop()
+
+
+# ------------------------------------------------- external trades: history + alert
+def test_deltas_describe_a_buy_a_partial_sell_and_a_close(store: Store) -> None:
+    opened = store.sync_positions(V, [pos(shares="10", avg="0.40", market_title="Rain?")], complete=True)
+    (d,) = opened["deltas"]
+    assert (d["delta"], d["new"], d["price"], d["title"]) == (D("10"), D("10"), D("0.40"), "Rain?")
+
+    added = store.sync_positions(V, [pos(shares="20", avg="0.50")], complete=True)
+    (d,) = added["deltas"]
+    assert d["delta"] == D("10") and d["price"] == D("0.60")  # (20*0.5 - 10*0.4) / 10
+
+    sold = store.sync_positions(V, [pos(shares="5", avg="0.50", current_price=D("0.70"))], complete=True)
+    (d,) = sold["deltas"]
+    assert d["delta"] == D("-15") and d["price"] == D("0.70")
+
+    closed = store.sync_positions(V, [], complete=True)
+    (d,) = closed["deltas"]
+    assert d["delta"] == D("-5") and d["new"] == D("0")
+
+
+def test_price_only_change_has_no_delta(store: Store) -> None:
+    store.sync_positions(V, [pos(current_price=D("0.5"))], complete=True)
+    again = store.sync_positions(V, [pos(current_price=D("0.6"))], complete=True)
+    assert again["changed"] and again["deltas"] == []
+
+
+def test_external_fill_lands_in_history_without_touching_the_position(store: Store) -> None:
+    result = store.sync_positions(V, [pos(shares="10", avg="0.40", market_title="Rain?")], complete=True)
+    assert store.record_external_fills(V, result["deltas"]) == 1
+    (fill,) = store.list_fills(venue=V)
+    assert (fill["side"], fill["shares"], fill["market_id"]) == ("BUY", "10", "m1")
+    (stored,) = store.list_positions(venue=V)
+    assert stored.shares == D("10")  # the position was not counted a second time
+
+
+async def test_service_records_and_announces_a_website_trade_after_the_baseline(harness: Harness) -> None:
+    sync = AccountSync(harness.settings, harness.store, harness.registry, harness.bus)
+    key = f"{V.value}:fed-cut:YES"
+    harness.fake._positions[key] = (D("3"), D("0.40"))  # already held when the server starts
+
+    await sync.sync_once(V)  # baseline: not reported as a new trade
+    assert not any(e.topic == "account.external_change" for e in harness.bus.history)
+    assert harness.store.list_fills(venue=V) == []
+
+    harness.fake._positions[key] = (D("8"), D("0.40"))  # bought 5 more on the website
+    await sync.sync_once(V)
+
+    external = [e for e in harness.bus.history if e.topic == "account.external_change"]
+    assert len(external) == 1
+    (trade,) = external[0].payload["trades"]
+    assert (trade["side"], trade["shares"], trade["position_after"]) == ("BUY", "5", "8")
+    (fill,) = harness.store.list_fills(venue=V)
+    assert (fill["side"], fill["shares"]) == ("BUY", "5")
