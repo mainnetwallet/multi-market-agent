@@ -102,6 +102,30 @@ def test_polymarket_tab_bar_matches_the_website_header() -> None:
     assert len({t["id"] for t in tabs}) == len(tabs)  # no category can shadow a sort mode
 
 
+def test_crypto_tab_carries_the_website_sidebar() -> None:
+    crypto = next(t for t in discover.polymarket_tab_list() if t["id"] == "crypto")
+    assert [s["label"] for s in crypto["subtabs"]] == [
+        "5 Min", "15 Min", "1 Hour", "4 Hours", "Daily", "Weekly", "Monthly", "Yearly", "Targets", "Pre-Market",
+        "Institutions", "Industry", "Protocol Metrics", "Bitcoin", "Ethereum", "Solana", "XRP", "Dogecoin", "BNB",
+        "Microstrategy",
+    ]  # fmt: skip
+    assert [s["id"] for s in crypto["subtabs"] if s["separator_before"]] == ["crypto:bitcoin"]  # timeframes | coins
+    assert all(s["id"].startswith("crypto:") for s in crypto["subtabs"])
+    assert len({s["id"] for s in crypto["subtabs"]}) == len(crypto["subtabs"])
+    others = [t for t in discover.polymarket_tab_list() if t["id"] != "crypto"]
+    assert all(t["subtabs"] == [] for t in others)
+
+
+def test_sub_tab_config_resolves_the_sub_tag() -> None:
+    cfg = discover.polymarket_tab_cfg("crypto:5m")
+    assert cfg is not None and cfg["tag_slug"] == "5M" and "Crypto" in cfg["label"]
+    all_cfg = discover.polymarket_tab_cfg("crypto")
+    assert all_cfg is not None and all_cfg["tag_slug"] == "crypto"
+    assert discover.polymarket_tab_cfg("crypto:nope") is None
+    assert discover.polymarket_tab_cfg("politics:5m") is None  # politics has no sub-categories
+    assert discover.polymarket_tab_cfg("nope:5m") is None
+
+
 def test_discover_tabs_need_no_network(tmp_path: Path) -> None:
     venue = PolymarketVenue(make_settings(tmp_path))
 
@@ -144,6 +168,36 @@ def test_discover_filters_a_category_by_the_tag_id_of_its_slug(tmp_path: Path) -
         asyncio.run(venue.discover(tab="nope", q=None, limit=10, offset=0))
     with pytest.raises(ValueError):
         asyncio.run(venue.discover(tab="perps", q=None, limit=10, offset=0))  # not in the website's category bar
+    with pytest.raises(ValueError):
+        asyncio.run(venue.discover(tab="crypto:nope", q=None, limit=10, offset=0))
+
+
+def test_discover_sub_category_lists_every_page_without_a_cap(tmp_path: Path) -> None:
+    venue = PolymarketVenue(make_settings(tmp_path))
+    seen: list[tuple[str, dict[str, Any] | None]] = []
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        seen.append((url, params))
+        if "/tags/slug/" in url:
+            return {"id": "99", "slug": url.rsplit("/", 1)[1]}
+        offset = int((params or {}).get("offset", 0))
+        full = offset < 60  # two full pages, then a short one
+        n = 30 if full else 7
+        return [_event(str(offset + i), [_market(f"m{offset + i}", "0.4", "0.6")]) for i in range(n)]
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    got = 0
+    offset: int | None = 0
+    pages = 0
+    while offset is not None:
+        out = asyncio.run(venue.discover(tab="crypto:weekly", q=None, limit=30, offset=offset))
+        got += len(out["items"])
+        offset = out["next_offset"]
+        pages += 1
+        assert pages < 10
+    assert got == 67 and pages == 3  # it keeps paging until the venue runs out; nothing stops it earlier
+    assert seen[0][0].endswith("/tags/slug/weekly")
+    assert all(p is None or p.get("tag_id") == "99" for _, p in seen[1:])
 
 
 def test_discover_unknown_tag_slug_gives_a_note_not_a_crash(tmp_path: Path) -> None:

@@ -102,7 +102,13 @@ internal object DiscoverCache {
  */
 internal object DiscoverTabsCache {
     /** One tab as the server sent it. [highlight] draws it in the accent gradient; [separatorBefore] adds a divider. */
-    class Tab(val id: String, val label: String, val highlight: Boolean = false, val separatorBefore: Boolean = false)
+    class Tab(
+        val id: String,
+        val label: String,
+        val highlight: Boolean = false,
+        val separatorBefore: Boolean = false,
+        val subtabs: List<Tab> = emptyList(),
+    )
 
     class Entry(val tabs: List<Tab>, val note: String, val at: Long)
 
@@ -112,16 +118,20 @@ internal object DiscoverTabsCache {
     @Synchronized
     fun get(venue: String): Entry? = map[venue]
 
+    private fun tabOf(it: JSONObject): Tab = Tab(
+        id = it.optString("id"),
+        label = it.optString("label"),
+        highlight = it.optBoolean("highlight", false),
+        separatorBefore = it.optBoolean("separator_before", false),
+        // Sub-categories (the sidebar polymarket.com shows once a category is open), e.g. Crypto -> 5 Min.
+        subtabs = ApiClient.arrayOf(it, "subtabs").objects()
+            .map { sub -> Tab(sub.optString("id"), sub.optString("label"), separatorBefore = sub.optBoolean("separator_before", false)) }
+            .filter { sub -> sub.id.isNotBlank() && sub.label.isNotBlank() },
+    )
+
     fun parse(body: JSONObject): List<Tab> =
         ApiClient.arrayOf(body, "tabs").objects()
-            .map {
-                Tab(
-                    id = it.optString("id"),
-                    label = it.optString("label"),
-                    highlight = it.optBoolean("highlight", false),
-                    separatorBefore = it.optBoolean("separator_before", false),
-                )
-            }
+            .map { tabOf(it) }
             .filter { it.id.isNotBlank() && it.label.isNotBlank() }
 
     /** Store a server answer; returns the tabs, or an empty list (and stores nothing) when it had none. */
@@ -175,7 +185,7 @@ fun DiscoverScreen(
         if (cached != null && tabsReloadKey == 0 && System.currentTimeMillis() - cached.at < DiscoverTabsCache.FRESH_MS) {
             tabs = cached.tabs
             tabsNote = cached.note
-            if (tabs.none { it.id == tab }) tab = tabs.first().id
+            if (tabs.none { it.id == tab.substringBefore(':') }) tab = tabs.first().id
             tabsLoading = false
             return@LaunchedEffect
         }
@@ -188,7 +198,7 @@ fun DiscoverScreen(
                 if (tabsNote.isBlank()) tabsNote = "The server returned no categories."
             } else {
                 tabs = loaded
-                if (tabs.none { it.id == tab }) tab = tabs.first().id
+                if (tabs.none { it.id == tab.substringBefore(':') }) tab = tabs.first().id
             }
         } catch (e: CancellationException) {
             throw e
@@ -288,7 +298,7 @@ fun DiscoverScreen(
                                 .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
                         )
                     }
-                    DiscoverTab(item.label, selected = tab == item.id && query.isBlank(), highlight = item.highlight, onClick = {
+                    DiscoverTab(item.label, selected = tab.substringBefore(':') == item.id && query.isBlank(), highlight = item.highlight, onClick = {
                         if (tab == item.id) {
                             DiscoverCache.drop(DiscoverCache.key(venue, item.id, ""))
                             reloadKey += 1
@@ -303,6 +313,39 @@ fun DiscoverScreen(
         Box(
             Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
         )
+        // Sub-categories of the open category (the left sidebar on polymarket.com): All, then e.g. 5 Min ... Bitcoin.
+        val parentId = tab.substringBefore(':')
+        val subtabs = tabs.firstOrNull { it.id == parentId }?.subtabs.orEmpty()
+        if (subtabs.isNotEmpty()) {
+            val subChips = listOf(DiscoverTabsCache.Tab(parentId, "All")) + subtabs
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(subChips, key = { it.id }) { sub ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (sub.separatorBefore) {
+                            Box(
+                                Modifier
+                                    .padding(end = 8.dp)
+                                    .width(1.dp)
+                                    .height(18.dp)
+                                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                            )
+                        }
+                        SubTabChip(sub.label, selected = tab == sub.id && query.isBlank(), onClick = {
+                            if (tab == sub.id) {
+                                DiscoverCache.drop(DiscoverCache.key(venue, sub.id, ""))
+                                reloadKey += 1
+                            } else {
+                                tab = sub.id
+                            }
+                            query = ""
+                        })
+                    }
+                }
+            }
+        }
         if (tabsNote.isNotBlank() && tabs.isNotEmpty()) {
             Text(
                 tabsNote,
@@ -398,6 +441,26 @@ private fun DiscoverTab(label: String, selected: Boolean, highlight: Boolean = f
                 .height(2.dp)
                 .width(if (selected) 28.dp else 0.dp)
                 .background(MaterialTheme.colorScheme.onSurface),
+        )
+    }
+}
+
+@Composable
+private fun SubTabChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

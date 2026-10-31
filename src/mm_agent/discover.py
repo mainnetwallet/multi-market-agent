@@ -26,13 +26,41 @@ TABS: dict[str, dict[str, Any]] = {
     "new": {"label": "New", "order": "startDate"},
 }
 
-# Category tabs in the website's order. ``highlight`` draws the tab in the accent gradient (Midterms on the
-# site); ``separator_before`` puts the thin divider the site shows between the featured tabs and the categories.
+# Sub-categories (the left sidebar on polymarket.com once a category is open). ``tag`` is the path segment the
+# website uses under the category (``/crypto/5M``), taken as the Gamma tag slug. ``separator_before`` starts a new
+# group, like the line the site draws between the timeframes and the coins.
+CRYPTO_SUB: tuple[dict[str, Any], ...] = (
+    {"id": "5m", "label": "5 Min", "tag": "5M"},
+    {"id": "15m", "label": "15 Min", "tag": "15M"},
+    {"id": "1h", "label": "1 Hour", "tag": "hourly"},
+    {"id": "4h", "label": "4 Hours", "tag": "4hour"},
+    {"id": "daily", "label": "Daily", "tag": "daily"},
+    {"id": "weekly", "label": "Weekly", "tag": "weekly"},
+    {"id": "monthly", "label": "Monthly", "tag": "monthly"},
+    {"id": "yearly", "label": "Yearly", "tag": "yearly"},
+    {"id": "targets", "label": "Targets", "tag": "targets"},
+    {"id": "pre-market", "label": "Pre-Market", "tag": "pre-market"},
+    {"id": "institutions", "label": "Institutions", "tag": "institutions"},
+    {"id": "industry", "label": "Industry", "tag": "industry"},
+    {"id": "protocol-metrics", "label": "Protocol Metrics", "tag": "protocol-metrics"},
+    {"id": "bitcoin", "label": "Bitcoin", "tag": "bitcoin", "separator_before": True},
+    {"id": "ethereum", "label": "Ethereum", "tag": "ethereum"},
+    {"id": "solana", "label": "Solana", "tag": "solana"},
+    {"id": "xrp", "label": "XRP", "tag": "xrp"},
+    {"id": "dogecoin", "label": "Dogecoin", "tag": "dogecoin"},
+    {"id": "bnb", "label": "BNB", "tag": "bnb"},
+    {"id": "microstrategy", "label": "Microstrategy", "tag": "microstrategy"},
+)
+
+# Category tabs in the website's order. A tab with ``sub`` shows those sub-categories under the tab bar; the
+# sub-category tab id is ``<category id>:<sub id>`` (for example ``crypto:5m``), and "All" is the category id itself.
+# ``highlight`` draws the tab in the accent gradient (Midterms on the site); ``separator_before`` puts the thin
+# divider the site shows between the featured tabs and the categories.
 NAV_TABS: tuple[dict[str, Any], ...] = (
     {"id": "midterms", "label": "Midterms", "tag": "midterms", "highlight": True},
     {"id": "politics", "label": "Politics", "tag": "politics", "separator_before": True},
     {"id": "sports", "label": "Sports", "tag": "sports"},
-    {"id": "crypto", "label": "Crypto", "tag": "crypto"},
+    {"id": "crypto", "label": "Crypto", "tag": "crypto", "sub": CRYPTO_SUB},
     {"id": "esports", "label": "Esports", "tag": "esports"},
     {"id": "iran", "label": "Iran", "tag": "iran"},
     {"id": "finance", "label": "Finance", "tag": "finance"},
@@ -53,16 +81,22 @@ def polymarket_tab_cfg(tab: str) -> dict[str, Any] | None:
 
     if tab in TABS:
         return TABS[tab]
-    nav = NAV_BY_ID.get(tab)
+    parent_id, _, sub_id = tab.partition(":")
+    nav = NAV_BY_ID.get(parent_id)
     if nav is None:
         return None
-    return {"label": nav["label"], "tag_slug": nav["tag"], "order": "volume24hr"}
+    if not sub_id:
+        return {"label": nav["label"], "tag_slug": nav["tag"], "order": "volume24hr"}
+    sub = next((x for x in nav.get("sub", ()) if x["id"] == sub_id), None)
+    if sub is None:
+        return None
+    return {"label": f"{nav['label']} / {sub['label']}", "tag_slug": sub["tag"], "order": "volume24hr"}
 
 
 def polymarket_tab_list() -> list[dict[str, Any]]:
     """The tab bar for the app: sort modes, then the website categories, with display flags."""
 
-    tabs = [{**t, "highlight": False, "separator_before": False} for t in tab_list("polymarket")]
+    tabs = [{**t, "highlight": False, "separator_before": False, "subtabs": []} for t in tab_list("polymarket")]
     for nav in NAV_TABS:
         tabs.append(
             {
@@ -72,6 +106,14 @@ def polymarket_tab_list() -> list[dict[str, Any]]:
                 "note": "",
                 "highlight": bool(nav.get("highlight")),
                 "separator_before": bool(nav.get("separator_before")),
+                "subtabs": [
+                    {
+                        "id": f"{nav['id']}:{sub['id']}",
+                        "label": sub["label"],
+                        "separator_before": bool(sub.get("separator_before")),
+                    }
+                    for sub in nav.get("sub", ())
+                ],
             }
         )
     return tabs
