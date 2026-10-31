@@ -52,26 +52,12 @@ import org.json.JSONObject
 /** Venues that have a browse feed on the server (`/v1/discover`). */
 val BROWSABLE_VENUES: Set<String> = setOf("polymarket", "kalshi", "limitless")
 
+// Only the sort modes are fixed. Polymarket's categories (Politics, Sports, Culture, ...) are whatever
+// Gamma's tag list says, fetched from the server; this is what shows if that request fails.
 private val POLYMARKET_TABS: List<Pair<String, String>> = listOf(
     "trending" to "Trending",
-    "combos" to "Combos",
-    "perps" to "Perps",
     "breaking" to "Breaking",
     "new" to "New",
-    "midterms" to "Midterms",
-    "politics" to "Politics",
-    "sports" to "Sports",
-    "crypto" to "Crypto",
-    "esports" to "Esports",
-    "iran" to "Iran",
-    "finance" to "Finance",
-    "geopolitics" to "Geopolitics",
-    "tech" to "Tech",
-    "economy" to "Economy",
-    "elections" to "Elections",
-    "culture" to "Culture",
-    "weather" to "Weather",
-    "mentions" to "Mentions",
 )
 
 private val KALSHI_TABS: List<Pair<String, String>> = listOf(
@@ -104,7 +90,7 @@ private val LIMITLESS_TABS: List<Pair<String, String>> = listOf(
     "culture" to "Culture",
 )
 
-/** The server owns what each id means; `/v1/discover/tabs?venue=` lists the same ids. */
+/** Offline fallback only: the server owns the tabs and `/v1/discover/tabs?venue=` is what the screen shows. */
 private fun tabsFor(venue: String): List<Pair<String, String>> = when (venue) {
     "kalshi" -> KALSHI_TABS
     "limitless" -> LIMITLESS_TABS
@@ -156,9 +142,11 @@ private const val CARD_ROWS = 3
 fun DiscoverScreen(
     venue: String,
     fetch: suspend (venue: String, tab: String, query: String, offset: Int) -> JSONObject,
+    fetchTabs: suspend (venue: String) -> JSONObject,
     onTrade: (marketId: String, title: String, outcome: String) -> Unit,
 ) {
-    val tabs = tabsFor(venue)
+    var tabs by remember { mutableStateOf(tabsFor(venue)) }
+    var tabsNote by remember { mutableStateOf("") }
     var tab by rememberSaveable { mutableStateOf("trending") }
     var query by rememberSaveable { mutableStateOf("") }
     var items by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
@@ -169,6 +157,23 @@ fun DiscoverScreen(
     var generation by remember { mutableIntStateOf(0) }
     var reloadKey by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
+
+    // The tab list comes from the server (for Polymarket, from Gamma's own category tags).
+    LaunchedEffect(venue) {
+        try {
+            val body = fetchTabs(venue)
+            val loaded = ApiClient.arrayOf(body, "tabs").objects()
+                .map { it.optString("id") to it.optString("label") }
+                .filter { it.first.isNotBlank() && it.second.isNotBlank() }
+            if (loaded.isNotEmpty()) tabs = loaded
+            tabsNote = body.text("note")
+            if (tabs.none { it.first == tab }) tab = "trending"
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            tabsNote = e.message ?: "Could not load categories."
+        }
+    }
 
     // A response that arrives after the tab or search changed is dropped, never shown.
     suspend fun load(offset: Int, gen: Int, tabId: String, text: String) {
@@ -253,6 +258,14 @@ fun DiscoverScreen(
         Box(
             Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
         )
+        if (tabsNote.isNotBlank()) {
+            Text(
+                tabsNote,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp),
+            )
+        }
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),

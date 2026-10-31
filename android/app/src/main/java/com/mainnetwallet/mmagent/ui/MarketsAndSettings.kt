@@ -47,12 +47,13 @@ fun MarketsScreen(
     markets: List<JSONObject>,
     activeVenue: String,
     fetchDiscover: suspend (venue: String, tab: String, query: String, offset: Int) -> JSONObject,
+    fetchTabs: suspend (venue: String) -> JSONObject,
     onOpen: (marketId: String, title: String, outcome: String) -> Unit,
 ) {
     if (activeVenue in BROWSABLE_VENUES) {
         // Keyed on the venue so switching venue resets the tab, search text and scroll position.
         androidx.compose.runtime.key(activeVenue) {
-            DiscoverScreen(venue = activeVenue, fetch = fetchDiscover, onTrade = onOpen)
+            DiscoverScreen(venue = activeVenue, fetch = fetchDiscover, fetchTabs = fetchTabs, onTrade = onOpen)
         }
     } else {
         LegacyMarketsList(markets, activeVenue) { marketId, title -> onOpen(marketId, title, "YES") }

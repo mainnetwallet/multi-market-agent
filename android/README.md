@@ -8,11 +8,10 @@ directly — no WebView.
 - **Home** — cash available (tap opens the Wallet), today's PnL, and one-tap
   Pause and Cancel all. Both reduce risk, so neither uses hold-to-confirm.
 - **Markets** — on Polymarket, a Polymarket-style browser: category tabs (Trending,
-  Breaking, New, Midterms, Politics, Sports, Crypto, Esports, Iran, Finance,
-  Geopolitics, Tech, Economy, Elections, Culture, Weather, Mentions), search, and
+  Breaking, New, then the categories Polymarket's own tag list returns, read from the
+  server at runtime), search, and
   event cards with the live Yes/No price, chance, 24h move, volume and close time.
-  Tap a Yes or No price to open the trade sheet on that side. Combos and Perps tabs
-  are listed but say why they are not tradable here. Other venues keep the plain list.
+  Tap a Yes or No price to open the trade sheet on that side. Other venues keep the plain list.
   Data comes from `GET /v1/discover` (public Gamma data, read-only).
 - **Trade sheet** — Buy/Sell, Yes/No, then order-type chips driven by the venue's
   capabilities (Limit GTC, Limit with expiry GTD, Market FOK/FAK, Post-only where

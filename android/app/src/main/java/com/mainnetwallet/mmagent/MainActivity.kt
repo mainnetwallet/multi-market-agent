@@ -292,6 +292,7 @@ class MainActivity : FragmentActivity() {
                                     markets = state.markets,
                                     activeVenue = state.status.venue,
                                     fetchDiscover = { venue, tabId, query, offset -> appViewModel.discover(venue, tabId, query, offset) },
+                                    fetchTabs = { venue -> appViewModel.discoverTabs(venue) },
                                     onOpen = { marketId, title, outcome ->
                                         tradeVm.newIntent()
                                         tradeVm.setMarket(marketId, title)

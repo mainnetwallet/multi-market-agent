@@ -13,35 +13,38 @@ from typing import Any
 
 MAX_MARKETS_PER_CARD = 6
 
-# tab id -> how to ask Gamma. ``tag`` is a Gamma tag slug; ``order`` a Gamma sort field;
-# ``rank`` re-sorts the fetched page locally. ``unsupported`` tabs return a note, not rows.
+# Polymarket: only the three sort modes live here. They are orderings, not categories.
+# Every category tab (Politics, Sports, Culture, ...) comes from Gamma's own tag list
+# (``GET /tags?is_carousel=true``, the categories polymarket.com shows) at runtime; see
+# ``tag_tabs`` and ``PolymarketVenue.discover_tabs``. ``order`` is a Gamma sort field and
+# ``rank`` re-sorts the fetched page locally.
 TABS: dict[str, dict[str, Any]] = {
     "trending": {"label": "Trending", "order": "volume24hr"},
     "breaking": {"label": "Breaking", "order": "volume24hr", "rank": "change", "fetch": 100},
     "new": {"label": "New", "order": "startDate"},
-    "midterms": {"label": "Midterms", "tag": "midterms", "order": "volume24hr"},
-    "politics": {"label": "Politics", "tag": "politics", "order": "volume24hr"},
-    "sports": {"label": "Sports", "tag": "sports", "order": "volume24hr"},
-    "crypto": {"label": "Crypto", "tag": "crypto", "order": "volume24hr"},
-    "esports": {"label": "Esports", "tag": "esports", "order": "volume24hr"},
-    "iran": {"label": "Iran", "tag": "iran", "order": "volume24hr"},
-    "finance": {"label": "Finance", "tag": "finance", "order": "volume24hr"},
-    "geopolitics": {"label": "Geopolitics", "tag": "geopolitics", "order": "volume24hr"},
-    "tech": {"label": "Tech", "tag": "tech", "order": "volume24hr"},
-    "economy": {"label": "Economy", "tag": "economy", "order": "volume24hr"},
-    "elections": {"label": "Elections", "tag": "elections", "order": "volume24hr"},
-    "culture": {"label": "Culture", "tag": "culture", "order": "volume24hr"},
-    "weather": {"label": "Weather", "tag": "weather", "order": "volume24hr"},
-    "mentions": {"label": "Mentions", "tag": "mentions", "order": "volume24hr"},
-    "combos": {
-        "label": "Combos",
-        "unsupported": "Combos are multi-leg markets. This agent does not trade them yet.",
-    },
-    "perps": {
-        "label": "Perps",
-        "unsupported": "Perpetuals have no public API this agent uses. Open Polymarket to trade them.",
-    },
 }
+
+
+def tag_tabs(rows: Any) -> list[dict[str, str]]:
+    """Gamma ``/tags`` rows -> category tabs, in the order Gamma returned them.
+
+    A tag needs an id, a slug and a label, and is dropped when Gamma marks it ``forceHide``.
+    A slug that equals a sort-mode id is dropped too, so a tag can never shadow Trending/New.
+    """
+
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[str] = set(TABS)
+    for raw in rows:
+        if not isinstance(raw, dict) or raw.get("forceHide") is True:
+            continue
+        tag_id, slug, label = _text(raw.get("id")), _text(raw.get("slug")), _text(raw.get("label"))
+        if not tag_id or not slug or not label or slug in seen:
+            continue
+        seen.add(slug)
+        out.append({"id": slug, "label": label, "tag_id": tag_id})
+    return out
 
 
 # Kalshi has no tag API for events, so a tab is a list of substrings matched against the

@@ -405,6 +405,16 @@ def create_app(
     @app.get("/v1/discover/tabs")
     async def discover_tabs(venue: VenueId | None = None, _: str = Depends(require_auth)) -> dict[str, Any]:
         chosen = _discover_venue(venue)
+        adapter = registry.adapters.get(chosen)
+        if (
+            chosen == VenueId.POLYMARKET
+            and chosen in registry.enabled()
+            and adapter is not None
+            and hasattr(adapter, "discover_tabs")
+        ):
+            # Polymarket's categories are read from Gamma's tag list, not hardcoded.
+            result: dict[str, Any] = await adapter.discover_tabs()
+            return {"venue": chosen.value, **result}
         return {"venue": chosen.value, "tabs": discover_lib.tab_list(chosen.value)}
 
     @app.get("/v1/discover")
@@ -419,7 +429,7 @@ def create_app(
         """Polymarket-style browse (tabs, prices, volume). Read-only public data, per venue."""
 
         chosen = _discover_venue(venue)
-        if tab not in discover_lib.tabs_for(chosen.value):
+        if chosen != VenueId.POLYMARKET and tab not in discover_lib.tabs_for(chosen.value):
             raise HTTPException(status_code=404, detail=f"unknown tab: {tab}")
         adapter = registry.adapters.get(chosen)
         if chosen not in registry.enabled() or adapter is None or not hasattr(adapter, "discover"):
@@ -428,6 +438,8 @@ def create_app(
             result: dict[str, Any] = await adapter.discover(tab=tab, q=q, limit=limit, offset=offset)
             result["venue"] = chosen.value
             return result
+        except ValueError as exc:  # an unknown tab id (Polymarket's category tabs are not known statically)
+            raise HTTPException(status_code=404, detail=str(exc)[:160]) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"{chosen.value} discovery failed: {str(exc)[:160]}") from exc
 

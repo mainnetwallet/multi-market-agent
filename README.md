@@ -450,8 +450,11 @@ curl -s -X POST https://<service>/v1/orders/limit \
        "side":"BUY","price":"0.57","shares":"10","tif":"GTC"}'
 ```
 
-Browse for markets with `GET /v1/discover?venue=polymarket|kalshi|limitless&tab=trending|new|politics|sports|crypto|...&q=&limit=&offset=`
-(public data only; `venue` defaults to the active venue) and `GET /v1/discover/tabs?venue=`. Kalshi and Limitless tabs
+Browse for markets with `GET /v1/discover?venue=polymarket|kalshi|limitless&tab=<id from /v1/discover/tabs>&q=&limit=&offset=`
+(public data only; `venue` defaults to the active venue) and `GET /v1/discover/tabs?venue=`. Polymarket's tabs are
+Trending, Breaking and New (sort modes) plus whatever categories Gamma lists at `GET /tags?is_carousel=true` (read at
+runtime, cached 6 hours, nothing hardcoded; a tag marked `forceHide` is skipped, and `note` in the tabs response says
+why when the list could not be read). Kalshi and Limitless tabs
 are filtered locally from the venue's public market list; Kalshi volume is in contracts, not dollars. Each card carries the
 Yes/No prices, volume and close time, and the `market_id` to trade.
 

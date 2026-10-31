@@ -84,49 +84,90 @@ def test_breaking_ranks_by_move() -> None:
     assert [i["event_id"] for i in discover.rank_by_change(items)] == ["2", "1"]
 
 
-def test_tabs_cover_requested_categories() -> None:
-    ids = {t["id"] for t in discover.tab_list()}
-    for want in (
-        "trending",
-        "combos",
-        "perps",
-        "breaking",
-        "new",
-        "midterms",
-        "politics",
-        "sports",
-        "crypto",
-        "esports",
-        "iran",
-        "finance",
-        "geopolitics",
-        "tech",
-    ):
-        assert want in ids
-    flags = {t["id"]: t["supported"] for t in discover.tab_list()}
-    assert flags["combos"] is False and flags["perps"] is False and flags["politics"] is True
+def test_polymarket_static_tabs_are_only_the_sort_modes() -> None:
+    assert [t["id"] for t in discover.tab_list()] == ["trending", "breaking", "new"]
 
 
-def test_discover_calls_gamma_with_tag_and_warms_cache(tmp_path: Path) -> None:
+def test_tag_tabs_come_from_gamma_rows() -> None:
+    rows = [
+        {"id": "2", "label": "Politics", "slug": "politics", "isCarousel": True},
+        {"id": "3", "label": "Hidden", "slug": "hidden", "forceHide": True},
+        {"id": "4", "label": "", "slug": "nolabel"},
+        {"id": "5", "label": "Same as sort", "slug": "new"},  # must not shadow the New tab
+        {"id": "6", "label": "Politics again", "slug": "politics"},
+        {"id": "7", "label": "Culture", "slug": "pop-culture"},
+        "junk",
+    ]
+    assert discover.tag_tabs(rows) == [
+        {"id": "politics", "label": "Politics", "tag_id": "2"},
+        {"id": "pop-culture", "label": "Culture", "tag_id": "7"},
+    ]
+    assert discover.tag_tabs({"not": "a list"}) == []
+
+
+def test_discover_tabs_read_gamma_tags_and_cache(tmp_path: Path) -> None:
     venue = PolymarketVenue(make_settings(tmp_path))
-    seen: dict[str, Any] = {}
+    calls: list[tuple[str, dict[str, Any] | None]] = []
 
     async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
-        seen["url"], seen["params"] = url, params
+        calls.append((url, params))
+        return [{"id": "7", "label": "Culture", "slug": "pop-culture", "isCarousel": True}]
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover_tabs())
+    assert [t["id"] for t in out["tabs"]] == ["trending", "breaking", "new", "pop-culture"]
+    assert out["tabs"][-1]["label"] == "Culture" and out["note"] == ""
+    assert calls[0][0].endswith("/tags") and calls[0][1]["is_carousel"] == "true"
+    asyncio.run(venue.discover_tabs())
+    assert len(calls) == 1  # kept for hours
+
+
+def test_discover_tabs_failure_keeps_sort_modes_and_says_why(tmp_path: Path) -> None:
+    venue = PolymarketVenue(make_settings(tmp_path))
+
+    async def boom(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        raise RuntimeError("gamma down")
+
+    venue.get_json = boom  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover_tabs())
+    assert [t["id"] for t in out["tabs"]] == ["trending", "breaking", "new"]
+    assert "gamma down" in out["note"]
+
+
+def test_discover_uses_the_tag_id_gamma_gave(tmp_path: Path) -> None:
+    venue = PolymarketVenue(make_settings(tmp_path))
+    seen: list[tuple[str, dict[str, Any] | None]] = []
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        seen.append((url, params))
+        if url.endswith("/tags"):
+            return [{"id": "7", "label": "Culture", "slug": "pop-culture"}]
         return [_event("1", [_market("a", "0.2", "0.8")])]
 
     venue.get_json = fake_get_json  # type: ignore[method-assign]
-    out = asyncio.run(venue.discover(tab="politics", q=None, limit=10, offset=0))
-    assert seen["url"].endswith("/events")
-    assert seen["params"]["tag_slug"] == "politics"
-    assert seen["params"]["order"] == "volume24hr"
+    out = asyncio.run(venue.discover(tab="pop-culture", q=None, limit=10, offset=0))
+    url, params = seen[-1]
+    assert url.endswith("/events") and params is not None
+    assert params["tag_id"] == "7" and "tag_slug" not in params
+    assert params["order"] == "volume24hr"
     assert out["items"][0]["markets"][0]["market_id"] == "a"
     assert "a" in venue._markets  # the trade sheet can open it without another lookup
 
-    out = asyncio.run(venue.discover(tab="perps", q=None, limit=10, offset=0))
-    assert out["items"] == [] and out["note"]
     with pytest.raises(ValueError):
         asyncio.run(venue.discover(tab="nope", q=None, limit=10, offset=0))
+    with pytest.raises(ValueError):
+        asyncio.run(venue.discover(tab="perps", q=None, limit=10, offset=0))  # no longer a built-in tab
+
+
+def test_discover_empty_category_says_so(tmp_path: Path) -> None:
+    venue = PolymarketVenue(make_settings(tmp_path))
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        return [{"id": "7", "label": "Culture", "slug": "pop-culture"}] if url.endswith("/tags") else []
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover(tab="pop-culture", q=None, limit=10, offset=0))
+    assert out["items"] == [] and out["note"]
 
 
 def test_discover_search_uses_public_search(tmp_path: Path) -> None:

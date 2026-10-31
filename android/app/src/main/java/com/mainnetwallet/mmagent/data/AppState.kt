@@ -353,6 +353,10 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         return api.get("/v1/discover?venue=" + enc(venue) + "&tab=" + enc(tab) + q + "&limit=30&offset=" + offset)
     }
 
+    /** The browse tabs a venue offers. Polymarket's categories are read from Gamma's own tag list. */
+    suspend fun discoverTabs(venue: String): JSONObject =
+        api.get("/v1/discover/tabs?venue=" + java.net.URLEncoder.encode(venue, "UTF-8"))
+
     fun notify(message: String) {
         _messages.tryEmit(message)
     }

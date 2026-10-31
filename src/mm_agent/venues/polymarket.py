@@ -56,6 +56,8 @@ CLOB = "https://clob.polymarket.com"
 
 EVENT_TAG_TTL_SECONDS = 6 * 3600
 EVENT_TAG_RETRY_SECONDS = 60
+TAG_TABS_TTL_SECONDS = 6 * 3600
+TAG_TABS_RETRY_SECONDS = 60
 
 CATEGORY_FEE_RATES: dict[str, Decimal] = {
     "crypto": Decimal("0.07"),
@@ -194,6 +196,8 @@ class PolymarketVenue(HttpVenue):
         self._condition_index: dict[str, str] = {}
         self._event_tag_cache: dict[str, tuple[float, list[Any] | None]] = {}
         self._tag_gate = asyncio.Semaphore(4)
+        # (valid until, category tabs from Gamma /tags, note for the app); see discover_tabs
+        self._tag_tabs: tuple[float, list[dict[str, str]], str] | None = None
         self.test_orders = False
         self._test_error: str | None = None
 
@@ -229,6 +233,42 @@ class PolymarketVenue(HttpVenue):
         next_cursor = str(offset + len(data)) if len(data) >= limit else None
         return Page(items=markets[: query.limit], next_cursor=next_cursor)
 
+    async def _tag_tab_rows(self) -> tuple[list[dict[str, str]], str]:
+        """Category tabs from Gamma's own tag list, plus a note when they could not be read.
+
+        ``GET /tags?is_carousel=true`` is the set polymarket.com shows as its category bar, so
+        nothing is hardcoded here. A good answer is kept for hours; a failure is remembered for a
+        minute and the last good list (if any) keeps being served meanwhile.
+        """
+
+        now = time.monotonic()
+        cached = self._tag_tabs
+        if cached is not None and cached[0] > now:
+            return cached[1], cached[2]
+        stale = cached[1] if cached is not None else []
+        try:
+            data = await self.get_json(GAMMA + "/tags", params={"is_carousel": "true", "limit": 200})
+            if not isinstance(data, list):
+                raise VenueUnavailableError("Gamma /tags returned a non-list payload")
+            rows = discover_lib.tag_tabs(data)
+            note = "" if rows else "Polymarket returned no category tags."
+            ttl = TAG_TABS_TTL_SECONDS if rows else TAG_TABS_RETRY_SECONDS
+        except Exception as exc:
+            rows = stale
+            note = f"Could not load Polymarket categories: {str(exc)[:120]}"
+            ttl = TAG_TABS_RETRY_SECONDS
+        self._tag_tabs = (now + ttl, rows, note)
+        return rows, note
+
+    async def discover_tabs(self) -> dict[str, Any]:
+        """Tabs for the app: the sort modes, then every category Gamma lists."""
+
+        rows, note = await self._tag_tab_rows()
+        tabs = discover_lib.tab_list("polymarket") + [
+            {"id": r["id"], "label": r["label"], "supported": True, "note": ""} for r in rows
+        ]
+        return {"tabs": tabs, "note": note}
+
     async def discover(self, *, tab: str, q: str | None, limit: int, offset: int) -> dict[str, Any]:
         """Polymarket-style browse: Gamma events for a tab (or a text search) as cards."""
 
@@ -236,10 +276,12 @@ class PolymarketVenue(HttpVenue):
         offset = max(offset, 0)
         cfg = discover_lib.TABS.get(tab)
         if cfg is None:
-            raise ValueError(f"unknown tab: {tab}")
+            tags, _ = await self._tag_tab_rows()
+            tag = next((t for t in tags if t["id"] == tab), None)
+            if tag is None:
+                raise ValueError(f"unknown tab: {tab}")
+            cfg = {"label": tag["label"], "tag_id": tag["tag_id"], "order": "volume24hr"}
         query = (q or "").strip()
-        if "unsupported" in cfg and not query:
-            return {"tab": tab, "items": [], "next_offset": None, "note": cfg["unsupported"]}
         if query:
             page = offset // limit + 1
             data = await self.get_json(
@@ -258,8 +300,8 @@ class PolymarketVenue(HttpVenue):
                 "limit": fetch,
                 "offset": offset,
             }
-            if cfg.get("tag"):
-                params["tag_slug"] = cfg["tag"]
+            if cfg.get("tag_id"):
+                params["tag_id"] = cfg["tag_id"]
             rows = await self.get_json(GAMMA + "/events", params=params)
             more = isinstance(rows, list) and len(rows) >= fetch
         if not isinstance(rows, list):
@@ -286,7 +328,8 @@ class PolymarketVenue(HttpVenue):
                 except Exception:
                     continue
         step = int(cfg.get("fetch", limit)) if not query else limit
-        return {"tab": tab, "items": items, "next_offset": offset + step if more else None, "note": ""}
+        note = "No open markets under this category right now." if not items and not query and cfg.get("tag_id") else ""
+        return {"tab": tab, "items": items, "next_offset": offset + step if more else None, "note": note}
 
     @staticmethod
     def _json_list(value: Any) -> list[Any]:
