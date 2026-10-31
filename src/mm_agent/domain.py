@@ -27,7 +27,7 @@ class VenueId(StrEnum):
     POLYMARKET = "polymarket"
     KALSHI = "kalshi"
     LIMITLESS = "limitless"
-    FAKE = "fake"
+    FAKE = "fake"  # test-only id for tests/fake_venue.py; the app never registers it
 
 
 class Outcome(StrEnum):

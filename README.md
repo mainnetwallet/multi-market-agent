@@ -53,8 +53,7 @@ on 2026-10-30.
     and geo restrictions are the operator's responsibility; the agent never
     bypasses venue rules.
 11. Sizing uses `BANKROLL_USD`, optionally overridden per venue with
-    `BANKROLL_POLYMARKET`, `BANKROLL_KALSHI`, `BANKROLL_LIMITLESS` or
-    `BANKROLL_FAKE`.
+    `BANKROLL_POLYMARKET`, `BANKROLL_KALSHI` or `BANKROLL_LIMITLESS`.
 
 Full security notes and rotation steps: [SECURITY.md](SECURITY.md). Venue
 reconnaissance and current API differences: [DOCS_FINDINGS.md](DOCS_FINDINGS.md).
@@ -109,7 +108,7 @@ adjustment (±3pp, only with ≥2 fresh sources)` → edge after fee/slippage �
 re-validation (fresh book, edge, caps) → sign → place → persist fill/status →
 monitor and exit rules.
 
-Core logic is tested against `FakeVenue`, a test-only venue with no real money.
+Core logic is tested against `tests/fake_venue.py`, an in-memory venue that exists only in the test suite. The app itself registers only the three real venues and refuses to start with anything else in `ENABLED_VENUES`.
 See [PLAN.md](PLAN.md) for phase status and known gaps.
 
 ---
@@ -563,7 +562,7 @@ src/mm_agent/
   research.py llm.py probability.py strategy.py risk.py agent.py
   execution.py proposals in agent.py rules.py reports.py chat.py
   control_api.py telegram.py doctor.py main.py static/
-  venues/{base,registry,fake,polymarket,kalshi,limitless,*_signing}.py
+  venues/{base,registry,polymarket,kalshi,limitless,*_signing}.py
   store/{models,repo}.py
 alembic/  tests/  scripts/doctor.py  deploy/  Dockerfile  docker-compose.yml
 android/  (native WebView shell, Gradle, APK CI)

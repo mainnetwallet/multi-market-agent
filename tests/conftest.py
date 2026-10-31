@@ -15,8 +15,8 @@ from mm_agent.domain import ResearchReport, Source, VenueId, utcnow
 from mm_agent.events import EventBus
 from mm_agent.scanner import Scanner
 from mm_agent.store import Store
-from mm_agent.venues.fake import FakeVenue
 from mm_agent.venues.registry import VenueRegistry
+from tests.fake_venue import FakeVenue
 
 
 @dataclass
@@ -54,7 +54,7 @@ async def harness(tmp_path: Path) -> Harness:
     store = Store(settings.database_url)
     store.create_all()
     bus = EventBus()
-    registry = VenueRegistry(settings, store, bus)
+    registry = VenueRegistry(settings, store, bus, test_adapters={VenueId.FAKE: FakeVenue(settings)})
     fake = registry.get(VenueId.FAKE)
     assert isinstance(fake, FakeVenue)
     books = BookCache(settings.book_fresh_seconds)

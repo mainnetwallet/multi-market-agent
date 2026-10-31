@@ -26,7 +26,7 @@ def test_health_head_and_auth(harness: Harness) -> None:
     status = client.get("/v1/status")
     assert status.status_code == 200, status.text
     assert status.json()["active_venue"] == "fake"
-    assert "PAPER" not in status.json()["badge"]
+    assert status.json()["badge"].endswith("LIVE")
 
 
 def test_session_refresh_renews_and_is_capped(harness: Harness) -> None:

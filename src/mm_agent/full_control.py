@@ -61,7 +61,6 @@ VENUE_DOCS: dict[str, str] = {
     "polymarket": "https://docs.polymarket.com",
     "kalshi": "https://docs.kalshi.com",
     "limitless": "https://docs.limitless.exchange",
-    "fake": "https://example.invalid/fake",
 }
 
 

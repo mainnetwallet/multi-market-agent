@@ -132,7 +132,7 @@ async def test_every_request_is_assembled_in_layers(harness: Harness) -> None:
     cid = _install(harness, model)
     store = harness.agent.store
     _fill(harness, cid, 6)
-    store.chat_set_summary(OWNER, cid, "DECIDED: paper only on fake", 2)
+    store.chat_set_summary(OWNER, cid, "DECIDED: cap stays at two dollars", 2)
     store.chat_patch_state(OWNER, cid, {"pins": ["Always answer in Bengali."]})
 
     await harness.chat.handle("what now?", actor=OWNER, conversation_id=cid)
@@ -145,7 +145,7 @@ async def test_every_request_is_assembled_in_layers(harness: Harness) -> None:
     assert "Current venue=fake" in system
     assert system.index("Available tools") < system.index("OPERATOR STANDING INSTRUCTIONS")
     assert system.index("OPERATOR STANDING INSTRUCTIONS") < system.index("SUMMARY OF EARLIER MESSAGES")
-    assert "Always answer in Bengali." in system and "DECIDED: paper only on fake" in system
+    assert "Always answer in Bengali." in system and "DECIDED: cap stays at two dollars" in system
     # recent history is real user/assistant turns after the summary point; the new message is last
     assert [m["role"] for m in messages[1:-1]] == ["user", "assistant", "user", "assistant"]
     assert messages[-1] == {"role": "user", "content": "what now?"}
@@ -289,13 +289,13 @@ async def test_long_history_is_summarized_in_chunks_without_losing_the_start(har
 
 def test_pin_extraction_and_merge() -> None:
     msgs = [
-        {"role": "user", "text": "Hi there. Please always use paper mode first! Thanks."},
+        {"role": "user", "text": "Hi there. Please always confirm the venue first! Thanks."},
         {"role": "agent", "text": "I will never do that."},  # only operator text is pinned
         {"role": "user", "text": "সবসময় বাংলায় উত্তর দাও"},
         {"role": "user", "text": "buy yes"},
     ]
     pins = extract_pins(msgs)
-    assert "Please always use paper mode first!" in pins and "সবসময় বাংলায় উত্তর দাও" in pins
+    assert "Please always confirm the venue first!" in pins and "সবসময় বাংলায় উত্তর দাও" in pins
     assert not any("never do that" in p for p in pins)
     merged = merge_pins(["a" * 10] * 3, [f"pin number {i}" for i in range(40)])
     assert len(merged) == 20 and merged[-1] == "pin number 39"
