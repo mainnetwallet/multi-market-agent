@@ -215,7 +215,7 @@ class TelegramBot:
 
     async def _send_proposal(self, proposal: Proposal) -> None:
         text = (
-            f"{proposal.venue.value.upper()} | {proposal.mode.value}\n"
+            f"{proposal.venue.value.upper()} | LIVE\n"
             f"{proposal.outcome.value} {proposal.size} @ {proposal.price * 100:.1f}c = ${proposal.amount_usd}\n"
             f"edge {(proposal.edge * 100):.1f}pp · p_fair {(proposal.p_fair * 100):.1f}%\n"
             f"{proposal.market_title[:180]}\n"

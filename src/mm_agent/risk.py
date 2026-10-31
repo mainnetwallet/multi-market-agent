@@ -16,7 +16,7 @@ from .config import (
     HARD_MAX_TRADE_USD,
     Settings,
 )
-from .domain import Market, Mode, RiskDecision, VenueId, quantize_shares
+from .domain import Market, RiskDecision, VenueId, quantize_shares
 from .strategy import Signal
 
 ZERO = Decimal("0")
@@ -123,9 +123,8 @@ class RiskEngine:
         snapshot: RiskSnapshot,
         *,
         venue: VenueId,
-        mode: Mode,
     ) -> RiskDecision:
-        del venue, mode
+        del venue
         vetoes: list[str] = []
         market: Market = signal.market
         p = signal.p_side

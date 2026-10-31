@@ -66,8 +66,7 @@ jobs:
           docker run -d --name mm-agent-ci \
             -p 127.0.0.1:8080:8080 \
             -e APP_ENV=production \
-            -e ENABLED_VENUES=fake \
-            -e ACTIVE_VENUE=fake \
+            -e ENABLED_VENUES=polymarket,kalshi,limitless \
             -e ADMIN_USERNAME=operator \
             -e ADMIN_PASSWORD=ci-password-not-secret \
             -e SESSION_SECRET=ci-session-secret-not-secret \

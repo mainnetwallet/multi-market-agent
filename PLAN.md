@@ -1,6 +1,6 @@
 # PLAN — multi-market-agent
 
-Built 2026-10-30 (Asia/Dhaka). Paper-first, human-supervised. This checklist is
+Built 2026-10-30 (Asia/Dhaka). Human-supervised; every order is real. This checklist is
 the build record; tests/quality gate status is at the bottom.
 
 ## Phase 0 — Docs recon and skeleton
@@ -30,7 +30,7 @@ the build record; tests/quality gate status is at the bottom.
 - [x] Book cache, spread/depth/VWAP/synthetic-depth analysis.
 - [x] Startup unit guard; all trading halts on mismatch, exits remain monitored.
 
-## Phase 3 — Research, probability, strategy, risk, proposals, paper
+## Phase 3 — Research, probability, strategy, risk, proposals
 
 - [x] OpenAI-compatible LLM client; Tavily-compatible web-search tool; no hardcoded model.
 - [x] Research report requires >=2 verified live-search URLs and age <=90 min.
@@ -38,14 +38,14 @@ the build record; tests/quality gate status is at the bottom.
 - [x] Edge after fee/slippage, spread/depth/staleness/end-time/synthetic vetoes.
 - [x] Quarter-Kelly sizing capped by $2/trade, 4%/event, 15% total, 5% daily loss, 8 positions; Decimal only.
 - [x] Proposal TTL 5 minutes, reasons/risks/fee/binding cap, approve/reject/amount reduction.
-- [x] PAPER executor on real venue books; positions, fills, PnL ledger.
+- [x] Positions, fills, PnL ledger.
 - [x] Daily report endpoint with realized PnL, exposure, decisions, probability bins, calibration status.
 
 ## Phase 4 — Live execution and safety state machine
 
 - [x] Persist `CREATED`/`SUBMITTING` before network side effects.
 - [x] Per-market lock and per-venue placement lock.
-- [x] LIVE only when operator-set `LIVE_<VENUE>=true`; no API/chat path can change it.
+- [x] No paper mode: trading needs working credentials and a passing authenticated doctor check.
 - [x] Re-validation at approval: market status, fresh book, spread/depth, edge, tick, caps, end time.
 - [x] Timeout/5xx -> UNKNOWN; UNKNOWN never transitions back to SUBMITTING (state-transition test).
 - [x] Reconcile via open orders; absence is not treated as proof of no fill.
@@ -55,7 +55,7 @@ the build record; tests/quality gate status is at the bottom.
 ## Phase 5 — Rules, autopilot, chat
 
 - [x] TP/SL/time-exit rules with atomic compare-and-set ACTIVE/BLOCKED -> TRIGGERED -> EXECUTING.
-- [x] Stale book/feed-down blocks and alerts; rules run for every venue/mode with positions.
+- [x] Stale book/feed-down blocks and alerts; rules run for every venue with positions.
 - [x] One fire per rule; sibling rules cancelled after a successful exit.
 - [x] Server-side slash commands, unique id prefixes, `/panic` second confirmation.
 - [x] LLM tool set: markets, books, research, status, positions, orders, rules, limits, switch, trade, sell, cancel, rules, pause/resume/panic, set_limit.
@@ -66,7 +66,7 @@ the build record; tests/quality gate status is at the bottom.
 
 - [x] FastAPI REST + WebSocket events + SSE chat; signed HttpOnly session, login rate limit.
 - [x] PWA single HTML with Home/Markets/Chat/Positions/Settings, mobile bottom nav, desktop sidebar.
-- [x] Permanent `VENUE | PAPER/LIVE` badge; market book/research/Buy YES/Buy NO/exit-rule UI.
+- [x] Permanent `VENUE | LIVE` badge; market book/research/Buy YES/Buy NO/exit-rule UI.
 - [x] Telegram bot allowlisted, proposal cards with approve/reject, alerts, 6-hour heartbeat.
 - [x] Single poller DB lease to avoid Telegram getUpdates conflict.
 - [x] Runtime switch to ready venues only; positions/orders/rules stay alive across venues.
@@ -97,7 +97,7 @@ The operator asked for a second audit. These concrete gaps were closed:
 - [x] Current Limitless fee docs wired: collateral 5% × (1−price), legacy curves approximated.
 - [x] `scripts/bootstrap_env.py` generates a private local `.env` with fresh admin/session secrets.
 - [x] Tests for normalized tables, per-venue bankroll, book feed, fee-missing veto, UNKNOWN approval block, trade-history reconciliation, Bengali summary and Brier calibration.
-- [x] Local PAPER instance started; login, HEAD `/health`, `/status`, markets and PWA verified over HTTP.
+- [x] Local instance started; login, HEAD `/health`, `/status`, markets and PWA verified over HTTP.
 
 Remaining honest gaps are listed in README and BUILD_REPORT; the most important are
 no live credentials/order proof, Kalshi strategy maths near sub-cent edge bands,
@@ -123,7 +123,7 @@ Last run 2026-10-30 after the audit fixes:
 - `alembic upgrade head` + `alembic check` — pass
 - Public doctor — Polymarket OK / Kalshi OK / Limitless OK (auth/order checks skipped, no credentials)
 - GitHub CI — pass (after setuptools upgrade)
-- Docker build + PAPER smoke — pass, container runs as UID 10001
+- Docker build + smoke — pass, container runs as UID 10001
 - Android APK CI — pass; release `v1.0.0-android`
 - Real order sent — **none**
 
