@@ -100,17 +100,3 @@ def researched(harness: Harness) -> str:
         report.created_at,
     )
     return rid
-
-
-# TEMPORARY CI DIAGNOSTIC (remove before merge): surface failures as annotations.
-def pytest_runtest_logreport(report: pytest.TestReport) -> None:
-    import sys
-
-    if not report.failed:
-        return
-    crash = getattr(report.longrepr, "reprcrash", None)
-    detail = f"{crash.path}:{crash.lineno}: {crash.message}" if crash else str(report.longrepr)[-600:]
-    msg = f"{report.nodeid} [{report.when}] {detail}"[:900]
-    msg = msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-    sys.__stdout__.write(f"::error title=pytest-fail::{msg}\n")  # type: ignore[union-attr]
-    sys.__stdout__.flush()
