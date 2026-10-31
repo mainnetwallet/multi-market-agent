@@ -460,14 +460,17 @@ are read from those venues' own APIs at runtime (cached 6 hours); Polymarket's f
   Gamma has no endpoint for that bar (`GET /tags?is_carousel=true` lists only a few tags), so the order is copied from the
   website into `NAV_TABS` in `src/mm_agent/discover.py`; each category's slug is resolved once with `GET /tags/slug/{slug}` (as the Gamma docs describe) and listed with `GET /events?tag_id=<id>`. When the
   site changes its bar, edit that one list. Tabs carry `highlight` and `separator_before` flags for the app.
-  A category's sub-categories are not hardcoded: they are whatever Gamma lists for it, read with
+  A category's sub-categories are what Gamma lists for it, read with
   `GET /tags/slug/{slug}/related-tags/tags?omit_empty=true&status=active` (tags with no active events are left out,
   hidden tags, duplicates and the category itself are dropped, the label and order are Gamma's). The list is cached
   for 6 hours per category and the last good list keeps being served if Gamma fails. They arrive as `subtabs` on the
   category, with ids like `crypto:1h` (`<category id>:<tag slug>`); the app draws them as a chip row under the tab bar.
-  Gamma has no field for the website's grouping or its wording ("5 Min"), so neither is reproduced. A category Gamma
-  lists nothing for simply has no chip row. Paging has no cap: the app keeps asking for the next page (`next_offset`)
-  as the list is scrolled until Gamma returns a short page.
+  Gamma does not list everything the website shows, so a short pinned list, `PINNED_SUBS` in `discover.py`, is added to
+  it: Crypto's **5 Min, 15 Min** (at the front) and **4 Hours** (right behind 1H), with the Gamma tag slugs `5m`,
+  `15m` and `4h` (the site's URLs, `/crypto/5M`, `/crypto/15M` and `/crypto/4hour`, are not the tag slugs). A pinned
+  slug Gamma starts listing is left as Gamma has it, so nothing is doubled. Gamma has no field for the website's
+  grouping, so that is not reproduced. A category with nothing listed or pinned simply has no chip row. Paging has no
+  cap: the app keeps asking for the next page (`next_offset`) as the list is scrolled until Gamma returns a short page.
 - **Kalshi:** Trending, New, then the categories in `GET /search/tags_by_categories`. Kalshi has no category filter on
   `/events`, so a category tab scans the latest open events and keeps those whose `category` is exactly that name.
 - **Limitless:** Trending, New, Liquid, then the ids in `GET /markets/categories/count`, each named the documented way

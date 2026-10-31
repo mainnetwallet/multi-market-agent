@@ -275,14 +275,19 @@ class PolymarketVenue(HttpVenue):
 
     async def discover_tabs(self) -> dict[str, Any]:
         """Tabs for the app: the sort modes, the categories polymarket.com shows in its header, and for each
-        category the sub-categories Gamma lists for it."""
+        category the sub-categories Gamma lists for it, plus the few the site shows that Gamma does not list
+        (``discover.PINNED_SUBS``: Crypto's 5 Min, 15 Min and 4 Hours). The pinned ones are added after the
+        cached Gamma list is read, so they are there even while Gamma is down."""
 
         async def one(nav: dict[str, Any]) -> list[dict[str, str]]:
             async with self._tag_gate:
                 return await self._sub_tag_rows(nav)
 
         rows = await asyncio.gather(*(one(nav) for nav in discover_lib.NAV_TABS))
-        subs = {str(nav["id"]): r for nav, r in zip(discover_lib.NAV_TABS, rows, strict=True)}
+        subs = {
+            str(nav["id"]): discover_lib.with_pinned_subs(str(nav["id"]), r)
+            for nav, r in zip(discover_lib.NAV_TABS, rows, strict=True)
+        }
         return {"tabs": discover_lib.polymarket_tab_list(subs), "note": ""}
 
     async def discover(self, *, tab: str, q: str | None, limit: int, offset: int) -> dict[str, Any]:

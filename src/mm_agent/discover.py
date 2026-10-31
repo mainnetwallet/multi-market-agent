@@ -95,6 +95,46 @@ def polymarket_sub_tags(data: Any, parent_slug: str = "") -> list[dict[str, str]
     return out
 
 
+# Sub-categories polymarket.com shows that Gamma's ``related-tags`` list does not return (checked: 5 Min, 15 Min and
+# 4 Hours are missing from Crypto's list). They are added to what Gamma lists, never instead of it. ``slug`` is the
+# Gamma tag slug, which is lowercase and is NOT the website's URL segment (the site links ``/crypto/5M``,
+# ``/crypto/15M`` and ``/crypto/4hour``, the tags are ``5m``, ``15m`` and ``4h``); it is turned into a tag id with
+# ``GET /tags/slug/{slug}`` the first time the sub-category is opened, like any other slug. A row without ``after``
+# goes at the front; one with ``after`` goes right behind the Gamma row with that slug (else behind the front rows).
+PINNED_SUBS: dict[str, tuple[dict[str, str], ...]] = {
+    "crypto": (
+        {"slug": "5m", "label": "5 Min"},
+        {"slug": "15m", "label": "15 Min"},
+        {"slug": "4h", "label": "4 Hours", "after": "1h"},
+    ),
+}
+
+
+def with_pinned_subs(category_id: str, rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Gamma's sub-category rows (``polymarket_sub_tags``) plus the pinned ones Gamma does not list.
+
+    A pinned slug Gamma does list is left exactly as Gamma has it (its label, tag id and place), so the day Gamma
+    starts returning it nothing is doubled. A category without pinned rows comes back unchanged.
+    """
+
+    pinned = PINNED_SUBS.get(category_id, ())
+    have = {r["slug"].lower() for r in rows}
+
+    def row(p: dict[str, str]) -> dict[str, str]:
+        return {"tag_id": "", "slug": p["slug"], "label": p["label"]}
+
+    missing = [p for p in pinned if p["slug"].lower() not in have]
+    front = [row(p) for p in missing if "after" not in p]
+    out = front + list(rows)
+    for p in missing:
+        after = p.get("after")
+        if after is None:
+            continue
+        index = next((i for i, r in enumerate(out) if r["slug"].lower() == after.lower()), None)
+        out.insert(len(front) if index is None else index + 1, row(p))
+    return out
+
+
 def polymarket_tab_list(subs: dict[str, list[dict[str, str]]] | None = None) -> list[dict[str, Any]]:
     """The tab bar for the app: sort modes, then the website categories, with display flags.
 
