@@ -8,7 +8,7 @@ one way to trade, not the only one.
 
 Ground rules kept from the base build:
 
-- No paper mode: every order is real, and a venue trades only after its authenticated doctor check passes.
+- Every order is real, and a venue trades only after its authenticated doctor check passes.
 - Fail closed. Unknown order outcomes are never resent.
 - Decimal-as-string JSON everywhere.
 - Money-moving POSTs need an `Idempotency-Key`; the server stores key → result for 24 h

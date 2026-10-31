@@ -12,7 +12,7 @@ A **native Android app** (Kotlin, Jetpack Compose, Material 3) is included in
 hand, cancel, sell, redeem, deposit, withdraw and read history. The agent's
 proposal flow stays one way to trade, not the only one.
 
-**Every order is real money. There is no paper mode.** No order is sent without
+**Every order is real money.** No order is sent without
 a human action, and a venue is only usable after its authenticated read passes.
 Use a dedicated burner wallet or account with a small balance. The build was
 tested without live credentials; public reads for all three venues were verified
@@ -22,7 +22,7 @@ on 2026-10-30.
 
 ## Safety model (read before running)
 
-1. **No paper mode.** Every order goes to the venue. A venue is *ready* only when
+1. **Every order is real.** Every order goes to the venue. A venue is *ready* only when
    its credentials are set and the authenticated doctor check passes; a venue
    without working credentials is unavailable and cannot trade.
 2. **Fail closed.** Stale book/research, missing fee info, unit mismatch, feed

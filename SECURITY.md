@@ -80,7 +80,7 @@ pretending to work.
 
 ## Rules that must not be weakened
 
-1. There is no paper mode, so every order is real. A venue trades only after its
+1. Every order is real. A venue trades only after its
    authenticated doctor check passes, and every order needs a human action
    (or an explicit `CHAT_AUTOPILOT=true` chat command).
 2. Unknown order outcomes are `UNKNOWN`, block the market, and are never resent.
