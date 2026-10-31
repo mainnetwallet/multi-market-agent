@@ -64,7 +64,10 @@ internal object DiscoverCache {
     class Entry(val items: List<JSONObject>, val nextOffset: Int?, val note: String, val at: Long)
 
     const val FRESH_MS = 60_000L
-    private const val MAX_ENTRIES = 40
+
+    // Room for the first page of every tab and sub-category the background prefetch loads, plus what the
+    // person browses and searches on top of that, so the prefetched pages are not pushed out.
+    private const val MAX_ENTRIES = 400
     private val map = LinkedHashMap<String, Entry>()
 
     fun key(venue: String, tab: String, query: String): String = "$venue|$tab|$query"

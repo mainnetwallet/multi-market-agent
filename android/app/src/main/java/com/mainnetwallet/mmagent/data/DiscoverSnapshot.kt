@@ -8,7 +8,7 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * The Markets browse lists (tabs and each tab's first page) kept in the app's private cache folder, so the
+ * The Markets browse lists (tabs and the first page of every tab and sub-category) kept in the app's private cache folder, so the
  * Markets page has something to show the moment the app opens, before the first request has come back.
  * Public market data only. A restored list is shown with its original age, so the screen still refreshes it
  * quietly. Best effort: any read or write error just means the page loads the normal way.
@@ -42,15 +42,16 @@ internal class DiscoverSnapshot(context: Context) {
         }
     }
 
-    /** Save the venue's tabs and the first page of its first [tabLimit] tabs, as they are in memory now. */
-    fun save(venue: String, tabLimit: Int) {
+    /** Save the venue's tabs and the first page of every tab and sub-category, as they are in memory now. */
+    fun save(venue: String) {
         try {
             val entry = DiscoverTabsCache.get(venue) ?: return
             val tabsArray = JSONArray()
             for (tab in entry.tabs) tabsArray.put(tabJson(tab))
             val pages = JSONObject()
-            for (tab in entry.tabs.take(tabLimit)) {
-                val page = DiscoverCache.get(DiscoverCache.key(venue, tab.id, "")) ?: continue
+            val ids = entry.tabs.flatMap { tab -> listOf(tab.id) + tab.subtabs.map { sub -> sub.id } }
+            for (id in ids) {
+                val page = DiscoverCache.get(DiscoverCache.key(venue, id, "")) ?: continue
                 val items = JSONArray()
                 for (item in page.items) items.put(item)
                 val body = JSONObject()
@@ -60,7 +61,7 @@ internal class DiscoverSnapshot(context: Context) {
                 val saved = JSONObject()
                 saved.put("at", page.at)
                 saved.put("body", body)
-                pages.put(tab.id, saved)
+                pages.put(id, saved)
             }
             val tabsBody = JSONObject()
             tabsBody.put("tabs", tabsArray)

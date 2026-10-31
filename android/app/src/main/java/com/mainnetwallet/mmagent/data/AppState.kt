@@ -396,45 +396,32 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
 
 
     /**
-     * Fetch the venue's browse tabs and the first page of its first [PREFETCH_TABS] tabs in the background, so
-     * the Markets page opens with them already there, and save them for the next start. Best effort and public
-     * data only: a failure leaves the page to fetch for itself, and nothing is kept unless the server answered
-     * with tabs.
+     * Fetch the venue's browse tabs and the first page of every tab and sub-category in the background, so
+     * the Markets page opens with all of them already there (no spinner on any tab or chip), and save them for
+     * the next start. The first [PREFETCH_TABS] tabs go out first and are kept fresh every minute; every other
+     * category and every sub-category follows a few at a time and is refreshed every [PREFETCH_DEEP_MS]. Best
+     * effort and public data only: a failure leaves that page to fetch for itself, and nothing is kept unless
+     * the server answered with tabs.
      */
     private fun prefetchDiscover(venue: String) {
         if (venue !in BROWSABLE_VENUES) return
-        val now = System.currentTimeMillis()
         val cached = DiscoverTabsCache.get(venue)
-        val tabsFresh = cached != null && now - cached.at < DiscoverTabsCache.FRESH_MS
-        val pagesFresh = cached != null && cached.tabs.take(PREFETCH_TABS).all { tab ->
-            val page = DiscoverCache.get(DiscoverCache.key(venue, tab.id, ""))
-            page != null && now - page.at < PREFETCH_PAGE_MS
-        }
-        if (tabsFresh && pagesFresh) return
+        val tabsFresh = cached != null && System.currentTimeMillis() - cached.at < DiscoverTabsCache.FRESH_MS
+        if (tabsFresh && cached != null && stalePrefetchPages(venue, cached.tabs).isEmpty()) return
         if (!synchronized(prefetching) { prefetching.add(venue) }) return
         viewModelScope.launch {
             try {
                 val tabs = if (tabsFresh && cached != null) cached.tabs else DiscoverTabsCache.store(venue, discoverTabs(venue))
                 if (tabs.isEmpty()) return@launch
-                // The first few tabs' first pages go out together, so tapping Trending, New or Politics shows a list at once.
-                coroutineScope {
-                    tabs.take(PREFETCH_TABS).map { tab ->
-                        async {
-                            val have = DiscoverCache.get(DiscoverCache.key(venue, tab.id, ""))
-                            if (have == null || System.currentTimeMillis() - have.at >= PREFETCH_PAGE_MS) {
-                                try {
-                                    DiscoverCache.store(venue, tab.id, "", discover(venue, tab.id, "", 0))
-                                } catch (e: CancellationException) {
-                                    throw e
-                                } catch (e: Exception) {
-                                    // That tab loads when it is opened.
-                                }
-                            }
-                            Unit
-                        }
-                    }.awaitAll()
+                // A few pages at a time, so the server is not asked for a hundred at once. The first batch holds the
+                // first tabs, and it is saved right away so a start soon after still finds them.
+                stalePrefetchPages(venue, tabs).chunked(PREFETCH_PARALLEL).forEachIndexed { index, batch ->
+                    coroutineScope {
+                        batch.map { id -> async { prefetchDiscoverPage(venue, id) } }.awaitAll()
+                    }
+                    if (index == 0) saveDiscoverSnapshot(venue)
                 }
-                withContext(Dispatchers.IO) { discoverSnapshot.save(venue, PREFETCH_TABS) }
+                saveDiscoverSnapshot(venue)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -443,6 +430,40 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 synchronized(prefetching) { prefetching.remove(venue) }
             }
         }
+    }
+
+    /**
+     * The tab and sub-category ids whose first page is missing or too old, in the order they are fetched: the
+     * first [PREFETCH_TABS] tabs, then the other categories, then every sub-category (Crypto -> 1H, ...).
+     */
+    private fun stalePrefetchPages(venue: String, tabs: List<DiscoverTabsCache.Tab>): List<String> {
+        val now = System.currentTimeMillis()
+        fun stale(id: String, maxAgeMs: Long): Boolean {
+            val page = DiscoverCache.get(DiscoverCache.key(venue, id, ""))
+            return page == null || now - page.at >= maxAgeMs
+        }
+        val first = tabs.take(PREFETCH_TABS).map { it.id }
+        val later = tabs.drop(PREFETCH_TABS).map { it.id } + tabs.flatMap { tab -> tab.subtabs.map { sub -> sub.id } }
+        return (first.filter { stale(it, PREFETCH_PAGE_MS) } + later.filter { stale(it, PREFETCH_DEEP_MS) })
+            .distinct()
+            .take(PREFETCH_MAX_PAGES)
+    }
+
+    /** One tab's first page into the cache. A failure is ignored: that tab then loads when it is opened. */
+    private suspend fun prefetchDiscoverPage(venue: String, tab: String) {
+        try {
+            DiscoverCache.store(venue, tab, "", discover(venue, tab, "", 0))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Loaded when the tab is opened.
+        }
+    }
+
+    private suspend fun saveDiscoverSnapshot(venue: String) {
+        // Signed out meanwhile: the saved lists were just erased, so they are not written back.
+        if (token.isNullOrBlank()) return
+        withContext(Dispatchers.IO) { discoverSnapshot.save(venue) }
     }
 
     /** The browse tabs a venue offers. Polymarket's categories are read from Gamma's own tag list. */
@@ -1202,10 +1223,19 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         /** The saved answers are rewritten at most this often. */
         private const val SNAPSHOT_EVERY_MS = 30_000L
 
-        /** How many of a venue's first tabs have their first page loaded ahead of time. */
+        /** How many of a venue's first tabs are fetched first and kept fresh every [PREFETCH_PAGE_MS]. */
         private const val PREFETCH_TABS = 4
 
-        /** A prefetched page younger than this is not fetched again by the background refresh (same as the screen's own freshness). */
+        /** A page of one of the first tabs younger than this is not fetched again by the background refresh (same as the screen's own freshness). */
         private const val PREFETCH_PAGE_MS = 60_000L
+
+        /** Every other category and sub-category is fetched ahead too; these are refreshed this often. A stale one still shows at once and refreshes quietly. */
+        private const val PREFETCH_DEEP_MS = 10 * 60_000L
+
+        /** How many pages the background prefetch fetches at the same time. */
+        private const val PREFETCH_PARALLEL = 4
+
+        /** The most pages one background run fetches; the cache holds 400. */
+        private const val PREFETCH_MAX_PAGES = 250
     }
 }
