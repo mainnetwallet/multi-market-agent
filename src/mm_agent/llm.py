@@ -30,6 +30,32 @@ class LLMUnavailable(RuntimeError):
     pass
 
 
+def estimate_tokens(text: str) -> int:
+    """Provider-neutral, deliberately pessimistic token count (no tokenizer dependency).
+
+    ASCII costs about one token per four characters; anything else (Bengali, emoji, CJK) is
+    counted at one token per character, which over-counts a little and so never under-budgets.
+    """
+
+    if not text:
+        return 0
+    ascii_chars = len(text.encode("ascii", "ignore"))
+    return -(-ascii_chars // 4) + (len(text) - ascii_chars)
+
+
+def message_tokens(message: dict[str, Any]) -> int:
+    """One chat message including its tool calls and the per-message framing overhead."""
+
+    total = 4 + estimate_tokens(str(message.get("content") or ""))
+    if message.get("tool_calls"):
+        total += estimate_tokens(json.dumps(message["tool_calls"], default=str))
+    return total
+
+
+def messages_tokens(messages: list[dict[str, Any]]) -> int:
+    return sum(message_tokens(m) for m in messages)
+
+
 class LLMClient:
     def __init__(self, settings: Settings) -> None:
         self.base_url = settings.llm_base_url.rstrip("/")

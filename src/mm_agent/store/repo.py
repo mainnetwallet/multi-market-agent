@@ -8,6 +8,7 @@ Rules:
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -87,6 +88,12 @@ PROPOSAL_TRANSITIONS: dict[str, set[str]] = {
     "EXPIRED": set(),
     "FAILED": set(),
 }
+
+
+# Keys of a conversation's state that survive from one answer to the next.
+CHAT_KEPT_STATE = frozenset({"pins", "task", "checkpoint"})
+CHAT_SEARCH_TERMS = 8
+CHAT_SEARCH_MIN_TERM = 4
 
 
 class ConversationNotFound(LookupError):
@@ -1335,6 +1342,39 @@ class Store:
             )
             return rowcount(done) == 1
 
+    def chat_search(self, owner: str, conversation_id: str, query: str, limit: int = 4) -> list[dict[str, Any]]:
+        """Messages of THIS chat that were already folded into its summary and that share words with
+        [query], best match first (ties: newest). Scoped through _owned like every chat call, so
+        another chat or owner can never be searched. Nothing folded yet means nothing to retrieve."""
+
+        found = re.findall(r"\w+", query.casefold())
+        terms = list(dict.fromkeys(t for t in found if len(t) >= CHAT_SEARCH_MIN_TERM))
+        terms = sorted(terms, key=len, reverse=True)[:CHAT_SEARCH_TERMS]  # long words discriminate best
+        if not terms:
+            return []
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            if row.summary_upto <= 0:
+                return []
+            stmt = (
+                select(ChatMessageRow)
+                .where(
+                    ChatMessageRow.conversation_id == row.id,
+                    ChatMessageRow.seq <= row.summary_upto,
+                    ChatMessageRow.role.in_(("user", "agent")),
+                    or_(*[ChatMessageRow.content.icontains(t, autoescape=True) for t in terms]),
+                )
+                .order_by(ChatMessageRow.seq.desc())
+                .limit(200)
+            )
+            scored = []
+            for m in s.scalars(stmt).all():
+                low = m.content.casefold()
+                scored.append((sum(1 for t in terms if t in low), m.seq, m.role, m.content))
+        scored.sort(key=lambda x: (-x[0], -x[1]))
+        best = sorted(scored[: max(1, min(int(limit), 10))], key=lambda x: x[1])
+        return [{"seq": seq, "role": role, "text": text, "score": score} for score, seq, role, text in best]
+
     def chat_begin_run(self, owner: str, conversation_id: str) -> None:
         """Claim the chat for one answer. Atomic: a second claim fails with ConversationBusy."""
 
@@ -1347,7 +1387,10 @@ class Store:
                     ConversationRow.owner == owner,
                     ConversationRow.status != "running",
                 )
-                .values(status="running", state={"started_at": utcnow().isoformat(), "tools": []})
+                .values(
+                    status="running",
+                    state={**self._kept_state(row.state), "started_at": utcnow().isoformat(), "tools": []},
+                )
             )
         if rowcount(claimed) != 1:
             raise ConversationBusy(str(conversation_id))
@@ -1358,7 +1401,21 @@ class Store:
         with self.session() as s:
             row = self._owned(s, owner, conversation_id)
             row.status = status
-            row.state = redact({**state, "finished_at": utcnow().isoformat()})
+            row.state = redact({**self._kept_state(row.state), **state, "finished_at": utcnow().isoformat()})
+
+    @staticmethod
+    def _kept_state(state: dict[str, Any] | None) -> dict[str, Any]:
+        """Per-run bookkeeping resets with every answer; the chat's own working memory does not."""
+
+        return {k: v for k, v in (state or {}).items() if k in CHAT_KEPT_STATE}
+
+    def chat_patch_state(self, owner: str, conversation_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """Merge [patch] into this chat's state (pins, task, checkpoint). Scoped like every chat call."""
+
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            row.state = redact({**(row.state or {}), **patch})
+            return dict(row.state)
 
     def chat_interrupt_stale_runs(self) -> int:
         """At startup nothing can still be running: mark answers cut off by a restart."""

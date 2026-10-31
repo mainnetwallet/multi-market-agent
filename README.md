@@ -333,6 +333,36 @@ older ones fold into a summary (by the LLM, or a plain extract if it is down); n
 
 An answer that was still running when the server stopped is reported as `interrupted`.
 
+### Chat context management
+
+Every model request is assembled fresh from code and live state, for one chat only. The system message holds
+the rules, the assistant's identity and the tools that are usable right now; everything that came from a
+person or a tool is fenced as DATA and can never change the rules.
+
+- **Budget.** A request is sized to `LLM_CONTEXT_TOKENS` minus `LLM_RESERVE_TOKENS` (defaults 32000 and 4000;
+  character-based estimate). The rules, tool list and current message come first; standing instructions, task
+  plan, interrupted-run state, summary and retrieved messages take what is left, then recent history. Long
+  chats fold older messages into a summary by count, size or tokens; a failed summary falls back to a plain
+  extract. Nothing is deleted.
+- **Standing instructions.** Lasting operator rules ("always", "never", "from now on"...) are pinned in the
+  chat's state when their message is folded, so summarizing cannot lose them.
+- **Retrieval.** Folded messages of this chat that share words with the new message (4+ letters) are fetched
+  back, best match first, as a fenced block. Other chats and other users are never searched.
+- **Tool awareness.** Each tool has an access class (read, control, trade). A tool that cannot work right now
+  (research off, paused, no positions, one venue, no chat) is hidden, listed with its reason, and refused
+  with arguments checked against its schema if the model calls it anyway.
+- **Checkpoints and resume.** Before a trade or control tool runs, the chat records it as `started`; after, as
+  `done`, `error` or `unknown`. If an answer is stopped, errors or the process dies, the next answer in that
+  chat inherits those calls and is told what is complete. A call already `done` is answered from the record
+  (`replayed`), one that was `started` or `unknown` is refused as UNKNOWN and never repeated, and a refused or
+  vetoed one may be retried. Read-only tools always re-run. A finished answer starts the next with a fresh
+  checkpoint, so deliberate repeats are never blocked for long.
+- **Task plan.** The model keeps a goal and up to 20 steps (`pending`, `in_progress`, `done`, `blocked`) with
+  `update_task`. The plan is stored in the chat and shown again on every later message, so a long job
+  continues across messages.
+
+All of it lives in the existing conversation `state`; there are no extra tables.
+
 ---
 
 ## UNKNOWN of an order
