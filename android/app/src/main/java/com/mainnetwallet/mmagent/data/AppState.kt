@@ -52,6 +52,8 @@ data class ChatMessage(
     val tools: List<ToolStep> = emptyList(),
     /** True while the reply is still arriving. */
     val streaming: Boolean = false,
+    /** The server's position of a stored message in its chat (1, 2, ...); 0 for one not stored yet. */
+    val seq: Int = 0,
 )
 
 /**
@@ -73,6 +75,8 @@ data class ChatUiState(
     val busy: Boolean = false,
     val conversations: List<Conversation> = emptyList(),
     val activeId: String? = null,
+    /** True when the server holds older messages of the open chat than the ones shown. */
+    val hasEarlier: Boolean = false,
 )
 
 /** Replace the step with the same id (or, with no id, the running step of the same name), else add it. */
@@ -120,6 +124,7 @@ internal fun messageFromServer(o: JSONObject): ChatMessage = ChatMessage(
     role = o.optString("role").ifBlank { "agent" },
     text = o.optString("text"),
     at = Format.parseInstant(o.optString("created_at"))?.toEpochMilli() ?: System.currentTimeMillis(),
+    seq = o.optInt("seq"),
     tools = ApiClient.arrayOf(o, "tools").objects()
         .filter { it.optString("name").isNotBlank() }
         .map { ToolStep(it.optString("id"), it.optString("name"), it.optString("state").ifBlank { "done" }) },
@@ -193,6 +198,15 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
 
     /** The running chat request; cancelling it is "Stop". */
     private var chatJob: Job? = null
+
+    /**
+     * Bumped by every rename and delete, so a chat list fetched before one is not applied after it.
+     * Until the server has confirmed a change, the pending maps keep a refresh from undoing it.
+     */
+    private var chatEpoch = 0
+    private val pendingRenames = HashMap<String, String>()
+    private val pendingDeletes = HashSet<String>()
+    private var loadingEarlier = false
 
     /** When the saved session was last swapped for a fresh one (0 = not yet this run). */
     private var lastRenewAt = 0L
@@ -614,11 +628,19 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     /** Ask the server for this user's chats and merge them into the saved list; offline, the saved list stays. */
     fun refreshChats() {
         viewModelScope.launch {
+            val epoch = chatEpoch
             try {
                 val rows = api.get("/v1/conversations?limit=$MAX_CHATS")
-                val server = ApiClient.arrayOf(rows, "conversations").objects().map { conversationFromServer(it) }.filter { it.id.isNotBlank() }
+                // A rename or delete began (or ended) meanwhile: this answer may be stale, and that change refreshes again.
+                if (epoch != chatEpoch) return@launch
+                val server = ApiClient.arrayOf(rows, "conversations").objects()
+                    .map { conversationFromServer(it) }
+                    .filter { it.id.isNotBlank() && it.id !in pendingDeletes }
+                    .map { chat -> pendingRenames[chat.id]?.let { chat.copy(title = it) } ?: chat }
                 _chat.update { s -> s.copy(conversations = mergeChatLists(server, s.conversations, s.activeId).take(MAX_CHATS)) }
                 persistChats()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // The saved list is still usable; the next refresh tries again.
             }
@@ -649,13 +671,13 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
 
     fun newChat() {
         if (_chat.value.busy) return
-        _chat.update { it.copy(activeId = null, messages = emptyList()) }
+        _chat.update { it.copy(activeId = null, messages = emptyList(), hasEarlier = false) }
     }
 
     fun openChat(id: String) {
         if (_chat.value.busy) return
         val chat = _chat.value.conversations.firstOrNull { it.id == id } ?: return
-        _chat.update { s -> s.copy(activeId = chat.id, messages = chat.messages) }
+        _chat.update { s -> s.copy(activeId = chat.id, messages = chat.messages, hasEarlier = false) }
         if (chat.synced) loadChatMessages(chat)
     }
 
@@ -666,7 +688,8 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 val res = api.get("/v1/conversations/${chat.id}/messages?limit=$MAX_CHAT_MESSAGES")
                 val stored = ApiClient.arrayOf(res, "messages").objects().map { messageFromServer(it) }
                 // Only if the reader is still on this chat and has not started typing to it.
-                _chat.update { s -> if (s.activeId == chat.id && !s.busy) s.copy(messages = stored) else s }
+                val more = res.optBoolean("has_more")
+                _chat.update { s -> if (s.activeId == chat.id && !s.busy) s.copy(messages = stored, hasEarlier = more) else s }
                 saveActiveChat()
             } catch (e: ApiClient.ApiException) {
                 if (e.status == 404) {
@@ -677,6 +700,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                             conversations = s.conversations.filterNot { it.id == chat.id },
                             activeId = if (open) null else s.activeId,
                             messages = if (open) emptyList() else s.messages,
+                            hasEarlier = if (open) false else s.hasEarlier,
                         )
                     }
                     persistChats()
@@ -699,6 +723,8 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         _chat.update { s -> s.copy(conversations = s.conversations.map { if (it.id == id) it.copy(title = clean) else it }) }
         persistChats()
         if (synced) {
+            chatEpoch++
+            pendingRenames[id] = clean
             viewModelScope.launch {
                 try {
                     api.post("/v1/conversations/$id/rename", ApiClient.jsonOf("title" to clean))
@@ -706,7 +732,10 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                     throw e
                 } catch (e: Exception) {
                     _messages.tryEmit("Could not rename the chat on the server: ${e.message}")
-                    refreshChats()
+                } finally {
+                    if (pendingRenames[id] == clean) pendingRenames.remove(id)
+                    chatEpoch++
+                    refreshChats() // confirms the new title, or brings the old one back after a failure
                 }
             }
         }
@@ -721,10 +750,13 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 conversations = s.conversations.filterNot { it.id == id },
                 activeId = if (open) null else s.activeId,
                 messages = if (open) emptyList() else s.messages,
+                hasEarlier = if (open) false else s.hasEarlier,
             )
         }
         persistChats()
         if (synced) {
+            chatEpoch++
+            pendingDeletes.add(id)
             viewModelScope.launch {
                 try {
                     api.delete("/v1/conversations/$id")
@@ -732,14 +764,38 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                     throw e
                 } catch (e: ApiClient.ApiException) {
                     // 404 means it is already gone, which is what was asked for.
-                    if (e.status != 404) {
-                        _messages.tryEmit("Could not delete the chat on the server: ${e.message}")
-                        refreshChats()
-                    }
+                    if (e.status != 404) _messages.tryEmit("Could not delete the chat on the server: ${e.message}")
                 } catch (e: Exception) {
                     _messages.tryEmit("Could not delete the chat on the server: ${e.message}")
-                    refreshChats()
+                } finally {
+                    pendingDeletes.remove(id)
+                    chatEpoch++
+                    refreshChats() // a chat the server could not delete comes back; a deleted one stays gone
                 }
+            }
+        }
+    }
+
+    /** Fetch the page of messages before the oldest one shown and put it in front. */
+    fun loadEarlier() {
+        val s = _chat.value
+        val id = s.activeId ?: return
+        val oldest = s.messages.firstOrNull { it.seq > 0 }?.seq ?: return
+        if (s.busy || !s.hasEarlier || loadingEarlier) return
+        loadingEarlier = true
+        viewModelScope.launch {
+            try {
+                val res = api.get("/v1/conversations/$id/messages?before=$oldest&limit=$MAX_CHAT_MESSAGES")
+                val older = ApiClient.arrayOf(res, "messages").objects().map { messageFromServer(it) }
+                val more = res.optBoolean("has_more")
+                _chat.update { st -> if (st.activeId == id) st.copy(messages = older + st.messages, hasEarlier = more) else st }
+                saveActiveChat()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _messages.tryEmit("Could not load earlier messages: ${e.message}")
+            } finally {
+                loadingEarlier = false
             }
         }
     }

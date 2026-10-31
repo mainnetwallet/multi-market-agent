@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -81,8 +82,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -92,6 +95,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -149,6 +153,7 @@ fun ChatScreen(
     onRenameChat: (String, String) -> Unit,
     onDeleteChat: (String) -> Unit,
     onSearchChats: suspend (String) -> List<String>?,
+    onLoadEarlier: () -> Unit,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -158,16 +163,19 @@ fun ChatScreen(
 
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
 
-    // A new message scrolls into view; the spacer after the last message makes "the end" reachable.
-    LaunchedEffect(chat.messages.size, chat.activeId) {
-        if (chat.messages.isNotEmpty()) listState.animateScrollToItem(chat.messages.size)
+    // The list has an optional "load earlier" row in front and a spacer after the last message, which makes "the end" reachable.
+    val endIndex = chat.messages.size + (if (chat.hasEarlier) 1 else 0)
+    // A new message at the end scrolls into view; older messages added in front must not.
+    val lastKey = chat.messages.lastOrNull()?.let { "${it.seq}-${it.role}-${it.at}" }
+    LaunchedEffect(lastKey, chat.activeId) {
+        if (chat.messages.isNotEmpty()) listState.animateScrollToItem(endIndex)
     }
     // While a reply streams in, follow it, but only if the reader has not scrolled away.
     val replyLength = chat.messages.lastOrNull()?.text?.length ?: 0
     LaunchedEffect(replyLength) {
         val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-        if (chat.busy && chat.messages.isNotEmpty() && lastVisible >= chat.messages.lastIndex) {
-            listState.scrollToItem(chat.messages.size)
+        if (chat.busy && chat.messages.isNotEmpty() && lastVisible >= endIndex - 1) {
+            listState.scrollToItem(endIndex)
         }
     }
 
@@ -232,7 +240,14 @@ fun ChatScreen(
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        itemsIndexed(chat.messages, key = { index, m -> "$index-${m.role}-${m.at}" }) { index, message ->
+                        if (chat.hasEarlier) {
+                            item(key = "earlier") {
+                                TextButton(onClick = onLoadEarlier, enabled = !chat.busy, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Load earlier messages")
+                                }
+                            }
+                        }
+                        itemsIndexed(chat.messages, key = { index, m -> if (m.seq > 0) "s${m.seq}" else "$index-${m.role}-${m.at}" }) { index, message ->
                             val previous = chat.messages.getOrNull(index - 1)
                             // Command replies are tables and lists, not markdown: keep them aligned.
                             val fromCommand = previous != null && previous.role == "user" && previous.text.startsWith("/")
@@ -242,7 +257,7 @@ fun ChatScreen(
                     }
                     if (!atBottom) {
                         ScrollToBottom(
-                            onClick = { scope.launch { listState.animateScrollToItem(chat.messages.size) } },
+                            onClick = { scope.launch { listState.animateScrollToItem(endIndex) } },
                             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
                         )
                     }
@@ -539,24 +554,28 @@ private fun MarkdownText(text: String, onCopy: (String) -> Unit) {
     val codeBackground = MaterialTheme.colorScheme.surfaceVariant
     val linkColor = MaterialTheme.colorScheme.secondary
     val onSurface = MaterialTheme.colorScheme.onSurface
+    // A tapped link is opened only after the reader has seen where it really goes.
+    var pendingLink by remember { mutableStateOf<String?>(null) }
+    val onLink: (String) -> Unit = { pendingLink = it }
+    pendingLink?.let { url -> LinkDialog(url, onDismiss = { pendingLink = null }) }
     SelectionContainer {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             blocks.forEach { block ->
                 when (block) {
                     is MdBlock.Heading -> Text(
-                        inlineMarkdown(block.text, codeBackground, linkColor),
+                        inlineMarkdown(block.text, codeBackground, linkColor, onLink),
                         style = if (block.level <= 2) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall,
                         color = onSurface,
                     )
                     is MdBlock.Paragraph -> Text(
-                        inlineMarkdown(block.text, codeBackground, linkColor),
+                        inlineMarkdown(block.text, codeBackground, linkColor, onLink),
                         style = MaterialTheme.typography.bodyLarge,
                         color = onSurface,
                     )
                     is MdBlock.Bullet -> Row(modifier = Modifier.padding(start = (block.indent * 16).dp)) {
                         Text(block.marker, style = MaterialTheme.typography.bodyLarge, color = onSurface, modifier = Modifier.width(24.dp))
                         Text(
-                            inlineMarkdown(block.text, codeBackground, linkColor),
+                            inlineMarkdown(block.text, codeBackground, linkColor, onLink),
                             style = MaterialTheme.typography.bodyLarge,
                             color = onSurface,
                             modifier = Modifier.weight(1f),
@@ -565,7 +584,7 @@ private fun MarkdownText(text: String, onCopy: (String) -> Unit) {
                     is MdBlock.Quote -> Row(modifier = Modifier.height(IntrinsicSize.Min)) {
                         Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outline))
                         Text(
-                            inlineMarkdown(block.text, codeBackground, linkColor),
+                            inlineMarkdown(block.text, codeBackground, linkColor, onLink),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(start = 10.dp),
@@ -590,6 +609,35 @@ private fun MarkdownText(text: String, onCopy: (String) -> Unit) {
             }
         }
     }
+}
+
+/** The address a link really opens, shown before it is opened: the label the assistant wrote may say something else. */
+@Composable
+private fun LinkDialog(url: String, onDismiss: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Open this link?") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(linkHost(url) ?: url, style = MaterialTheme.typography.titleMedium)
+                Text(url, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("The assistant wrote this link. Check the address before you open it.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    runCatching { uriHandler.openUri(url) }
+                    onDismiss()
+                },
+            ) { Text("Open") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -808,6 +856,22 @@ internal fun formatTable(rows: List<String>): String {
     return out.joinToString("\n")
 }
 
+/** The host a link points at, or null if it has none. Anything before an `@` is not the host, so a look-alike is shown as what it is. */
+internal fun linkHost(url: String): String? = try {
+    java.net.URI(url).host?.takeIf { it.isNotBlank() }
+} catch (e: Exception) {
+    null
+}
+
+/** The address of a Markdown link if it is a plain web link (http or https, with a host, no spaces), else null: other schemes are never made tappable. */
+internal fun safeLinkUrl(raw: String): String? {
+    val url = raw.trim()
+    if (url.isEmpty() || url.length > 2000 || url.any { it.isWhitespace() || it.isISOControl() }) return null
+    val lower = url.lowercase()
+    if (!lower.startsWith("https://") && !lower.startsWith("http://")) return null
+    return if (linkHost(url) != null) url else null
+}
+
 private val TOOL_LABELS = mapOf(
     "get_status" to "Checking status",
     "list_markets" to "Searching markets",
@@ -836,8 +900,11 @@ internal fun toolLabel(name: String): String = TOOL_LABELS[name] ?: name.replace
 
 // MARKDOWN-PURE-END
 
-/** `code`, **bold**, *italic* and [label](url). Links are underlined; the address itself is not shown. */
-internal fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Color): AnnotatedString = buildAnnotatedString {
+/**
+ * `code`, **bold**, *italic* and [label](url). Links are underlined and show only their label; with [onLink] a
+ * plain web link is tappable and reports its address (the screen asks before opening it).
+ */
+internal fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Color, onLink: ((String) -> Unit)? = null): AnnotatedString = buildAnnotatedString {
     var i = 0
     while (i < text.length) {
         val c = text[i]
@@ -852,7 +919,7 @@ internal fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Colo
             val end = text.indexOf("**", i + 2)
             if (end > i + 2) {
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                    append(inlineMarkdown(text.substring(i + 2, end), codeBackground, linkColor))
+                    append(inlineMarkdown(text.substring(i + 2, end), codeBackground, linkColor, onLink))
                 }
                 i = end + 2
                 continue
@@ -868,7 +935,15 @@ internal fun inlineMarkdown(text: String, codeBackground: Color, linkColor: Colo
             val mid = text.indexOf("](", i + 1)
             val end = if (mid > i) text.indexOf(')', mid + 2) else -1
             if (mid > i + 1 && end > mid && !text.substring(i + 1, mid).contains('\n')) {
-                withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) { append(text.substring(i + 1, mid)) }
+                val label = text.substring(i + 1, mid)
+                val url = if (onLink != null) safeLinkUrl(text.substring(mid + 2, end)) else null
+                withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) {
+                    if (url != null && onLink != null) {
+                        withLink(LinkAnnotation.Url(url, linkInteractionListener = { onLink(url) })) { append(label) }
+                    } else {
+                        append(label)
+                    }
+                }
                 i = end + 1
                 continue
             }

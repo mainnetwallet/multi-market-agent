@@ -34,7 +34,8 @@ directly — no WebView.
   message text, searched on the server). Replies stream in with Markdown, aligned tables and
   syntax-highlighted code blocks; each message and code block has a Copy action. Tool steps show as
   they run, and Stop ends a reply (a step already running, such as a trade, still finishes, so check
-  Orders). Chats from before this change stay on the device and open as before; sending a message in
+  Orders). Web links in replies are tappable, but only after a dialog shows the real address; long chats
+  load in pages ("Load earlier messages"). Chats from before this change stay on the device and open as before; sending a message in
   one starts its server copy. Slash commands (`/status`, `/positions`, ...) work as always.
 - **Settings** — a Security section with the mode, the app lock (on/off and the
   background timeout), the per-trade cap, the hard ceiling (raisable with a

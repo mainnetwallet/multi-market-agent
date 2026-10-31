@@ -11,12 +11,15 @@ import com.mainnetwallet.mmagent.ui.MdBlock
 import com.mainnetwallet.mmagent.ui.chatGroup
 import com.mainnetwallet.mmagent.ui.filterConversations
 import com.mainnetwallet.mmagent.ui.formatTable
+import com.mainnetwallet.mmagent.ui.linkHost
 import com.mainnetwallet.mmagent.ui.parseMarkdownBlocks
+import com.mainnetwallet.mmagent.ui.safeLinkUrl
 import com.mainnetwallet.mmagent.ui.searchConversations
 import com.mainnetwallet.mmagent.ui.tokenizeCode
 import com.mainnetwallet.mmagent.ui.toolLabel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -181,5 +184,25 @@ class ChatTest {
             formatTable(listOf("| Name | Qty |", "|---|---|", "| **BTC** | 10 |")),
         )
         assertEquals("a  b\n1  2", formatTable(listOf("| a | b |", "| 1 | 2 |")))
+    }
+
+    @Test
+    fun onlyPlainWebLinksAreTappable() {
+        assertEquals("https://example.com/a?b=1", safeLinkUrl(" https://example.com/a?b=1 "))
+        assertEquals("HTTP://EXAMPLE.COM", safeLinkUrl("HTTP://EXAMPLE.COM"))
+        assertNull(safeLinkUrl("javascript:alert(1)"))
+        assertNull(safeLinkUrl("intent://scan/#Intent;scheme=zxing;end"))
+        assertNull(safeLinkUrl("file:///etc/passwd"))
+        assertNull(safeLinkUrl("https://"))
+        assertNull(safeLinkUrl("https://exa mple.com"))
+        assertNull(safeLinkUrl(""))
+        assertNull(safeLinkUrl("https://a.io/" + "x".repeat(2100)))
+    }
+
+    @Test
+    fun theDialogShowsTheRealHostNotTheTextBeforeAnAtSign() {
+        assertEquals("evil.example", linkHost("https://paypal.com@evil.example/login"))
+        assertEquals("example.com", linkHost("https://example.com:8443/x"))
+        assertNull(linkHost("not a url"))
     }
 }
