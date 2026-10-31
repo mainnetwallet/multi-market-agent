@@ -8,6 +8,7 @@ Prices stay Decimal-as-string, like every other money/price value on the API.
 from __future__ import annotations
 
 import json
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -26,41 +27,16 @@ TABS: dict[str, dict[str, Any]] = {
     "new": {"label": "New", "order": "startDate"},
 }
 
-# Sub-categories (the left sidebar on polymarket.com once a category is open). ``tag`` is the path segment the
-# website uses under the category (``/crypto/5M``), taken as the Gamma tag slug. ``separator_before`` starts a new
-# group, like the line the site draws between the timeframes and the coins.
-CRYPTO_SUB: tuple[dict[str, Any], ...] = (
-    {"id": "5m", "label": "5 Min", "tag": "5M"},
-    {"id": "15m", "label": "15 Min", "tag": "15M"},
-    {"id": "1h", "label": "1 Hour", "tag": "hourly"},
-    {"id": "4h", "label": "4 Hours", "tag": "4hour"},
-    {"id": "daily", "label": "Daily", "tag": "daily"},
-    {"id": "weekly", "label": "Weekly", "tag": "weekly"},
-    {"id": "monthly", "label": "Monthly", "tag": "monthly"},
-    {"id": "yearly", "label": "Yearly", "tag": "yearly"},
-    {"id": "targets", "label": "Targets", "tag": "targets"},
-    {"id": "pre-market", "label": "Pre-Market", "tag": "pre-market"},
-    {"id": "institutions", "label": "Institutions", "tag": "institutions"},
-    {"id": "industry", "label": "Industry", "tag": "industry"},
-    {"id": "protocol-metrics", "label": "Protocol Metrics", "tag": "protocol-metrics"},
-    {"id": "bitcoin", "label": "Bitcoin", "tag": "bitcoin", "separator_before": True},
-    {"id": "ethereum", "label": "Ethereum", "tag": "ethereum"},
-    {"id": "solana", "label": "Solana", "tag": "solana"},
-    {"id": "xrp", "label": "XRP", "tag": "xrp"},
-    {"id": "dogecoin", "label": "Dogecoin", "tag": "dogecoin"},
-    {"id": "bnb", "label": "BNB", "tag": "bnb"},
-    {"id": "microstrategy", "label": "Microstrategy", "tag": "microstrategy"},
-)
-
-# Category tabs in the website's order. A tab with ``sub`` shows those sub-categories under the tab bar; the
-# sub-category tab id is ``<category id>:<sub id>`` (for example ``crypto:5m``), and "All" is the category id itself.
+# Category tabs in the website's order. Sub-categories are not listed here: they are read from Gamma at runtime
+# (``GET /tags/slug/{slug}/related-tags/tags``, see ``polymarket_sub_tags``). A sub-category tab id is
+# ``<category id>:<tag slug>`` (for example ``crypto:1h``) and "All" is the category id itself.
 # ``highlight`` draws the tab in the accent gradient (Midterms on the site); ``separator_before`` puts the thin
 # divider the site shows between the featured tabs and the categories.
 NAV_TABS: tuple[dict[str, Any], ...] = (
     {"id": "midterms", "label": "Midterms", "tag": "midterms", "highlight": True},
     {"id": "politics", "label": "Politics", "tag": "politics", "separator_before": True},
     {"id": "sports", "label": "Sports", "tag": "sports"},
-    {"id": "crypto", "label": "Crypto", "tag": "crypto", "sub": CRYPTO_SUB},
+    {"id": "crypto", "label": "Crypto", "tag": "crypto"},
     {"id": "esports", "label": "Esports", "tag": "esports"},
     {"id": "iran", "label": "Iran", "tag": "iran"},
     {"id": "finance", "label": "Finance", "tag": "finance"},
@@ -76,26 +52,58 @@ NAV_TABS: tuple[dict[str, Any], ...] = (
 NAV_BY_ID: dict[str, dict[str, Any]] = {t["id"]: t for t in NAV_TABS}
 
 
+_SLUG_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
 def polymarket_tab_cfg(tab: str) -> dict[str, Any] | None:
-    """Query settings for a Polymarket tab id: a sort mode, or a website category (filtered by its tag slug)."""
+    """Query settings for a Polymarket tab id: a sort mode, a website category, or one of its sub-categories.
+
+    A sub-category id is ``<category id>:<tag slug>``. The slug comes from Gamma, so it is only checked for a safe
+    shape here (it ends up in a URL path); a slug Gamma does not know is reported when the tag is looked up.
+    """
 
     if tab in TABS:
         return TABS[tab]
-    parent_id, _, sub_id = tab.partition(":")
+    parent_id, _, sub_slug = tab.partition(":")
     nav = NAV_BY_ID.get(parent_id)
     if nav is None:
         return None
-    if not sub_id:
+    if not sub_slug:
         return {"label": nav["label"], "tag_slug": nav["tag"], "order": "volume24hr"}
-    sub = next((x for x in nav.get("sub", ()) if x["id"] == sub_id), None)
-    if sub is None:
+    if not _SLUG_OK.match(sub_slug):
         return None
-    return {"label": f"{nav['label']} / {sub['label']}", "tag_slug": sub["tag"], "order": "volume24hr"}
+    return {"label": f"{nav['label']} / {sub_slug}", "tag_slug": sub_slug, "order": "volume24hr"}
 
 
-def polymarket_tab_list() -> list[dict[str, Any]]:
-    """The tab bar for the app: sort modes, then the website categories, with display flags."""
+def polymarket_sub_tags(data: Any, parent_slug: str = "") -> list[dict[str, str]]:
+    """Gamma ``/tags/slug/{slug}/related-tags/tags`` -> sub-category rows ``{tag_id, slug, label}``, in Gamma's order.
 
+    Hidden tags (``forceHide``), tags without an id, slug or label, unsafe slugs, the parent itself and duplicates
+    are dropped. Nothing is added or renamed: the list is what Gamma returns.
+    """
+
+    if not isinstance(data, list):
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[str] = {parent_slug.lower()} if parent_slug else set()
+    for raw in data:
+        if not isinstance(raw, dict) or raw.get("forceHide"):
+            continue
+        tag_id, slug, label = _text(raw.get("id")), _text(raw.get("slug")), _text(raw.get("label"))
+        if not tag_id or not label or not _SLUG_OK.match(slug) or slug.lower() in seen:
+            continue
+        seen.add(slug.lower())
+        out.append({"tag_id": tag_id, "slug": slug, "label": label})
+    return out
+
+
+def polymarket_tab_list(subs: dict[str, list[dict[str, str]]] | None = None) -> list[dict[str, Any]]:
+    """The tab bar for the app: sort modes, then the website categories, with display flags.
+
+    ``subs`` maps a category id to its sub-category rows (``polymarket_sub_tags``); a category without any has none.
+    """
+
+    subs = subs or {}
     tabs = [{**t, "highlight": False, "separator_before": False, "subtabs": []} for t in tab_list("polymarket")]
     for nav in NAV_TABS:
         tabs.append(
@@ -107,12 +115,8 @@ def polymarket_tab_list() -> list[dict[str, Any]]:
                 "highlight": bool(nav.get("highlight")),
                 "separator_before": bool(nav.get("separator_before")),
                 "subtabs": [
-                    {
-                        "id": f"{nav['id']}:{sub['id']}",
-                        "label": sub["label"],
-                        "separator_before": bool(sub.get("separator_before")),
-                    }
-                    for sub in nav.get("sub", ())
+                    {"id": f"{nav['id']}:{sub['slug']}", "label": sub["label"], "separator_before": False}
+                    for sub in subs.get(nav["id"], [])
                 ],
             }
         )

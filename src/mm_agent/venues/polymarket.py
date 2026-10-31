@@ -196,6 +196,8 @@ class PolymarketVenue(HttpVenue):
         self._tag_gate = asyncio.Semaphore(4)
         # website category slug -> numeric Gamma tag id (ids never change, so kept for the process lifetime)
         self._nav_tag_ids: dict[str, str] = {}
+        # category id -> (valid until, sub-category rows read from Gamma)
+        self._sub_tags: dict[str, tuple[float, list[dict[str, str]]]] = {}
         self.test_orders = False
         self._test_error: str | None = None
 
@@ -244,10 +246,44 @@ class PolymarketVenue(HttpVenue):
         self._nav_tag_ids[slug] = tag_id
         return tag_id
 
-    async def discover_tabs(self) -> dict[str, Any]:
-        """Tabs for the app: the sort modes, then the categories polymarket.com shows in its header."""
+    async def _sub_tag_rows(self, nav: dict[str, Any]) -> list[dict[str, str]]:
+        """Sub-categories of a website category, as Gamma lists them (``related-tags/tags``, active events only).
 
-        return {"tabs": discover_lib.polymarket_tab_list(), "note": ""}
+        A good answer is kept for hours, a failure for a minute, and the last good list keeps being served
+        meanwhile. The tag ids that come with it are remembered, so opening a sub-category needs no lookup.
+        """
+
+        now = time.monotonic()
+        cached = self._sub_tags.get(str(nav["id"]))
+        if cached is not None and cached[0] > now:
+            return cached[1]
+        stale = cached[1] if cached is not None else []
+        try:
+            data = await self.get_json(
+                GAMMA + "/tags/slug/" + str(nav["tag"]) + "/related-tags/tags",
+                params={"omit_empty": "true", "status": "active"},
+            )
+            rows = discover_lib.polymarket_sub_tags(data, str(nav["tag"]))
+            ttl = 6 * 3600
+        except Exception:
+            rows = stale
+            ttl = 60
+        for row in rows:
+            self._nav_tag_ids.setdefault(row["slug"], row["tag_id"])
+        self._sub_tags[str(nav["id"])] = (now + ttl, rows)
+        return rows
+
+    async def discover_tabs(self) -> dict[str, Any]:
+        """Tabs for the app: the sort modes, the categories polymarket.com shows in its header, and for each
+        category the sub-categories Gamma lists for it."""
+
+        async def one(nav: dict[str, Any]) -> list[dict[str, str]]:
+            async with self._tag_gate:
+                return await self._sub_tag_rows(nav)
+
+        rows = await asyncio.gather(*(one(nav) for nav in discover_lib.NAV_TABS))
+        subs = {str(nav["id"]): r for nav, r in zip(discover_lib.NAV_TABS, rows, strict=True)}
+        return {"tabs": discover_lib.polymarket_tab_list(subs), "note": ""}
 
     async def discover(self, *, tab: str, q: str | None, limit: int, offset: int) -> dict[str, Any]:
         """Polymarket-style browse: Gamma events for a tab (or a text search) as cards."""

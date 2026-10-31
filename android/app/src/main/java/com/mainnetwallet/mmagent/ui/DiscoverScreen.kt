@@ -123,7 +123,7 @@ internal object DiscoverTabsCache {
         label = it.optString("label"),
         highlight = it.optBoolean("highlight", false),
         separatorBefore = it.optBoolean("separator_before", false),
-        // Sub-categories (the sidebar polymarket.com shows once a category is open), e.g. Crypto -> 5 Min.
+        // Sub-categories of a category, as the server read them from Gamma (e.g. Crypto -> 1H).
         subtabs = ApiClient.arrayOf(it, "subtabs").objects()
             .map { sub -> Tab(sub.optString("id"), sub.optString("label"), separatorBefore = sub.optBoolean("separator_before", false)) }
             .filter { sub -> sub.id.isNotBlank() && sub.label.isNotBlank() },
@@ -313,7 +313,7 @@ fun DiscoverScreen(
         Box(
             Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
         )
-        // Sub-categories of the open category (the left sidebar on polymarket.com): All, then e.g. 5 Min ... Bitcoin.
+        // Sub-categories of the open category, whatever the server lists: All, then each one.
         val parentId = tab.substringBefore(':')
         val subtabs = tabs.firstOrNull { it.id == parentId }?.subtabs.orEmpty()
         if (subtabs.isNotEmpty()) {

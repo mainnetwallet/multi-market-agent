@@ -102,39 +102,118 @@ def test_polymarket_tab_bar_matches_the_website_header() -> None:
     assert len({t["id"] for t in tabs}) == len(tabs)  # no category can shadow a sort mode
 
 
-def test_crypto_tab_carries_the_website_sidebar() -> None:
-    crypto = next(t for t in discover.polymarket_tab_list() if t["id"] == "crypto")
-    assert [s["label"] for s in crypto["subtabs"]] == [
-        "5 Min", "15 Min", "1 Hour", "4 Hours", "Daily", "Weekly", "Monthly", "Yearly", "Targets", "Pre-Market",
-        "Institutions", "Industry", "Protocol Metrics", "Bitcoin", "Ethereum", "Solana", "XRP", "Dogecoin", "BNB",
-        "Microstrategy",
-    ]  # fmt: skip
-    assert [s["id"] for s in crypto["subtabs"] if s["separator_before"]] == ["crypto:bitcoin"]  # timeframes | coins
-    assert all(s["id"].startswith("crypto:") for s in crypto["subtabs"])
-    assert len({s["id"] for s in crypto["subtabs"]}) == len(crypto["subtabs"])
-    others = [t for t in discover.polymarket_tab_list() if t["id"] != "crypto"]
-    assert all(t["subtabs"] == [] for t in others)
+GAMMA_CRYPTO_RELATED = [
+    {"id": "102175", "label": "1H", "slug": "1h", "forceShow": True, "activeEventsCount": 511},
+    {"id": "102133", "label": "Today 🚀", "slug": "today", "forceShow": True},
+    {"id": "9", "label": "Hidden", "slug": "hidden", "forceHide": True},
+    {"id": "1", "label": "Crypto", "slug": "crypto"},  # the parent itself
+    {"id": "101473", "label": "MicroStrategy", "slug": "microstrategy"},
+    {"id": "102175", "label": "1H again", "slug": "1H"},  # duplicate slug
+    {"id": "", "label": "No id", "slug": "no-id"},
+    {"id": "5", "label": "Bad slug", "slug": "a/b"},
+    "junk",
+]
+CRYPTO_SUB_IDS = ["crypto:1h", "crypto:today", "crypto:microstrategy"]
 
 
-def test_sub_tab_config_resolves_the_sub_tag() -> None:
-    cfg = discover.polymarket_tab_cfg("crypto:5m")
-    assert cfg is not None and cfg["tag_slug"] == "5M" and "Crypto" in cfg["label"]
+def test_sub_tags_are_what_gamma_lists_nothing_added() -> None:
+    rows = discover.polymarket_sub_tags(GAMMA_CRYPTO_RELATED, "crypto")
+    assert [(r["slug"], r["label"], r["tag_id"]) for r in rows] == [
+        ("1h", "1H", "102175"),
+        ("today", "Today 🚀", "102133"),
+        ("microstrategy", "MicroStrategy", "101473"),
+    ]
+    assert discover.polymarket_sub_tags({"not": "a list"}) == []
+    assert discover.polymarket_sub_tags([]) == []
+
+
+def test_tab_list_has_no_subtabs_unless_given() -> None:
+    assert all(t["subtabs"] == [] for t in discover.polymarket_tab_list())
+    subs = {"crypto": discover.polymarket_sub_tags(GAMMA_CRYPTO_RELATED, "crypto")}
+    tabs = {t["id"]: t for t in discover.polymarket_tab_list(subs)}
+    assert [(s["id"], s["label"]) for s in tabs["crypto"]["subtabs"]] == list(
+        zip(CRYPTO_SUB_IDS, ["1H", "Today 🚀", "MicroStrategy"], strict=True)
+    )
+    assert not any(s["separator_before"] for s in tabs["crypto"]["subtabs"])  # Gamma has no grouping to copy
+    assert tabs["politics"]["subtabs"] == []
+
+
+def test_sub_tab_config_uses_the_slug_in_the_id() -> None:
+    cfg = discover.polymarket_tab_cfg("crypto:1h")
+    assert cfg is not None and cfg["tag_slug"] == "1h" and "Crypto" in cfg["label"]
     all_cfg = discover.polymarket_tab_cfg("crypto")
     assert all_cfg is not None and all_cfg["tag_slug"] == "crypto"
-    assert discover.polymarket_tab_cfg("crypto:nope") is None
-    assert discover.polymarket_tab_cfg("politics:5m") is None  # politics has no sub-categories
-    assert discover.polymarket_tab_cfg("nope:5m") is None
+    assert discover.polymarket_tab_cfg("politics:anything") is not None  # any category may have sub-categories
+    assert discover.polymarket_tab_cfg("crypto:a/b") is None  # the slug ends up in a URL path
+    assert discover.polymarket_tab_cfg("crypto:../x") is None
+    assert discover.polymarket_tab_cfg("nope:1h") is None
 
 
-def test_discover_tabs_need_no_network(tmp_path: Path) -> None:
+def test_discover_tabs_read_sub_categories_from_gamma_and_cache_them(tmp_path: Path) -> None:
     venue = PolymarketVenue(make_settings(tmp_path))
+    seen: list[tuple[str, dict[str, Any] | None]] = []
 
-    async def boom(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
-        raise AssertionError("the tab bar is fixed to the website's; it must not call Gamma")
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        seen.append((url, params))
+        if url.endswith("/tags/slug/crypto/related-tags/tags"):
+            return GAMMA_CRYPTO_RELATED
+        return []  # every other category has none
 
-    venue.get_json = boom  # type: ignore[method-assign]
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
     out = asyncio.run(venue.discover_tabs())
-    assert out["note"] == "" and out["tabs"][0]["id"] == "trending" and out["tabs"][-1]["id"] == "art"
+    tabs = {t["id"]: t for t in out["tabs"]}
+    assert [s["id"] for s in tabs["crypto"]["subtabs"]] == CRYPTO_SUB_IDS
+    assert all(t["subtabs"] == [] for t in out["tabs"] if t["id"] != "crypto")
+    assert len(seen) == len(discover.NAV_TABS)  # one call per category
+    assert all(p == {"omit_empty": "true", "status": "active"} for _, p in seen)
+    assert any("/tags/slug/pop-culture/related-tags/tags" in u for u, _ in seen)
+
+    asyncio.run(venue.discover_tabs())
+    assert len(seen) == len(discover.NAV_TABS)  # served from the cache
+
+
+def test_discover_tabs_survive_a_gamma_failure_and_keep_the_last_list(tmp_path: Path) -> None:
+    venue = PolymarketVenue(make_settings(tmp_path))
+    state = {"fail": False}
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        if state["fail"]:
+            raise RuntimeError("gamma down")
+        return GAMMA_CRYPTO_RELATED if "/crypto/" in url else []
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    asyncio.run(venue.discover_tabs())
+    state["fail"] = True
+    for key, (_, rows) in list(venue._sub_tags.items()):  # age the cache out
+        venue._sub_tags[key] = (0.0, rows)
+    out = asyncio.run(venue.discover_tabs())
+    crypto = next(t for t in out["tabs"] if t["id"] == "crypto")
+    assert [s["id"] for s in crypto["subtabs"]] == CRYPTO_SUB_IDS  # the last good list is still served
+    assert out["tabs"][0]["id"] == "trending" and out["tabs"][-1]["id"] == "art"  # the bar itself never fails
+
+    fresh = PolymarketVenue(make_settings(tmp_path))
+    fresh.get_json = fake_get_json  # type: ignore[method-assign]
+    out = asyncio.run(fresh.discover_tabs())  # no earlier list and Gamma down: just no sub-categories
+    assert all(t["subtabs"] == [] for t in out["tabs"]) and out["tabs"][-1]["id"] == "art"
+
+
+def test_opening_a_sub_category_needs_no_tag_lookup_after_the_tabs_loaded(tmp_path: Path) -> None:
+    venue = PolymarketVenue(make_settings(tmp_path))
+    seen: list[tuple[str, dict[str, Any] | None]] = []
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        seen.append((url, params))
+        if "/related-tags/tags" in url:
+            return GAMMA_CRYPTO_RELATED if "/crypto/" in url else []
+        return [_event("1", [_market("a", "0.2", "0.8")])]
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    asyncio.run(venue.discover_tabs())
+    seen.clear()
+    out = asyncio.run(venue.discover(tab="crypto:1h", q=None, limit=10, offset=0))
+    assert len(seen) == 1 and seen[0][0].endswith("/events")  # the tag id came with Gamma's list
+    assert (seen[0][1] or {})["tag_id"] == "102175"
+    assert out["items"][0]["markets"][0]["market_id"] == "a"
 
 
 def test_discover_filters_a_category_by_the_tag_id_of_its_slug(tmp_path: Path) -> None:
@@ -169,7 +248,7 @@ def test_discover_filters_a_category_by_the_tag_id_of_its_slug(tmp_path: Path) -
     with pytest.raises(ValueError):
         asyncio.run(venue.discover(tab="perps", q=None, limit=10, offset=0))  # not in the website's category bar
     with pytest.raises(ValueError):
-        asyncio.run(venue.discover(tab="crypto:nope", q=None, limit=10, offset=0))
+        asyncio.run(venue.discover(tab="crypto:a/b", q=None, limit=10, offset=0))
 
 
 def test_discover_sub_category_lists_every_page_without_a_cap(tmp_path: Path) -> None:
