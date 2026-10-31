@@ -47,6 +47,45 @@ def tag_tabs(rows: Any) -> list[dict[str, str]]:
     return out
 
 
+# Internal bookkeeping tags that Gamma attaches to events but that are not topics a person browses.
+# Gamma's own ``forceHide`` flag is honoured first; this only guards the few flags it does not cover.
+_NON_CATEGORY_SLUGS = frozenset({"all", "recurring", "hide-from-new", "weekly", "daily", "monthly"})
+
+
+def event_tag_tabs(
+    events: Any, *, exclude: frozenset[str] | set[str] = frozenset(), limit: int = 14, min_events: int = 2
+) -> list[dict[str, str]]:
+    """Category tabs read from the tags of live events, most common first.
+
+    ``GET /tags?is_carousel=true`` turned out to list only a handful of tags (not the category bar), so
+    the topics that really have open markets are read from a page of the busiest active events instead.
+    A tag counts once per event, must appear in at least ``min_events`` of them, and is dropped when Gamma
+    marks it ``forceHide`` or its slug is in ``exclude`` (the sort modes) or is a known internal flag.
+    """
+
+    if not isinstance(events, list):
+        return []
+    counts: dict[str, int] = {}
+    found: dict[str, dict[str, str]] = {}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        seen_here: set[str] = set()
+        for raw in event.get("tags") or []:
+            if not isinstance(raw, dict) or raw.get("forceHide") is True:
+                continue
+            tag_id, slug, label = _text(raw.get("id")), _text(raw.get("slug")), _text(raw.get("label"))
+            if not tag_id or not slug or not label or slug in exclude or slug in _NON_CATEGORY_SLUGS:
+                continue
+            if slug in seen_here:
+                continue
+            seen_here.add(slug)
+            counts[slug] = counts.get(slug, 0) + 1
+            found.setdefault(slug, {"id": slug, "label": label, "tag_id": tag_id})
+    ranked = sorted((slug for slug, n in counts.items() if n >= min_events), key=lambda slug: -counts[slug])
+    return [found[slug] for slug in ranked[:limit]]
+
+
 # Kalshi: only the two sort modes are fixed. The categories come from Kalshi's own list
 # (``GET /search/tags_by_categories``, see ``kalshi_category_tabs``). Kalshi has no category filter
 # on ``/events``, so a category tab scans a few pages and keeps the events whose ``category`` is that

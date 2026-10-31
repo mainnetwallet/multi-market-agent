@@ -58,6 +58,7 @@ EVENT_TAG_TTL_SECONDS = 6 * 3600
 EVENT_TAG_RETRY_SECONDS = 60
 TAG_TABS_TTL_SECONDS = 6 * 3600
 TAG_TABS_RETRY_SECONDS = 60
+TAG_SAMPLE_EVENTS = 100
 
 CATEGORY_FEE_RATES: dict[str, Decimal] = {
     "crypto": Decimal("0.07"),
@@ -234,11 +235,12 @@ class PolymarketVenue(HttpVenue):
         return Page(items=markets[: query.limit], next_cursor=next_cursor)
 
     async def _tag_tab_rows(self) -> tuple[list[dict[str, str]], str]:
-        """Category tabs from Gamma's own tag list, plus a note when they could not be read.
+        """Category tabs read from Gamma at runtime, plus a note when part of it could not be read.
 
-        ``GET /tags?is_carousel=true`` is the set polymarket.com shows as its category bar, so
-        nothing is hardcoded here. A good answer is kept for hours; a failure is remembered for a
-        minute and the last good list (if any) keeps being served meanwhile.
+        Two live sources, nothing hardcoded: the tags of the busiest active events (the topics that
+        really have open markets, most common first) and ``GET /tags?is_carousel=true`` (extra tags
+        Polymarket flags for its carousel, which on its own is only a few). A good answer is kept for
+        hours; a failure is remembered for a minute and the last good list keeps being served meanwhile.
         """
 
         now = time.monotonic()
@@ -246,17 +248,40 @@ class PolymarketVenue(HttpVenue):
         if cached is not None and cached[0] > now:
             return cached[1], cached[2]
         stale = cached[1] if cached is not None else []
+        notes: list[str] = []
+        derived: list[dict[str, str]] = []
+        carousel: list[dict[str, str]] = []
+        try:
+            events = await self.get_json(
+                GAMMA + "/events",
+                params={
+                    "active": "true",
+                    "closed": "false",
+                    "order": "volume24hr",
+                    "ascending": "false",
+                    "limit": TAG_SAMPLE_EVENTS,
+                },
+            )
+            if not isinstance(events, list):
+                raise VenueUnavailableError("Gamma /events returned a non-list payload")
+            derived = discover_lib.event_tag_tabs(events, exclude=set(discover_lib.TABS))
+        except Exception as exc:
+            notes.append(f"Could not read event tags: {str(exc)[:100]}")
         try:
             data = await self.get_json(GAMMA + "/tags", params={"is_carousel": "true", "limit": 200})
             if not isinstance(data, list):
                 raise VenueUnavailableError("Gamma /tags returned a non-list payload")
-            rows = discover_lib.tag_tabs(data)
-            note = "" if rows else "Polymarket returned no category tags."
-            ttl = TAG_TABS_TTL_SECONDS if rows else TAG_TABS_RETRY_SECONDS
+            carousel = discover_lib.tag_tabs(data)
         except Exception as exc:
+            notes.append(f"Could not load Polymarket categories: {str(exc)[:100]}")
+        have = {r["id"] for r in derived}
+        rows = derived + [r for r in carousel if r["id"] not in have]
+        if not rows:
             rows = stale
-            note = f"Could not load Polymarket categories: {str(exc)[:120]}"
-            ttl = TAG_TABS_RETRY_SECONDS
+            if not notes:
+                notes.append("Polymarket returned no category tags.")
+        note = "; ".join(notes)
+        ttl = TAG_TABS_TTL_SECONDS if rows and not notes else TAG_TABS_RETRY_SECONDS
         self._tag_tabs = (now + ttl, rows, note)
         return rows, note
 

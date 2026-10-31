@@ -117,9 +117,72 @@ def test_discover_tabs_read_gamma_tags_and_cache(tmp_path: Path) -> None:
     out = asyncio.run(venue.discover_tabs())
     assert [t["id"] for t in out["tabs"]] == ["trending", "breaking", "new", "pop-culture"]
     assert out["tabs"][-1]["label"] == "Culture" and out["note"] == ""
-    assert calls[0][0].endswith("/tags") and calls[0][1]["is_carousel"] == "true"
+    tag_calls = [c for c in calls if c[0].endswith("/tags")]
+    assert len(tag_calls) == 1 and tag_calls[0][1] is not None and tag_calls[0][1]["is_carousel"] == "true"
+    before = len(calls)
     asyncio.run(venue.discover_tabs())
-    assert len(calls) == 1  # kept for hours
+    assert len(calls) == before  # kept for hours
+
+
+def _tagged(event_id: str, *tags: dict[str, Any]) -> dict[str, Any]:
+    return {"id": event_id, "tags": list(tags)}
+
+
+def _tag(tag_id: str, label: str, slug: str, **extra: Any) -> dict[str, Any]:
+    return {"id": tag_id, "label": label, "slug": slug, **extra}
+
+
+def test_event_tag_tabs_rank_by_how_many_events_carry_the_tag() -> None:
+    politics, sports, crypto = (
+        _tag("2", "Politics", "politics"),
+        _tag("1", "Sports", "sports"),
+        _tag("21", "Crypto", "crypto"),
+    )
+    events = [
+        _tagged("a", politics, sports),
+        _tagged("b", sports, crypto),
+        _tagged("c", sports, _tag("9", "Recurring", "recurring")),  # internal flag
+        _tagged("d", politics, _tag("8", "Hidden", "hidden", forceHide=True)),
+        _tagged("e", _tag("5", "Same as sort", "new"), _tag("6", "Once", "once")),  # sort-mode slug; seen once
+        "junk",
+    ]
+    assert discover.event_tag_tabs(events, exclude={"trending", "breaking", "new"}) == [
+        {"id": "sports", "label": "Sports", "tag_id": "1"},
+        {"id": "politics", "label": "Politics", "tag_id": "2"},
+    ]
+    assert discover.event_tag_tabs(events, min_events=1, limit=1) == [
+        {"id": "sports", "label": "Sports", "tag_id": "1"}
+    ]
+    assert discover.event_tag_tabs({"not": "a list"}) == []
+
+
+def test_discover_tabs_combine_event_tags_and_carousel_tags(tmp_path: Path) -> None:
+    venue = PolymarketVenue(make_settings(tmp_path))
+    politics, sports = _tag("2", "Politics", "politics"), _tag("1", "Sports", "sports")
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        if url.endswith("/tags"):
+            return [_tag("42", "AI", "ai", isCarousel=True), _tag("2", "Politics", "politics", isCarousel=True)]
+        return [_tagged("a", politics, sports), _tagged("b", sports, politics), _tagged("c", sports)]
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover_tabs())
+    assert [t["id"] for t in out["tabs"]] == ["trending", "breaking", "new", "sports", "politics", "ai"]
+    assert out["note"] == ""
+
+
+def test_discover_tabs_keep_carousel_tags_when_events_fail(tmp_path: Path) -> None:
+    venue = PolymarketVenue(make_settings(tmp_path))
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        if url.endswith("/tags"):
+            return [_tag("42", "AI", "ai")]
+        raise RuntimeError("events down")
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover_tabs())
+    assert [t["id"] for t in out["tabs"]][-1] == "ai"
+    assert "events down" in out["note"]
 
 
 def test_discover_tabs_failure_keeps_sort_modes_and_says_why(tmp_path: Path) -> None:

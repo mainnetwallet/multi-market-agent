@@ -455,7 +455,7 @@ Browse for markets with `GET /v1/discover?venue=polymarket|kalshi|limitless&tab=
 are read from that venue's own API at runtime (cached 6 hours, nothing hardcoded); only the sort modes are fixed, and a
 `note` in the tabs response says why when a list could not be read:
 
-- **Polymarket:** Trending, Breaking, New, then `GET /tags?is_carousel=true` (tags marked `forceHide` are skipped).
+- **Polymarket:** Trending, Breaking, New, then the tags that the busiest active events carry (`GET /events`, top 100 by 24h volume; a tag must appear on 2+ events, most common first, `forceHide` tags skipped), plus any extra tags from `GET /tags?is_carousel=true`. The carousel list alone is only a few tags, so it is not the category bar.
 - **Kalshi:** Trending, New, then the categories in `GET /search/tags_by_categories`. Kalshi has no category filter on
   `/events`, so a category tab scans the latest open events and keeps those whose `category` is exactly that name.
 - **Limitless:** Trending, New, Liquid, then the ids in `GET /markets/categories/count`, each named the documented way
