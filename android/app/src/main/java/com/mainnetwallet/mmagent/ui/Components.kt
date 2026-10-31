@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,8 +19,13 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,62 +37,124 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-/** The venue badge. Every order is real, so it always says LIVE. Never ambiguous, never colour-only. */
+/**
+ * The top bar: a compact venue badge, then (optionally) the market search, then the extras (PAUSED, settings).
+ * Every order is real, so the badge always says LIVE. It is plain text on a neutral pill, never colour-only.
+ * [searchQuery] null means no search box in this bar.
+ */
 @Composable
 fun ModeFrame(
     venue: String,
     paused: Boolean,
     modifier: Modifier = Modifier,
     onBadgeClick: (() -> Unit)? = null,
+    searchQuery: String? = null,
+    onSearchQuery: (String) -> Unit = {},
     trailing: @Composable (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
-    val badgeColor = Palette.Danger
     Column(modifier = modifier) {
         Row(
             modifier = Modifier
                 .statusBarsPadding()
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .padding(horizontal = 16.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Tap the badge to switch venue. The LIVE text stays in the badge, so it is
             // never colour-only and never ambiguous.
             Text(
-                text = "${venue.uppercase()} | LIVE" + if (onBadgeClick != null) "  ▾" else "",
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
+                text = "${venue.uppercase()} | LIVE" + if (onBadgeClick != null) " ▾" else "",
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false,
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
-                    .background(badgeColor)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .then(if (onBadgeClick != null) Modifier.clickable { onBadgeClick() } else Modifier)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (paused) {
-                    Text(
-                        text = "PAUSED",
-                        color = Palette.Alert,
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(999.dp))
-                            .border(1.dp, Palette.Alert, RoundedCornerShape(999.dp))
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                }
-                trailing?.invoke()
+            if (searchQuery != null) {
+                HeaderSearchField(searchQuery, onSearchQuery)
+            } else {
+                Spacer(Modifier.weight(1f))
             }
+            if (paused) {
+                Text(
+                    text = "PAUSED",
+                    color = Palette.Alert,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .border(1.dp, Palette.Alert, RoundedCornerShape(999.dp))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+            }
+            trailing?.invoke()
         }
         content()
     }
+}
+
+/** A compact search pill for the top bar: icon, hint, clear button. Fills the space between badge and gear. */
+@Composable
+fun RowScope.HeaderSearchField(query: String, onQueryChange: (String) -> Unit) {
+    val shape = RoundedCornerShape(999.dp)
+    val hint = MaterialTheme.colorScheme.onSurfaceVariant
+    BasicTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        modifier = Modifier
+            .weight(1f)
+            .height(40.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), shape),
+        decorationBox = { inner ->
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Search, contentDescription = null, tint = hint, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                    if (query.isEmpty()) {
+                        Text(
+                            "Search markets",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = hint,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    inner()
+                }
+                if (query.isNotEmpty()) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Clear search",
+                        tint = hint,
+                        modifier = Modifier.size(18.dp).clickable { onQueryChange("") },
+                    )
+                }
+            }
+        },
+    )
 }
 
 /**

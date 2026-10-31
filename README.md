@@ -154,7 +154,7 @@ python -m mm_agent.main                    # http://127.0.0.1:8080
 ```
 
 Sign in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`. The header always shows
-a red `VENUE | LIVE` badge. Times are Asia/Dhaka. The LLM/research
+a `VENUE | LIVE` badge. Times are Asia/Dhaka. The LLM/research
 provider is optional: without it, no proposals are generated and the UI says
 research is unavailable. Slash commands still work.
 
@@ -258,7 +258,7 @@ credentials.
    CHAT_AUTOPILOT=true
    ```
    Otherwise orders require the UI/Telegram Approve button.
-5. Restart the process. Confirm the red `VENUE | LIVE` badge and the startup log.
+5. Restart the process. Confirm the `VENUE | LIVE` badge and the startup log.
 6. Approve a **$1–$2** proposal and watch the order through fill/reconciliation.
 7. If anything is unexpected: `/panic` (two confirmations), or the UI PANIC
    button. Positions are not auto-sold; review each venue manually.

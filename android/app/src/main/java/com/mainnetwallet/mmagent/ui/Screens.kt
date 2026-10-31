@@ -98,7 +98,7 @@ enum class Tab(val label: String) {
 }
 
 /**
- * The shell: venue badge and gear on top, snackbar above the bottom bar, five tabs.
+ * The shell: venue badge, market search (Markets tab) and gear on top, snackbar above the bottom bar, five tabs.
  * The badge opens the venue switcher.
  */
 @Composable
@@ -109,6 +109,8 @@ fun AppScaffold(
     onVenueClick: () -> Unit,
     onSettings: () -> Unit,
     snackbar: SnackbarHostState,
+    searchQuery: String? = null,
+    onSearchQuery: (String) -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     Scaffold(
@@ -121,6 +123,8 @@ fun AppScaffold(
                     venue = state.status.venue.ifBlank { "no venue" },
                     paused = state.status.paused,
                     onBadgeClick = onVenueClick,
+                    searchQuery = searchQuery,
+                    onSearchQuery = onSearchQuery,
                     trailing = {
                         IconButton(onClick = onSettings) {
                             Icon(Icons.Filled.Settings, contentDescription = "Settings")

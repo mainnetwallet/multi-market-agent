@@ -31,6 +31,7 @@ import com.mainnetwallet.mmagent.data.TradeSheetViewModel
 import com.mainnetwallet.mmagent.data.WithdrawViewModel
 import com.mainnetwallet.mmagent.ui.AllowlistAddScreen
 import com.mainnetwallet.mmagent.ui.AppScaffold
+import com.mainnetwallet.mmagent.ui.BROWSABLE_VENUES
 import com.mainnetwallet.mmagent.ui.ChatScreen
 import com.mainnetwallet.mmagent.ui.DepositScreen
 import com.mainnetwallet.mmagent.ui.HomeScreen
@@ -112,6 +113,8 @@ class MainActivity : FragmentActivity() {
                 val infoState by appViewModel.info.collectAsState()
                 var tab by rememberSaveable { mutableStateOf(Tab.HOME) }
                 var portfolioTab by rememberSaveable { mutableIntStateOf(0) }
+                // The market search lives in the top bar on the Markets tab; the browser below reads it.
+                var marketQuery by rememberSaveable { mutableStateOf("") }
                 var overlay by remember { mutableStateOf<String?>(null) }
                 var showVenues by remember { mutableStateOf(false) }
                 var selectedVenue by remember { mutableStateOf("") }
@@ -174,6 +177,8 @@ class MainActivity : FragmentActivity() {
                         }
                     }
 
+                    LaunchedEffect(state.status.venue) { marketQuery = "" }
+
                     AppScaffold(
                         state = state,
                         tab = if (overlay == "settings") null else tab,
@@ -185,6 +190,8 @@ class MainActivity : FragmentActivity() {
                         onVenueClick = { showVenues = true },
                         onSettings = { overlay = "settings" },
                         snackbar = snackbar,
+                        searchQuery = if (overlay == null && tab == Tab.MARKETS && state.status.venue in BROWSABLE_VENUES) marketQuery else null,
+                        onSearchQuery = { marketQuery = it },
                     ) {
                         when (overlay) {
                             "trade" -> TradeSheetScreen(
@@ -293,6 +300,8 @@ class MainActivity : FragmentActivity() {
                                     activeVenue = state.status.venue,
                                     fetchDiscover = { venue, tabId, query, offset -> appViewModel.discover(venue, tabId, query, offset) },
                                     fetchTabs = { venue -> appViewModel.discoverTabs(venue) },
+                                    query = marketQuery,
+                                    onQueryChange = { marketQuery = it },
                                     onOpen = { marketId, title, outcome ->
                                         tradeVm.newIntent()
                                         tradeVm.setMarket(marketId, title)

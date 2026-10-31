@@ -92,7 +92,7 @@ CI: `.github/workflows/android.yml`.
    to forget the session. This needs the server to be redeployed with the refresh
    endpoint; against an older server the app still works, but the session ends
    after the old 72 hours.
-4. The header always shows a red `VENUE | LIVE` badge.
+4. The header always shows a `VENUE | LIVE` badge.
 
 ## Safety rules the app enforces
 

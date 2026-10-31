@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -150,15 +149,18 @@ private val HIGHLIGHT_GRADIENT = listOf(Color(0xFF8E9BFF), Color(0xFFFF5C5C))
 private const val CARD_ROWS = 3
 
 /**
- * Polymarket-style market browser (Polymarket, Kalshi, Limitless): category tabs, search, event cards with the live
+ * Polymarket-style market browser (Polymarket, Kalshi, Limitless): category tabs, event cards (the search text lives
+ * in the top bar and arrives as [query]) with the live
  * Yes/No prices, volume and close time. Tapping a price opens the trade sheet on that side.
  * Read-only: the app only fetches public data here; every order still goes through the trade sheet.
  */
 @Composable
 fun DiscoverScreen(
     venue: String,
+    query: String,
     fetch: suspend (venue: String, tab: String, query: String, offset: Int) -> JSONObject,
     fetchTabs: suspend (venue: String) -> JSONObject,
+    onQueryChange: (String) -> Unit,
     onTrade: (marketId: String, title: String, outcome: String) -> Unit,
 ) {
     // No tab is built into the app: every tab (sort modes and categories) is whatever the server returns.
@@ -169,7 +171,6 @@ fun DiscoverScreen(
     var tabsLoading by remember(venue) { mutableStateOf(seeded == null) }
     var tabsReloadKey by remember { mutableIntStateOf(0) }
     var tab by rememberSaveable(venue) { mutableStateOf(seeded?.tabs?.firstOrNull()?.id ?: "") }
-    var query by rememberSaveable { mutableStateOf("") }
     var items by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -275,13 +276,6 @@ fun DiscoverScreen(
     LaunchedEffect(tab, query) { listState.scrollToItem(0) }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            label = { Text("Search markets") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp),
-        )
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -305,7 +299,7 @@ fun DiscoverScreen(
                         } else {
                             tab = item.id
                         }
-                        query = ""
+                        onQueryChange("")
                     })
                 }
             }
@@ -340,7 +334,7 @@ fun DiscoverScreen(
                             } else {
                                 tab = sub.id
                             }
-                            query = ""
+                            onQueryChange("")
                         })
                     }
                 }
