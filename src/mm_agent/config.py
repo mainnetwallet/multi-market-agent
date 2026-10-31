@@ -154,6 +154,16 @@ class Settings(BaseSettings):
     funds_polymarket_bridge_url: str = "https://bridge.polymarket.com"
     funds_polymarket_builder_code: str = ""
 
+    @field_validator("database_url")
+    @classmethod
+    def _postgres_driver(cls, v: str) -> str:
+        # Render and most hosts hand out postgres:// or postgresql://, which SQLAlchemy
+        # maps to psycopg2. The image installs psycopg 3, so name that driver.
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v.removeprefix(prefix)
+        return v
+
     @field_validator("max_trade_usd")
     @classmethod
     def _cap_trade(cls, v: Decimal) -> Decimal:

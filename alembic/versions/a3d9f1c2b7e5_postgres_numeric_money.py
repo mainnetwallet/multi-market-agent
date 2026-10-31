@@ -14,6 +14,7 @@ Revises: e6b3a9d2f417
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -27,6 +28,14 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _default_literal(raw: object) -> str | None:
+    """Return the plain number inside a reflected column default, or None if there is none."""
+    if raw is None:
+        return None
+    match = re.search(r"-?\d+(?:\.\d+)?", str(raw))
+    return match.group(0) if match else None
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name != "postgresql":
@@ -36,11 +45,17 @@ def upgrade() -> None:
         if not inspector.has_table(table.name):
             continue
         existing = {column["name"]: column["type"] for column in inspector.get_columns(table.name)}
+        defaults = {column["name"]: column.get("default") for column in inspector.get_columns(table.name)}
         for column in table.columns:
             if not isinstance(column.type, DecimalString) or column.name not in existing:
                 continue
             if isinstance(existing[column.name], sa.Numeric):
                 continue
+            # A text column's default (for example '0'::character varying) cannot be cast
+            # to numeric automatically, so drop it first and put the same literal back.
+            default_literal = _default_literal(defaults.get(column.name))
+            if default_literal is not None:
+                op.alter_column(table.name, column.name, server_default=None)
             op.alter_column(
                 table.name,
                 column.name,
@@ -49,6 +64,12 @@ def upgrade() -> None:
                 existing_nullable=column.nullable,
                 postgresql_using=f"NULLIF(trim(\"{column.name}\"), '')::numeric",
             )
+            if default_literal is not None:
+                op.alter_column(
+                    table.name,
+                    column.name,
+                    server_default=sa.text(f"'{default_literal}'"),
+                )
 
 
 def downgrade() -> None:
