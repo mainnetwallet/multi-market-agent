@@ -329,7 +329,6 @@ class PolymarketVenue(HttpVenue):
         items = discover_lib.shape_events(rows)
         if cfg.get("rank") == "change" and not query:
             items = discover_lib.rank_by_change(items)
-        items = items[:limit]
         # Warm the adapter so tapping a card opens the trade sheet without another lookup.
         by_id = {
             str(m.get("id")): m

@@ -235,8 +235,6 @@ class KalshiVenue(HttpVenue):
             if not cursor or (pages >= min_pages and len(items) >= limit):
                 break
         items = discover_lib.rank_items(items, rank)
-        if rank:
-            items = items[:limit]
         next_offset: int | None = None
         if cursor:
             next_offset = offset + max(len(items), 1)

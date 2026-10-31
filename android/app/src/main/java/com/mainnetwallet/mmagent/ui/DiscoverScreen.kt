@@ -468,6 +468,7 @@ private fun SubTabChip(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Unit) {
     val markets = ApiClient.arrayOf(event, "markets").objects()
+    var expanded by remember { mutableStateOf(false) }
     if (markets.isEmpty()) return
     val single = markets.size == 1 && event.optInt("market_count", 1) == 1
     val image = event.text("image")
@@ -538,7 +539,7 @@ private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Un
             }
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                markets.take(CARD_ROWS).forEach { market ->
+                (if (expanded) markets else markets.take(CARD_ROWS)).forEach { market ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             market.optString("label"),
@@ -562,12 +563,14 @@ private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Un
                         }
                     }
                 }
-                val extra = event.optInt("market_count", markets.size) - CARD_ROWS
-                if (extra > 0) {
+                val hidden = markets.size - CARD_ROWS
+                if (hidden > 0) {
                     Text(
-                        "+$extra more outcomes",
+                        if (expanded) "Show fewer" else "Show all ${markets.size} outcomes",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { expanded = !expanded }.padding(vertical = 4.dp),
                     )
                 }
             }

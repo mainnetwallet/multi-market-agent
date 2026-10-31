@@ -642,3 +642,21 @@ def test_tab_lists_per_venue() -> None:
     assert [t["id"] for t in discover.tab_list("limitless")] == ["trending", "new", "liquid"]
     assert discover.tab_list("fake") == []
     assert all(t["supported"] for t in discover.tab_list("kalshi") + discover.tab_list("limitless"))
+
+
+def test_event_card_keeps_every_market() -> None:
+    markets = [_market(f"m{i}", "0.3", "0.7") for i in range(25)]
+    card = discover.shape_event(_event("big", markets))
+    assert card is not None and card["market_count"] == 25 and len(card["markets"]) == 25
+
+
+def test_breaking_shows_every_event_it_fetched_not_just_one_page_worth(tmp_path: Path) -> None:
+    venue = PolymarketVenue(make_settings(tmp_path))
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        return [_event(str(i), [_market(f"m{i}", "0.4", "0.6", oneDayPriceChange=i / 100)]) for i in range(100)]
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover(tab="breaking", q=None, limit=30, offset=0))
+    assert len(out["items"]) == 100 and out["next_offset"] == 100  # nothing between pages is dropped
+    assert out["items"][0]["event_id"] == "99"  # still ranked by the biggest move

@@ -12,8 +12,6 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-MAX_MARKETS_PER_CARD = 6
-
 # Polymarket: the tab bar mirrors polymarket.com's own header (Trending, Breaking, New, Midterms | Politics,
 # Sports, Crypto, ...). Gamma has no endpoint that returns that bar (``GET /tags?is_carousel=true`` lists only a
 # few tags), so the order below is copied from the website. To follow a change on the site, edit ``NAV_TABS``:
@@ -299,7 +297,7 @@ def shape_event(raw: dict[str, Any]) -> dict[str, Any] | None:
         "tags": tags[:5],
         "market_count": len(markets),
         "max_change_1d": str(max(changes)) if changes else None,
-        "markets": markets[:MAX_MARKETS_PER_CARD],
+        "markets": markets,
     }
 
 
@@ -414,7 +412,7 @@ def shape_kalshi_event(raw: dict[str, Any]) -> dict[str, Any] | None:
         "category": category,
         "market_count": len(markets),
         "max_change_1d": str(max(changes)) if changes else None,
-        "markets": markets[:MAX_MARKETS_PER_CARD],
+        "markets": markets,
     }
 
 
@@ -545,7 +543,7 @@ def shape_limitless_event(raw: dict[str, Any]) -> dict[str, Any] | None:
         "categories": categories,
         "market_count": len(markets),
         "max_change_1d": None,
-        "markets": markets[:MAX_MARKETS_PER_CARD],
+        "markets": markets,
     }
 
 
