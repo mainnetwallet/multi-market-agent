@@ -45,7 +45,7 @@ the build record; tests/quality gate status is at the bottom.
 
 - [x] Persist `CREATED`/`SUBMITTING` before network side effects.
 - [x] Per-market lock and per-venue placement lock.
-- [x] No paper mode: trading needs working credentials and a passing authenticated doctor check.
+- [x] Trading needs working credentials and a passing authenticated doctor check.
 - [x] Re-validation at approval: market status, fresh book, spread/depth, edge, tick, caps, end time.
 - [x] Timeout/5xx -> UNKNOWN; UNKNOWN never transitions back to SUBMITTING (state-transition test).
 - [x] Reconcile via open orders; absence is not treated as proof of no fill.

@@ -58,7 +58,7 @@ No real order was sent during the build.
 94c83e8 phase 7: Docker, Render, CI, backups and operator runbook
 c533cb3 phase 6: Control API, PWA, Telegram and runtime venue switching
 696d7e2 phase 5: rules engine, autopilot tools and server-side slash commands
-c305268 phase 3-4: research, edge, risk, proposals, paper/live execution, reconcile and exits
+c305268 phase 3-4: research, edge, risk, proposals, execution, reconcile and exits
 d79d6ce phase 2: SQLAlchemy store, Alembic schema, books and scanner
 1c8f7c2 phase 1: read-only venue adapters, FakeVenue and per-venue doctor
 3d71a44 phase 0: scaffold, normalized domain, venue docs recon
@@ -73,7 +73,7 @@ python scripts/doctor.py --venue all
 python -m mm_agent.main
 ```
 
-Open `http://127.0.0.1:8080`. There is no paper mode: a venue can trade only
+Open `http://127.0.0.1:8080`. A venue can trade only
 after its credentials are set and its authenticated doctor check passes.
 
 ## Before the first real order
