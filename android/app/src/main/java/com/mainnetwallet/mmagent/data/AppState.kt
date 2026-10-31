@@ -221,13 +221,36 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     /** The Markets lists of the last run, so the page has something to show at once. */
     private val discoverSnapshot = DiscoverSnapshot(context.applicationContext)
 
+    /** The last refresh's answers, so every screen has something to show at once. */
+    private val appSnapshot = AppSnapshot(context.applicationContext)
+    private var lastSnapshotAt = 0L
+
+    /** Save this refresh's answers for the next start (at most every [SNAPSHOT_EVERY_MS]). */
+    private fun saveSnapshot(status: JSONObject, extras: List<JSONObject?>) {
+        val now = System.currentTimeMillis()
+        if (now - lastSnapshotAt < SNAPSHOT_EVERY_MS) return
+        lastSnapshotAt = now
+        val url = baseUrl
+        viewModelScope.launch(Dispatchers.IO) { appSnapshot.save(url, status, extras) }
+    }
+
     init {
         // A 401 that means "the session is gone" sends the operator back to login.
         api.onUnauthorized = { expireSession() }
+        if (!token.isNullOrBlank()) {
+            // Show the last answers right away. `loading` stays true until the live refresh below finishes
+            // (or fails), so the money buttons stay off while the numbers on screen are old.
+            appSnapshot.restore(baseUrl, REFRESH_PATHS.size)?.let { saved ->
+                _state.value = buildState(saved.status, saved.extras, AppUiState()).copy(loading = true)
+            }
+        }
         loadSession()
         if (!token.isNullOrBlank()) {
             loadChats()
             refreshChats()
+            // The report and audit log Settings shows are fetched now too, not when Settings is tapped.
+            loadReport()
+            loadAudit()
             // Do not wait for /v1/status to learn the venue: put the last run's Markets lists back and
             // refresh them straight away, in parallel with everything else the app loads.
             viewModelScope.launch(Dispatchers.IO) {
@@ -359,6 +382,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         token = null
         if (wipeChats) prefs.edit().remove(KEY_CHATS).apply()
         discoverSnapshot.clear()
+        appSnapshot.clear()
         _chat.value = ChatUiState()
         _state.value = AppUiState(error = error)
     }
@@ -429,6 +453,68 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         _messages.tryEmit(message)
     }
 
+    /** Turn one refresh's answers into screen state; an answer that is missing keeps what [previous] had. */
+    private fun buildState(status: JSONObject, extras: List<JSONObject?>, previous: AppUiState): AppUiState {
+        val balance = extras[0]
+        val markets = extras[1]
+        val positions = extras[2]
+        val orders = extras[3]
+        val proposals = extras[4]
+        val rules = extras[5]
+        val trades = extras[6]
+        val pnl = extras[7]
+        val allowlist = extras[8]
+        val approvals = extras[9]
+        val fundsHistory = extras[10]
+        val withdrawals = extras[11]
+
+        val capabilities = status.optJSONObject("capabilities")
+        val limits = status.optJSONObject("limits")
+        val counts = HashMap<String, Int>()
+        status.optJSONObject("counts")?.let { source ->
+            source.keys().forEach { key -> counts[key] = source.optInt(key) }
+        }
+        val balances = if (balance != null) ApiClient.arrayOf(balance, "balances").objects() else previous.balances
+        val firstBalance = balances.firstOrNull()
+
+        return AppUiState(
+            status = AgentStatus(
+                badge = status.optString("badge"),
+                venue = status.optString("active_venue"),
+                paused = status.optBoolean("paused"),
+                todayPnlUsd = status.optString("today_pnl_usd", "0"),
+                availableUsd = firstBalance?.optString("available"),
+                collateralAsset = firstBalance?.optString("collateral_asset") ?: "USD",
+                unitGuardOk = status.optJSONObject("unit_guard")?.optBoolean("ok") ?: true,
+                unitGuardReason = status.optJSONObject("unit_guard")?.optString("reason") ?: "",
+                hardCeilingMaxTrade = limits?.optJSONObject("hard_ceilings")?.optString("max_trade_usd") ?: "2",
+                maxTradeUsd = limits?.optString("max_trade_usd") ?: "2",
+                counts = counts,
+                capabilities = capabilities,
+                heartbeat = capabilities?.optJSONObject("heartbeat")?.optString("reason") ?: "",
+                venues = ApiClient.arrayOf(status, "venues").objects(),
+            ),
+            balances = balances,
+            markets = markets?.let { ApiClient.arrayOf(it, "markets").objects() } ?: previous.markets,
+            positions = positions?.let { ApiClient.arrayOf(it, "positions").objects() } ?: previous.positions,
+            orders = orders?.let { ApiClient.arrayOf(it, "orders").objects() } ?: previous.orders,
+            proposals = proposals?.let { ApiClient.arrayOf(it, "proposals").objects() } ?: previous.proposals,
+            rules = rules?.let { ApiClient.arrayOf(it, "rules").objects() } ?: previous.rules,
+            trades = trades?.let { ApiClient.arrayOf(it, "trades").objects() } ?: previous.trades,
+            pnlDays = pnl?.let { body ->
+                ApiClient.arrayOf(body, "days").objects().map { obj ->
+                    obj.optString("date") to (obj.optString("realized_usd", "0").toBigDecimalOrNull() ?: BigDecimal.ZERO)
+                }
+            } ?: previous.pnlDays,
+            allowlist = allowlist?.let { ApiClient.arrayOf(it, "entries").objects() } ?: previous.allowlist,
+            approvals = approvals?.let { ApiClient.arrayOf(it, "approvals").objects() } ?: previous.approvals,
+            fundsHistory = fundsHistory?.let { ApiClient.arrayOf(it, "history").objects() } ?: previous.fundsHistory,
+            withdrawals = withdrawals?.let { ApiClient.arrayOf(it, "withdrawals").objects() } ?: previous.withdrawals,
+            loading = false,
+            loggedIn = true,
+        )
+    }
+
     /**
      * Pull everything the screens show.
      *
@@ -448,88 +534,20 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         refreshJob = viewModelScope.launch {
             if (!silent) _state.value = _state.value.copy(loading = true, error = null)
             try {
-                val status = api.get("/v1/status")
-                prefetchDiscover(status.optString("active_venue"))
                 val previous = _state.value
-                // Everything except /status goes out at once. One request after another meant
-                // twelve round trips to a remote server before Home had its data.
-                val extras = coroutineScope {
-                    listOf(
-                        "/v1/balance",
-                        "/v1/markets?limit=60",
-                        "/v1/positions",
-                        "/v1/orders?status=open&limit=100",
-                        "/v1/proposals?limit=20",
-                        "/v1/rules",
-                        "/v1/trades?limit=50",
-                        "/v1/pnl/daily?days=30",
-                        "/v1/funds/allowlist",
-                        "/v1/approvals",
-                        "/v1/funds/history",
-                        "/v1/funds/withdrawals",
-                    ).map { path -> async { runCatching { api.get(path) }.getOrNull() } }.awaitAll()
+                // /v1/status and everything else go out at once: one round trip to a remote server, not two.
+                val (status, extras) = coroutineScope {
+                    val statusCall = async { api.get("/v1/status") }
+                    val extraCalls = REFRESH_PATHS.map { path -> async { runCatching { api.get(path) }.getOrNull() } }
+                    statusCall.await() to extraCalls.awaitAll()
                 }
-                val balance = extras[0]
-                val markets = extras[1]
-                val positions = extras[2]
-                val orders = extras[3]
-                val proposals = extras[4]
-                val rules = extras[5]
-                val trades = extras[6]
-                val pnl = extras[7]
-                val allowlist = extras[8]
-                val approvals = extras[9]
-                val fundsHistory = extras[10]
-                val withdrawals = extras[11]
+                prefetchDiscover(status.optString("active_venue"))
 
                 // The session may have been cleared while we were waiting.
                 if (token.isNullOrBlank()) return@launch
 
-                val capabilities = status.optJSONObject("capabilities")
-                val limits = status.optJSONObject("limits")
-                val counts = HashMap<String, Int>()
-                status.optJSONObject("counts")?.let { source ->
-                    source.keys().forEach { key -> counts[key] = source.optInt(key) }
-                }
-                val balances = if (balance != null) ApiClient.arrayOf(balance, "balances").objects() else previous.balances
-                val firstBalance = balances.firstOrNull()
-
-                _state.value = AppUiState(
-                    status = AgentStatus(
-                        badge = status.optString("badge"),
-                        venue = status.optString("active_venue"),
-                        paused = status.optBoolean("paused"),
-                        todayPnlUsd = status.optString("today_pnl_usd", "0"),
-                        availableUsd = firstBalance?.optString("available"),
-                        collateralAsset = firstBalance?.optString("collateral_asset") ?: "USD",
-                        unitGuardOk = status.optJSONObject("unit_guard")?.optBoolean("ok") ?: true,
-                        unitGuardReason = status.optJSONObject("unit_guard")?.optString("reason") ?: "",
-                        hardCeilingMaxTrade = limits?.optJSONObject("hard_ceilings")?.optString("max_trade_usd") ?: "2",
-                        maxTradeUsd = limits?.optString("max_trade_usd") ?: "2",
-                        counts = counts,
-                        capabilities = capabilities,
-                        heartbeat = capabilities?.optJSONObject("heartbeat")?.optString("reason") ?: "",
-                        venues = ApiClient.arrayOf(status, "venues").objects(),
-                    ),
-                    balances = balances,
-                    markets = markets?.let { ApiClient.arrayOf(it, "markets").objects() } ?: previous.markets,
-                    positions = positions?.let { ApiClient.arrayOf(it, "positions").objects() } ?: previous.positions,
-                    orders = orders?.let { ApiClient.arrayOf(it, "orders").objects() } ?: previous.orders,
-                    proposals = proposals?.let { ApiClient.arrayOf(it, "proposals").objects() } ?: previous.proposals,
-                    rules = rules?.let { ApiClient.arrayOf(it, "rules").objects() } ?: previous.rules,
-                    trades = trades?.let { ApiClient.arrayOf(it, "trades").objects() } ?: previous.trades,
-                    pnlDays = pnl?.let { body ->
-                        ApiClient.arrayOf(body, "days").objects().map { obj ->
-                            obj.optString("date") to (obj.optString("realized_usd", "0").toBigDecimalOrNull() ?: BigDecimal.ZERO)
-                        }
-                    } ?: previous.pnlDays,
-                    allowlist = allowlist?.let { ApiClient.arrayOf(it, "entries").objects() } ?: previous.allowlist,
-                    approvals = approvals?.let { ApiClient.arrayOf(it, "approvals").objects() } ?: previous.approvals,
-                    fundsHistory = fundsHistory?.let { ApiClient.arrayOf(it, "history").objects() } ?: previous.fundsHistory,
-                    withdrawals = withdrawals?.let { ApiClient.arrayOf(it, "withdrawals").objects() } ?: previous.withdrawals,
-                    loading = false,
-                    loggedIn = true,
-                )
+                _state.value = buildState(status, extras, previous)
+                saveSnapshot(status, extras)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -968,7 +986,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     /** Today's report, rendered by the server as plain text. */
     fun loadReport() {
         viewModelScope.launch {
-            _info.value = _info.value.copy(loading = true, error = null)
+            _info.value = _info.value.copy(loading = _info.value.report == null, error = null)
             try {
                 val response = api.get("/v1/reports/daily")
                 _info.value = _info.value.copy(report = response.optString("text"), loading = false)
@@ -981,7 +999,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     /** The newest audit entries, secrets already redacted by the server. */
     fun loadAudit() {
         viewModelScope.launch {
-            _info.value = _info.value.copy(loading = true, error = null)
+            _info.value = _info.value.copy(loading = _info.value.audit.isEmpty(), error = null)
             try {
                 val response = api.get("/v1/audit")
                 _info.value = _info.value.copy(
@@ -1165,10 +1183,29 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         private const val RENEW_EVERY_MS = 6L * 60 * 60 * 1000
         private const val RENEW_RETRY_MS = 5L * 60 * 1000
 
+        /** The answers one refresh asks for next to /v1/status, in the order [buildState] reads them. */
+        private val REFRESH_PATHS = listOf(
+            "/v1/balance",
+            "/v1/markets?limit=60",
+            "/v1/positions",
+            "/v1/orders?status=open&limit=100",
+            "/v1/proposals?limit=20",
+            "/v1/rules",
+            "/v1/trades?limit=50",
+            "/v1/pnl/daily?days=30",
+            "/v1/funds/allowlist",
+            "/v1/approvals",
+            "/v1/funds/history",
+            "/v1/funds/withdrawals",
+        )
+
+        /** The saved answers are rewritten at most this often. */
+        private const val SNAPSHOT_EVERY_MS = 30_000L
+
         /** How many of a venue's first tabs have their first page loaded ahead of time. */
         private const val PREFETCH_TABS = 4
 
-        /** A prefetched page younger than this is not fetched again by the background refresh. */
-        private const val PREFETCH_PAGE_MS = 2L * 60 * 1000
+        /** A prefetched page younger than this is not fetched again by the background refresh (same as the screen's own freshness). */
+        private const val PREFETCH_PAGE_MS = 60_000L
     }
 }
