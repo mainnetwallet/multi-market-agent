@@ -55,3 +55,23 @@ async def close_client() -> None:
 
 def is_configured() -> bool:
     return bool(os.environ.get("POLYMARKET_PRIVATE_KEY", "").strip())
+
+
+async def resolve_wallet(configured: str = "") -> str:
+    """The Polymarket wallet the account trades from.
+
+    An explicit POLYMARKET_WALLET_ADDRESS wins. Without one, the official SDK's own answer is used: the
+    signer's Deposit Wallet, which is the wallet polymarket.com shows for this key. Only the public
+    address leaves this module. Empty when there is no key or the client cannot be created.
+    """
+
+    configured = configured.strip()
+    if configured:
+        return configured
+    if not is_configured():
+        return ""
+    try:
+        client = await secure_client("")
+    except Exception:
+        return ""
+    return str(client.wallet or "")

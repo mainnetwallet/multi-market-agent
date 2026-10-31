@@ -179,11 +179,12 @@ change.
 
 - Uses the official [`polymarket-client`](https://pypi.org/project/polymarket-client/)
   SDK for private reads/orders and public Gamma/CLOB HTTP for discovery/books.
-- Create/find a **dedicated** Polymarket account wallet. Set:
-  - `POLYMARKET_WALLET_ADDRESS`
-  - `POLYMARKET_PRIVATE_KEY` (signer key; never a main wallet)
-  - optional `POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`,
-    `POLYMARKET_API_PASSPHRASE` if you already derived L2 credentials
+- Create/find a **dedicated** Polymarket account wallet. The only required setting is
+  `POLYMARKET_PRIVATE_KEY` (signer key; never a main wallet). Everything else is derived:
+  - the wallet is the signer's Deposit Wallet, as the official SDK defines it. Set
+    `POLYMARKET_WALLET_ADDRESS` only if you trade from a different (funder/proxy) wallet;
+  - the L2 API credentials are derived at startup. Set `POLYMARKET_API_KEY`,
+    `POLYMARKET_API_SECRET`, `POLYMARKET_API_PASSPHRASE` only to reuse ones you already have.
 - `POLYMARKET_SIGNATURE_TYPE=3` is the default for Deposit Wallets; adjust only
   after reading current wallet-type docs.
 - `POLYMARKET_ALLOW_REAL_TEST=true` is only for the explicit doctor order test.

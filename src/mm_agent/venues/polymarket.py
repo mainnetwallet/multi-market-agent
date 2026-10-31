@@ -558,7 +558,8 @@ class PolymarketVenue(HttpVenue):
 
     async def get_positions(self) -> list[Position]:
         client = await self._secure()
-        page = await client.list_positions(user=self.settings.polymarket_wallet_address or None).first_page()
+        owner = self.settings.polymarket_wallet_address.strip() or str(client.wallet or "")
+        page = await client.list_positions(user=owner or None).first_page()
         out: list[Position] = []
         for p in page.items:
             market_id = self._asset_index.get(str(p.asset_id), (str(p.condition_id), Outcome.YES))[0]

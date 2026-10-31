@@ -22,7 +22,7 @@ from ..config import Settings
 from ..domain import VenueId, utcnow
 from ..store import Store
 from ..util import get_logger
-from ..venues import limitless_signing
+from ..venues import limitless_signing, polymarket_signing
 from .signer import (
     POLYGON_CHAIN_ID,
     SignerError,
@@ -376,7 +376,7 @@ class FundsService:
     async def _polymarket_deposit(
         self, *, network: str | None, asset: str | None, token: str | None = None
     ) -> DepositInfo:
-        wallet = self._polymarket_wallet()
+        wallet = await self._polymarket_wallet()
         if not wallet:
             return DepositInfo(
                 supported=False,
@@ -483,8 +483,9 @@ class FundsService:
             official_url="https://docs.limitless.exchange/api-reference/portfolio/positions",
         )
 
-    def _polymarket_wallet(self) -> str:
-        return self.settings.polymarket_wallet_address.strip()
+    async def _polymarket_wallet(self) -> str:
+        # POLYMARKET_WALLET_ADDRESS is optional: without it the signer's own Deposit Wallet is used.
+        return await polymarket_signing.resolve_wallet(self.settings.polymarket_wallet_address)
 
     # ------------------------------------------------------------- allowlist
     def allowlist_add(
@@ -839,7 +840,7 @@ class FundsService:
         entry = self.store.allowlist_get(record["address_id"]) or {}
         destination = await self._bridge_asset(entry.get("network") or "", entry.get("asset") or "")
         body = {
-            "address": self._polymarket_wallet(),
+            "address": await self._polymarket_wallet(),
             "toChainId": destination["chain_id"],
             "toTokenAddress": destination["token_address"],
             "recipientAddr": record["recipient"],

@@ -41,6 +41,7 @@ from .funds import FundsError, FundsService
 from .scanner import Scanner
 from .store import ConversationBusy, ConversationNotFound
 from .util import get_logger, redact
+from .venues import polymarket_signing
 from .venues.registry import VenueRegistry
 
 logger = get_logger(__name__)
@@ -971,7 +972,7 @@ def create_app(
                 continue
             try:
                 if target is VenueId.POLYMARKET:
-                    wallet = settings.polymarket_wallet_address.strip()
+                    wallet = await polymarket_signing.resolve_wallet(settings.polymarket_wallet_address)
                     if wallet:
                         for row in await funds.polymarket_history(wallet):
                             rows.append({"venue": target.value, **row})
