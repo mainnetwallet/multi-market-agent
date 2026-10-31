@@ -182,6 +182,8 @@ fun DiscoverScreen(
     var nextOffset by remember { mutableStateOf<Int?>(seededPage?.nextOffset) }
     var generation by remember { mutableIntStateOf(0) }
     var reloadKey by remember { mutableIntStateOf(0) }
+    // The next page this list has already asked for (venue, tab, search, offset, generation), so it is asked for once.
+    var requestedMore by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     // The tab list comes from the server (for Polymarket, from the tags of live Gamma events).
@@ -400,8 +402,16 @@ fun DiscoverScreen(
             if (more != null && error == null && items.isNotEmpty()) {
                 item(key = "more:$more") {
                     // Composing this row means the list reached its end: fetch the next page once.
-                    LaunchedEffect(more) {
-                        if (!loading) scope.launch { load(more, generation, tab, query.trim()) }
+                    // `loading` is part of the key on purpose: when the row appears while a page is still
+                    // being fetched (the quiet refresh of a cached list), the request is made as soon as that
+                    // fetch is done. Keyed on `more` alone it was skipped and never retried, so the spinner
+                    // turned forever and the rest of the list never loaded.
+                    LaunchedEffect(more, loading) {
+                        val request = "$venue|$tab|${query.trim()}|$more|$generation"
+                        if (!loading && requestedMore != request) {
+                            requestedMore = request
+                            scope.launch { load(more, generation, tab, query.trim()) }
+                        }
                     }
                     Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
