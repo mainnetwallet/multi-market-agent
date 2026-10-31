@@ -94,10 +94,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  [{check.status.value:11}] {check.name}{latency}: {check.detail}")
             if not report.checks:
                 print("  no checks returned")
-        print(
-            "\nReadiness is PAPER-safe when public reads pass. LIVE additionally requires "
-            "a passing authenticated read and LIVE_<VENUE>=true set by hand."
-        )
+        print("\nA venue can trade only when its authenticated read passes.")
     return 0 if all(r.ok for r in reports) else 1
 
 

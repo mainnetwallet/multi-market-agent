@@ -119,7 +119,7 @@ class AgentService:
         payload = {
             "active_venue": active.value if active else None,
             "badge": f"{(active.value if active else 'none').upper()} | "
-            f"{self.registry.mode(active).value if active else 'PAPER'}",
+            f"{self.registry.mode(active).value if active else 'NOT READY'}",
             "paused": self.paused,
             "unit_guard": {"ok": self.unit_guard.ok, "reason": self.unit_guard.reason},
             "feed_diag": self.scanner.feed_diag().model_dump(mode="json"),
@@ -484,8 +484,8 @@ class AgentService:
                 return await self._fail_proposal(proposal, "UNIT_CHECK_FAILED")
             if not market.fee_info or "taker_rate" not in market.fee_info:
                 return await self._fail_proposal(proposal, "FEE_INFO_MISSING")
-            if proposal.mode is Mode.LIVE and not self.settings.live_for(proposal.venue):
-                return await self._fail_proposal(proposal, "LIVE_FLAG_DISABLED")
+            if not self.registry.is_ready(proposal.venue):
+                return await self._fail_proposal(proposal, "VENUE_NOT_READY")
             adapter = self.registry.get(proposal.venue)
             ref = MarketRef(venue=proposal.venue, market_id=proposal.market_id, outcome=proposal.outcome)
             book = await self.books.get(adapter, ref, force=True)

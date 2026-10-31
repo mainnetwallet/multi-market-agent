@@ -133,7 +133,8 @@ class RuleStatus(StrEnum):
 
 
 class Mode(StrEnum):
-    PAPER = "PAPER"
+    """Every order is real. Kept as a field so stored rows and API payloads keep their shape."""
+
     LIVE = "LIVE"
 
 
@@ -433,7 +434,7 @@ class Position(BaseModel):
     realized_pnl: Decimal = ZERO
     unrealized_pnl: Decimal = ZERO
     market_title: str | None = None
-    mode: Mode = Mode.PAPER
+    mode: Mode = Mode.LIVE
 
 
 class VenueOrder(BaseModel):
@@ -492,7 +493,7 @@ class OrderRequest(BaseModel):
     client_order_id: str
     reduce_only: bool = False
     order_type: OrderType = OrderType.GTC
-    mode: Mode = Mode.PAPER
+    mode: Mode = Mode.LIVE
     expires_at: datetime | None = None
     post_only: bool = False
 

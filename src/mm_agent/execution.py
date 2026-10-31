@@ -1,4 +1,4 @@
-"""Order execution gateway, paper fills and UNKNOWN reconciliation."""
+"""Order execution gateway and UNKNOWN reconciliation."""
 
 from __future__ import annotations
 
@@ -81,68 +81,11 @@ class ExecutionGateway:
             # Persist the intent-to-submit BEFORE any network side effect.
             if not self.store.transition_order(local_id, "SUBMITTING"):
                 raise RuntimeError("could not persist SUBMITTING transition")
-            if req.mode is Mode.PAPER:
-                result = await self._paper(req, market, adapter)
-            else:
-                if not self.settings.live_for(req.venue):
-                    result = OrderResult(
-                        venue=req.venue,
-                        client_order_id=req.client_order_id,
-                        status=ExecutionStatus.FAILED,
-                        requested_size=req.size,
-                        message="LIVE refused: LIVE_<VENUE> is not enabled",
-                    )
-                else:
-                    result = await self._live(req, adapter)
+            result = await self._place(req, adapter)
         await self._record_result(local_id, req, result, market)
         return result, local_id
 
-    async def _paper(self, req: OrderRequest, market: Market, adapter: Venue) -> OrderResult:
-        book = await self.books.get(
-            adapter,
-            MarketRef(venue=req.venue, market_id=req.market_id, outcome=req.outcome),
-            force=True,
-        )
-        levels = book.asks if req.side is Side.BUY else book.bids
-        remaining = req.size
-        filled = ZERO
-        notional = ZERO
-        for level in levels:
-            if req.side is Side.BUY and level.price > req.price:
-                break
-            if req.side is Side.SELL and level.price < req.price:
-                break
-            take = min(level.size, remaining)
-            if take <= 0:
-                continue
-            filled += take
-            notional += take * level.price
-            remaining -= take
-            if remaining <= 0:
-                break
-        avg = notional / filled if filled > 0 else None
-        if filled <= 0:
-            status = ExecutionStatus.NOT_FILLED
-        elif remaining <= 0:
-            status = ExecutionStatus.FILLED
-        else:
-            status = ExecutionStatus.PARTIAL
-        fee = adapter.fee(avg or req.price, filled, req.side, market).fee_usd if filled > 0 else ZERO
-        return OrderResult(
-            venue=req.venue,
-            client_order_id=req.client_order_id,
-            venue_order_id="paper-" + req.client_order_id,
-            status=status,
-            requested_size=req.size,
-            filled_size=filled,
-            remaining_size=max(ZERO, remaining),
-            average_price=avg,
-            fee_usd=fee,
-            message="paper fill against real books" if filled > 0 else "paper: no fill at limit",
-            raw_redacted={"paper": True, "book_timestamp": book.timestamp.isoformat()},
-        )
-
-    async def _live(self, req: OrderRequest, adapter: Venue) -> OrderResult:
+    async def _place(self, req: OrderRequest, adapter: Venue) -> OrderResult:
         try:
             return await adapter.place_order(req)
         except (TimeoutError, httpx.TimeoutException):

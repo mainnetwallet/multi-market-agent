@@ -190,7 +190,7 @@ fun VenueSwitcherDialog(
                     val id = venue.optString("venue")
                     val isActive = id == active
                     val ready = venue.optBoolean("ready")
-                    val mode = venue.optString("mode", "PAPER")
+                    val mode = venue.optString("mode", "LIVE")
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -219,7 +219,7 @@ fun VenueSwitcherDialog(
                     }
                 }
                 Text(
-                    "Positions and orders on the other venues stay alive. LIVE is set on the server, not here.",
+                    "Positions and orders on the other venues stay alive.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -248,7 +248,6 @@ fun HomeScreen(
 ) {
     var confirmCancelAll by remember { mutableStateOf(false) }
     val pending = pendingProposals(state.proposals)
-    val live = state.status.mode.equals("LIVE", ignoreCase = true)
     val pnl = state.status.todayPnlUsd.toBigDecimalOrNull() ?: BigDecimal.ZERO
     val pnlColor = when {
         pnl.signum() > 0 -> Palette.Long
@@ -333,7 +332,7 @@ fun HomeScreen(
         if (pending.isNotEmpty()) {
             item { SectionHeader("Needs your decision", "${pending.size}") }
             items(pending.take(2), key = { "p" + it.optString("id") }) { proposal ->
-                ProposalCard(proposal, live, state.online, onApprove, onReject)
+                ProposalCard(proposal, state.online, onApprove, onReject)
             }
             if (pending.size > 2) {
                 item { LinkText("See all ${pending.size} proposals", onOpenProposals) }

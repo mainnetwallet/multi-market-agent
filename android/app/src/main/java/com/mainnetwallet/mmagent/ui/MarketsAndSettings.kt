@@ -278,7 +278,7 @@ fun SettingsScreen(
                         ValueRow(
                             label = venue.optString("display_name").ifBlank { id.replaceFirstChar { it.uppercase() } } +
                                 if (id == state.status.venue) " (active)" else "",
-                            value = (if (ready) "ready" else "not ready") + " · " + venue.optString("mode", "PAPER"),
+                            value = (if (ready) "ready" else "not ready") + " · " + venue.optString("mode", "LIVE"),
                             valueColor = if (ready) Palette.Long else Palette.Alert,
                         )
                         Text(
@@ -431,7 +431,7 @@ fun SettingsScreen(
                 Column(Modifier.padding(16.dp)) {
                     SectionHeader("Session")
                     Text(
-                        "PAPER by default. LIVE is enabled only by editing LIVE_<VENUE> in the server environment.",
+                        "Every order is real money.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

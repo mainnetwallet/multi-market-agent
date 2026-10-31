@@ -12,18 +12,19 @@ A **native Android app** (Kotlin, Jetpack Compose, Material 3) is included in
 hand, cancel, sell, redeem, deposit, withdraw and read history. The agent's
 proposal flow stays one way to trade, not the only one.
 
-**Paper by default. No real order is ever sent without an operator-set live flag
-and a human action.** The build was completed and tested without live
-credentials; public reads for all three venues were verified on 2026-10-30.
+**Every order is real money. There is no paper mode.** No order is sent without
+a human action, and a venue is only usable after its authenticated read passes.
+Use a dedicated burner wallet or account with a small balance. The build was
+tested without live credentials; public reads for all three venues were verified
+on 2026-10-30.
 
 ---
 
 ## Safety model (read before running)
 
-1. **PAPER by default per venue.** A venue trades LIVE only when the operator
-   edits `LIVE_POLYMARKET=true`, `LIVE_KALSHI=true` or
-   `LIVE_LIMITLESS=true` in `.env`/host env and restarts. No API, chat, UI,
-   Telegram or LLM call can change it.
+1. **No paper mode.** Every order goes to the venue. A venue is *ready* only when
+   its credentials are set and the authenticated doctor check passes; a venue
+   without working credentials is unavailable and cannot trade.
 2. **Fail closed.** Stale book/research, missing fee info, unit mismatch, feed
    errors, not-ready venue, UNKNOWN order, market closing within 5 minutes,
    synthetic-looking depth, missing research or any risk-cap breach means no
@@ -43,7 +44,7 @@ credentials; public reads for all three venues were verified on 2026-10-30.
    token is single-use, bound to the session and to one action, and expires in
    120 s. The password is never stored or logged.
 8. **Funds are off by default.** The funds module (`FUNDS_ENABLED=true`) uses its
-   own signer secret, never a trading key, and never moves money in PAPER mode.
+   own signer secret, never a trading key, and never uses a trading key.
 9. **Per-trade cap is a stored setting, not a constant.** The default is still $2;
    raising it from the app needs a step-up token, and the bankroll and percentage
    caps can never exceed it. The other caps stay code-pinned: 4% of bankroll per
@@ -108,12 +109,12 @@ adjustment (±3pp, only with ≥2 fresh sources)` → edge after fee/slippage �
 re-validation (fresh book, edge, caps) → sign → place → persist fill/status →
 monitor and exit rules.
 
-Core logic is tested against `FakeVenue`; `PaperExecutor` runs on each venue's
-**real** public books. See [PLAN.md](PLAN.md) for phase status and known gaps.
+Core logic is tested against `FakeVenue`, a test-only venue with no real money.
+See [PLAN.md](PLAN.md) for phase status and known gaps.
 
 ---
 
-## Quick start (PAPER)
+## Quick start
 
 Requires Python 3.11+ (3.11/3.12 supported).
 
@@ -154,7 +155,7 @@ python -m mm_agent.main                    # http://127.0.0.1:8080
 ```
 
 Sign in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`. The header always shows
-`VENUE | PAPER` (or red `VENUE | LIVE`). Times are Asia/Dhaka. The LLM/research
+a red `VENUE | LIVE` badge. Times are Asia/Dhaka. The LLM/research
 provider is optional: without it, no proposals are generated and the UI says
 research is unavailable. Slash commands still work.
 
@@ -169,11 +170,11 @@ pytest -q
 
 ---
 
-## Venue setup (read-only / PAPER needs no keys)
+## Venue setup
 
-Venue credentials are read **only** by the isolated `*_signing.py` modules, but
-the adapters need public read access which needs no account. Run the doctor after
-each change.
+Venue credentials are read **only** by the isolated `*_signing.py` modules. A
+venue needs working credentials to become ready. Run the doctor after each
+change.
 
 ### Polymarket
 
@@ -242,33 +243,30 @@ credentials.
 
 ---
 
-## Going LIVE per venue (manual checklist)
+## First real order (manual checklist)
 
-1. Paper-trade the venue for at least a day and confirm `/status` feed_diag is
-   clean. Run the doctor without order tests, then with the demo/opt-in test only
-   if you accept the risk.
+1. Run the doctor without order tests and confirm `/status` feed_diag is clean
+   before the first order. Use the demo/opt-in order test only if you accept the
+   risk.
 2. Use a **dedicated trading account/wallet** and a small balance. No withdrawal
    permission is needed by the agent.
 3. Confirm the venue's fee model and tick rules against your account. For Kalshi
-   sub-cent markets, do not enable LIVE until the tick-grid gap in
+   sub-cent markets, do not trade until the tick-grid gap in
    DOCS_FINDINGS.md is fixed.
-4. Edit `.env` **by hand**:
-   ```dotenv
-   LIVE_KALSHI=true
-   ```
-   Keep all other venues PAPER. To allow chat-issued live orders:
+4. Set only the credentials of the venue you want to test and leave the others
+   blank, so the other venues stay unavailable. To allow chat-issued orders:
    ```dotenv
    CHAT_AUTOPILOT=true
    ```
-   Otherwise live orders require the UI/Telegram Approve button.
+   Otherwise orders require the UI/Telegram Approve button.
 5. Restart the process. Confirm the red `VENUE | LIVE` badge and the startup log.
 6. Approve a **$1–$2** proposal and watch the order through fill/reconciliation.
 7. If anything is unexpected: `/panic` (two confirmations), or the UI PANIC
    button. Positions are not auto-sold; review each venue manually.
 8. Rotate keys after any incident. See SECURITY.md.
 
-`LIVE_<VENUE>` cannot be changed by the UI, Telegram, chat or LLM. Restart is
-required. There is no endpoint to set it.
+Hard caps are code-pinned; only the per-trade cap can be raised, and only with a
+step-up token.
 
 ---
 
@@ -284,7 +282,7 @@ required. There is no endpoint to set it.
 - On switch: new proposals pause briefly, in-flight placement finishes, and all
   venues' positions/open orders/rules stay alive. Only the event bus and store
   are shared; every row carries `venue` (and `mode`).
-- Paper/live is per venue. The badge always names the active venue and mode.
+- The badge always names the active venue and mode.
 
 ---
 

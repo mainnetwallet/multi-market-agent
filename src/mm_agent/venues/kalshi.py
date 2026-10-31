@@ -814,7 +814,7 @@ class KalshiVenue(HttpVenue):
                 DoctorCheck(
                     name="authenticated_read",
                     status=DoctorStatus.SKIPPED,
-                    detail="no Kalshi credentials; public reads and PAPER work",
+                    detail="no Kalshi credentials; public reads only",
                 )
             )
         else:
@@ -854,7 +854,7 @@ class KalshiVenue(HttpVenue):
             if all(c.status in {DoctorStatus.OK, DoctorStatus.SKIPPED} for c in checks)
             else DoctorStatus.DEGRADED
         )
-        reason = "" if auth_ok else "credentials absent or auth failed; PAPER only"
+        reason = "" if auth_ok else "credentials absent or auth failed; trading disabled"
         return DoctorReport(venue=self.id, status=status, checks=tuple(checks), reason=reason)
 
     async def _doctor_order(self) -> DoctorCheck:

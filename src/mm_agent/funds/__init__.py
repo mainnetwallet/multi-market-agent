@@ -104,18 +104,6 @@ class FundsService:
                 status=400,
             )
 
-    def require_live(self, venue: VenueId) -> None:
-        """Paper mode has no real funds."""
-
-        from ..config import mode_for
-
-        if mode_for(self.settings, venue) != "LIVE":
-            raise FundsError(
-                "Paper mode has no real funds.",
-                code="paper_mode",
-                status=400,
-            )
-
     async def client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0))
@@ -351,7 +339,6 @@ class FundsService:
         """Fee, network, ETA, hold window and the daily limit left. Sends nothing."""
 
         self.require_enabled()
-        self.require_live(venue)
         if amount <= 0:
             raise FundsError("amount must be positive", code="bad_amount", status=400)
         entry = self._usable_allowlist_entry(address_id)
@@ -467,7 +454,6 @@ class FundsService:
         """Create a withdrawal in the hold window. Nothing is sent yet."""
 
         self.require_enabled()
-        self.require_live(venue)
         preview = await self.preview_withdraw(venue=venue, amount=amount, address_id=address_id)
         from datetime import timedelta
 

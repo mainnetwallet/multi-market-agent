@@ -659,7 +659,7 @@ class PolymarketVenue(HttpVenue):
                 DoctorCheck(
                     name="authenticated_read",
                     status=DoctorStatus.SKIPPED,
-                    detail="no signer key; public reads and PAPER work",
+                    detail="no signer key; public reads only",
                 )
             )
         else:
@@ -703,7 +703,7 @@ class PolymarketVenue(HttpVenue):
             venue=self.id,
             status=status,
             checks=tuple(checks),
-            reason="" if auth_ok else "signer absent or auth failed; PAPER only",
+            reason="" if auth_ok else "signer absent or auth failed; trading disabled",
         )
 
     async def _doctor_order(self) -> DoctorCheck:

@@ -37,7 +37,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-/** The venue + PAPER/LIVE badge. Never ambiguous, never colour-only. */
+/** The venue + mode badge. Never ambiguous, never colour-only. */
 @Composable
 fun ModeFrame(
     venue: String,
@@ -48,8 +48,7 @@ fun ModeFrame(
     trailing: @Composable (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
-    val isLive = mode.equals("LIVE", ignoreCase = true)
-    val badgeColor = if (isLive) Palette.Danger else Palette.Long
+    val badgeColor = Palette.Danger
     Column(modifier = modifier) {
         Row(
             modifier = Modifier
@@ -158,7 +157,7 @@ fun HoldToConfirmButton(
     }
 }
 
-/** A drag-aware confirm button that also works with a simple tap in PAPER mode. */
+/** A plain tap button for actions that place or move nothing. */
 @Composable
 fun ConfirmButton(
     label: String,

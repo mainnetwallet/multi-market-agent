@@ -57,7 +57,7 @@ What it deliberately does **not** do:
   address is tied to one destination, so it is requested at execution time and the
   returned address is checked against the withdrawal record before anything is sent.
 - It never requests an unlimited token allowance.
-- It does not move money in PAPER mode; those routes refuse with the reason.
+- It is off unless `FUNDS_ENABLED=true`; every route refuses with the reason otherwise.
 
 ### Key custody: the tradeoff you should read
 
@@ -80,8 +80,9 @@ pretending to work.
 
 ## Rules that must not be weakened
 
-1. PAPER is the default. LIVE requires a human-edited `LIVE_<VENUE>=true` and a
-   restart. No API, chat, UI, Telegram or LLM path may change it.
+1. There is no paper mode, so every order is real. A venue trades only after its
+   authenticated doctor check passes, and every order needs a human action
+   (or an explicit `CHAT_AUTOPILOT=true` chat command).
 2. Unknown order outcomes are `UNKNOWN`, block the market, and are never resent.
 3. The per-trade cap is a stored setting, not a constant, but it can only be
    *raised* with a step-up token, and the bankroll and percentage caps can never

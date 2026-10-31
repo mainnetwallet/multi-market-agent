@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
 import pytest
 import pytest_asyncio
 
@@ -100,3 +101,74 @@ def researched(harness: Harness) -> str:
         report.created_at,
     )
     return rid
+
+
+BRIDGE_ADDRESS = "0x9999888877776666555544443333222211110000"
+
+
+class _BridgeStub:
+    """A stub for the bridge: supported assets, a quote, and a withdraw address."""
+
+    def __init__(self, assets: list[dict] | None = None, status_rows: list[dict] | None = None) -> None:
+        self.assets = assets or [
+            {
+                "chainId": "8453",
+                "chainName": "Base",
+                "token": {"symbol": "USDC", "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"},
+                "minCheckoutUsd": 2,
+            },
+            {
+                "chainId": "1",
+                "chainName": "Ethereum",
+                "token": {"symbol": "USDC", "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"},
+                "minCheckoutUsd": 7,
+            },
+        ]
+        self.status_rows = status_rows or []
+        self.quotes: list[dict] = []
+        self.withdraws: list[dict] = []
+
+    async def get(self, url: str, **kwargs: object) -> httpx.Response:
+        if str(url).endswith("/supported-assets"):
+            return httpx.Response(200, json={"supportedAssets": self.assets}, request=httpx.Request("GET", url))
+        return httpx.Response(200, json={"transactions": self.status_rows}, request=httpx.Request("GET", url))
+
+    async def post(self, url: str, json: dict | None = None, **kwargs: object) -> httpx.Response:
+        if str(url).endswith("/quote"):
+            self.quotes.append(json or {})
+            return httpx.Response(
+                200,
+                json={"estFeeBreakdown": {"appFeeUsd": 0.25, "gasUsd": 0.1}, "estCheckoutTimeMs": 25000},
+                request=httpx.Request("POST", str(url)),
+            )
+        if str(url).endswith("/withdraw"):
+            self.withdraws.append(json or {})
+            # The real bridge answers with only these two fields.
+            body = {"address": {"evm": BRIDGE_ADDRESS}, "note": "Send funds to these addresses."}
+            return httpx.Response(201, json=body, request=httpx.Request("POST", str(url)))
+        if str(url).endswith("/deposit"):
+            return httpx.Response(
+                201, json={"address": {"evm": BRIDGE_ADDRESS}}, request=httpx.Request("POST", str(url))
+            )
+        return httpx.Response(200, json={}, request=httpx.Request("POST", str(url)))
+
+
+@pytest.fixture
+def bridge(monkeypatch: pytest.MonkeyPatch) -> _BridgeStub:
+    stub = _BridgeStub()
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            return await stub.get(url, **kwargs)
+
+        async def post(self, url: str, json: dict | None = None, **kwargs: object) -> httpx.Response:
+            return await stub.post(url, json=json, **kwargs)
+
+    monkeypatch.setattr("mm_agent.funds.httpx.AsyncClient", lambda *a, **k: _Client())
+    return stub

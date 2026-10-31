@@ -73,7 +73,7 @@ def test_kelly_and_hard_caps(tmp_path) -> None:
         daily_pnl_usd=Decimal("0"),
     )
     decision = engine.size(
-        signal, snapshot, venue=VenueId.FAKE, mode=__import__("mm_agent.domain", fromlist=["Mode"]).Mode.PAPER
+        signal, snapshot, venue=VenueId.FAKE, mode=__import__("mm_agent.domain", fromlist=["Mode"]).Mode.LIVE
     )
     assert decision.approved
     assert decision.size_usd <= Decimal("2")
@@ -95,7 +95,7 @@ def test_daily_loss_veto(tmp_path) -> None:
         make_signal(market),
         snapshot,
         venue=VenueId.FAKE,
-        mode=__import__("mm_agent.domain", fromlist=["Mode"]).Mode.PAPER,
+        mode=__import__("mm_agent.domain", fromlist=["Mode"]).Mode.LIVE,
     )
     assert not decision.approved
     assert "DAILY_LOSS_CAP" in decision.vetoes

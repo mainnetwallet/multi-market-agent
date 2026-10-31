@@ -43,13 +43,12 @@ private fun JSONObject.strings(key: String): List<String> {
 /**
  * One trade the agent wants to make.
  *
- * Approving adds risk, so on a LIVE venue it is press-and-hold. In PAPER it is a
- * normal tap. Rejecting places nothing, so it is always a single tap.
+ * Approving adds risk and every order is real money, so it is always press-and-hold.
+ * Rejecting places nothing, so it is a single tap.
  */
 @Composable
 fun ProposalCard(
     proposal: JSONObject,
-    live: Boolean,
     online: Boolean,
     onApprove: (id: String, done: () -> Unit) -> Unit,
     onReject: (id: String, done: () -> Unit) -> Unit,
@@ -95,28 +94,16 @@ fun ProposalCard(
             }
             Spacer(Modifier.height(10.dp))
             // An unreachable server means the price on screen is unknown: no approving.
-            if (live) {
-                HoldToConfirmButton(
-                    label = "Hold to approve (LIVE)",
-                    enabled = online && !busy,
-                    busy = busy,
-                    danger = true,
-                    onConfirmed = {
-                        busy = true
-                        onApprove(id) { busy = false }
-                    },
-                )
-            } else {
-                ConfirmButton(
-                    label = "Approve (paper)",
-                    enabled = online,
-                    busy = busy,
-                    onClick = {
-                        busy = true
-                        onApprove(id) { busy = false }
-                    },
-                )
-            }
+            HoldToConfirmButton(
+                label = "Hold to approve",
+                enabled = online && !busy,
+                busy = busy,
+                danger = true,
+                onConfirmed = {
+                    busy = true
+                    onApprove(id) { busy = false }
+                },
+            )
             Spacer(Modifier.height(8.dp))
             OutlinedButton(
                 onClick = {
@@ -139,7 +126,6 @@ fun ProposalsList(
 ) {
     val pending = pendingProposals(state.proposals)
     val history = state.proposals.filterNot { p -> pending.any { it.optString("id") == p.optString("id") } }
-    val live = state.status.mode.equals("LIVE", ignoreCase = true)
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -158,7 +144,7 @@ fun ProposalsList(
             }
         }
         items(pending, key = { it.optString("id") }) { proposal ->
-            ProposalCard(proposal, live, state.online, onApprove, onReject)
+            ProposalCard(proposal, state.online, onApprove, onReject)
         }
         if (history.isNotEmpty()) {
             item { SectionHeader("Earlier", "${history.size}") }

@@ -287,7 +287,7 @@ private fun WalletCard(
     val venueCaps = capabilities?.optJSONObject("venues")?.optJSONObject(venue)
     val funds = venueCaps?.optJSONObject("funds")
     val asset = balance.optString("collateral_asset", "USD")
-    val mode = balance.optString("mode", "PAPER")
+    val mode = balance.optString("mode", "LIVE")
     val unavailable = balance.optString("reason").takeIf { it.isNotBlank() && it != "null" }
 
     Card(
@@ -302,9 +302,9 @@ private fun WalletCard(
             ) {
                 Text(venue.uppercase(), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    if (mode == "LIVE") "LIVE" else "PAPER",
+                    mode,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (mode == "LIVE") Palette.Danger else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = Palette.Danger,
                 )
             }
             Spacer(Modifier.height(10.dp))
@@ -558,7 +558,6 @@ fun TradeSheetScreen(
     onSubmit: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    val isLive = draft.mode.equals("LIVE", ignoreCase = true)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -699,21 +698,12 @@ fun TradeSheetScreen(
         Spacer(Modifier.height(12.dp))
 
         val canSubmit = estimate.valid && !submitting && online
-        if (isLive) {
-            HoldToConfirmButton(
-                label = "Hold to ${draft.side.lowercase()}",
-                enabled = canSubmit,
-                busy = submitting,
-                onConfirmed = onSubmit,
-            )
-        } else {
-            ConfirmButton(
-                label = "${draft.side.lowercase().replaceFirstChar { it.uppercase() }} (paper)",
-                enabled = canSubmit,
-                busy = submitting,
-                onClick = onSubmit,
-            )
-        }
+        HoldToConfirmButton(
+            label = "Hold to ${draft.side.lowercase()}",
+            enabled = canSubmit,
+            busy = submitting,
+            onConfirmed = onSubmit,
+        )
         Spacer(Modifier.height(6.dp))
         TextButton(onClick = onCancel) { Text("Cancel") }
     }
