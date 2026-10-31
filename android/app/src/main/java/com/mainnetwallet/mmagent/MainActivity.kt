@@ -305,6 +305,14 @@ class MainActivity : FragmentActivity() {
                                 },
                                 onLogout = { appViewModel.logout() },
                                 onOpenVenue = { url -> openInBrowser(url) },
+                                onAddAllowlist = {
+                                    withdrawVm.reset()
+                                    overlay = "allowlist"
+                                },
+                                onRemoveAllowlist = { id -> withdrawVm.removeAllowlistEntry(id) },
+                                onCancelWithdrawal = { id ->
+                                    appViewModel.cancelWithdrawal(id) { message -> appViewModel.notify(message) }
+                                },
                                 onBack = { overlay = null },
                             )
 
@@ -376,10 +384,6 @@ class MainActivity : FragmentActivity() {
                                 Tab.WALLET -> WalletScreen(
                                     balances = state.balances,
                                     capabilities = state.status.capabilities,
-                                    allowlist = state.allowlist,
-                                    approvals = state.approvals,
-                                    fundsHistory = state.fundsHistory,
-                                    withdrawals = state.withdrawals,
                                     onDeposit = { venue ->
                                         selectedVenue = venue
                                         depositInfo = null
@@ -403,14 +407,6 @@ class MainActivity : FragmentActivity() {
                                         overlay = "withdraw"
                                     },
                                     onOpenVenue = { _, url -> openInBrowser(url) },
-                                    onAddAllowlist = {
-                                        withdrawVm.reset()
-                                        overlay = "allowlist"
-                                    },
-                                    onRemoveAllowlist = { id -> withdrawVm.removeAllowlistEntry(id) },
-                                    onCancelWithdrawal = { id ->
-                                        appViewModel.cancelWithdrawal(id) { message -> appViewModel.notify(message) }
-                                    },
                                 )
                             }
                         }

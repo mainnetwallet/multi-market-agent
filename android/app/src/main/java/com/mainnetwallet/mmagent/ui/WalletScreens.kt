@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -56,22 +57,16 @@ import org.json.JSONObject
 
 /**
  * The Wallet screen: per-venue balances with the venue's own collateral asset
- * name, deposit and withdraw entries, the allowlist, approvals and history.
+ * name, and the deposit and withdraw entries. Recipients, approvals, withdrawals
+ * and history are in Settings (see [fundsSections]).
  */
 @Composable
 fun WalletScreen(
     balances: List<JSONObject>,
     capabilities: JSONObject?,
-    allowlist: List<JSONObject>,
-    approvals: List<JSONObject>,
-    fundsHistory: List<JSONObject>,
-    withdrawals: List<JSONObject>,
     onDeposit: (venue: String) -> Unit,
     onWithdraw: (venue: String) -> Unit,
     onOpenVenue: (venue: String, url: String) -> Unit,
-    onAddAllowlist: () -> Unit,
-    onRemoveAllowlist: (String) -> Unit,
-    onCancelWithdrawal: (String) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -85,129 +80,145 @@ fun WalletScreen(
         if (balances.isEmpty()) {
             item { Text("No venue balances available.", style = MaterialTheme.typography.bodyMedium) }
         }
+    }
+}
 
-        item {
-            SectionHeader("Allowlist", "${allowlist.size} recipient(s)")
-            Spacer(Modifier.height(6.dp))
-            if (allowlist.isEmpty()) {
-                Text(
-                    "No withdrawal recipients yet. Add one before withdrawing; a new address waits out a cooling period.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+/**
+ * The funds housekeeping that no longer sits on the Wallet page: saved recipients, on-chain approvals,
+ * withdrawals (with Cancel while one is still in its hold window) and the venues' own deposit and
+ * withdrawal history. It is shown in Settings.
+ */
+fun LazyListScope.fundsSections(
+    allowlist: List<JSONObject>,
+    approvals: List<JSONObject>,
+    withdrawals: List<JSONObject>,
+    fundsHistory: List<JSONObject>,
+    onOpenUrl: (url: String) -> Unit,
+    onAddAllowlist: () -> Unit,
+    onRemoveAllowlist: (String) -> Unit,
+    onCancelWithdrawal: (String) -> Unit,
+) {
+    item {
+        SectionHeader("Allowlist", "${allowlist.size} recipient(s)")
+        Spacer(Modifier.height(6.dp))
+        if (allowlist.isEmpty()) {
+            Text(
+                "No saved recipients. Saved addresses show up as chips on the Withdraw page; a new one waits out a cooling period before it can be used.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            allowlist.forEach { entry ->
+                RowCard(
+                    title = entry.optString("label"),
+                    subtitle = "${entry.optString("network")} · ${entry.optString("asset")}",
+                    detail = Format.groupAddress(entry.optString("address")),
+                    trailing = {
+                        Text(
+                            "Remove",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onRemoveAllowlist(entry.optString("id")) }
+                                .padding(6.dp),
+                        )
+                    },
                 )
-            } else {
-                allowlist.forEach { entry ->
-                    RowCard(
-                        title = entry.optString("label"),
-                        subtitle = "${entry.optString("network")} · ${entry.optString("asset")}",
-                        detail = Format.groupAddress(entry.optString("address")),
-                        trailing = {
+                Spacer(Modifier.height(6.dp))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        ConfirmButton("Add recipient", enabled = true, onClick = onAddAllowlist)
+    }
+
+    item {
+        SectionHeader("Approvals")
+        Spacer(Modifier.height(6.dp))
+        if (approvals.isEmpty()) {
+            Text("No approval data available.", style = MaterialTheme.typography.bodyMedium)
+        } else {
+            approvals.forEach { approval ->
+                val venue = approval.optString("venue")
+                val needed = approval.optBoolean("needed")
+                RowCard(
+                    title = venue.replaceFirstChar { it.uppercase() },
+                    subtitle = if (needed) {
+                        "Needs an on-chain allowance"
+                    } else {
+                        "No on-chain approval needed"
+                    },
+                    detail = approval.optString("reason"),
+                    trailing = {
+                        if (needed) {
                             Text(
-                                "Remove",
+                                "Guide",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.secondary,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
-                                    .clickable { onRemoveAllowlist(entry.optString("id")) }
+                                    .clickable { onOpenUrl(approval.optString("official_url")) }
                                     .padding(6.dp),
                             )
-                        },
-                    )
-                    Spacer(Modifier.height(6.dp))
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            ConfirmButton("Add recipient", enabled = true, onClick = onAddAllowlist)
-        }
-
-        item {
-            SectionHeader("Approvals")
-            Spacer(Modifier.height(6.dp))
-            if (approvals.isEmpty()) {
-                Text("No approval data available.", style = MaterialTheme.typography.bodyMedium)
-            } else {
-                approvals.forEach { approval ->
-                    val venue = approval.optString("venue")
-                    val needed = approval.optBoolean("needed")
-                    RowCard(
-                        title = venue.replaceFirstChar { it.uppercase() },
-                        subtitle = if (needed) {
-                            "Needs an on-chain allowance"
-                        } else {
-                            "No on-chain approval needed"
-                        },
-                        detail = approval.optString("reason"),
-                        trailing = {
-                            if (needed) {
-                                Text(
-                                    "Guide",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { onOpenVenue(venue, approval.optString("official_url")) }
-                                        .padding(6.dp),
-                                )
-                            }
-                        },
-                    )
-                    Spacer(Modifier.height(6.dp))
-                }
+                        }
+                    },
+                )
+                Spacer(Modifier.height(6.dp))
             }
         }
+    }
 
-        item {
-            SectionHeader("Withdrawals", "${withdrawals.size}")
-            Spacer(Modifier.height(6.dp))
-            if (withdrawals.isEmpty()) {
-                Text("No withdrawals yet.", style = MaterialTheme.typography.bodyMedium)
-            } else {
-                withdrawals.forEach { withdrawal ->
-                    val status = withdrawal.optString("status")
-                    val txHash = withdrawal.optString("tx_hash").takeIf { it.isNotBlank() && it != "null" }
-                    RowCard(
-                        title = "${Format.money(withdrawal.optString("amount_usd"))} · $status",
-                        subtitle = "${withdrawal.optString("venue")} · ${withdrawal.optString("network")} · ${withdrawal.optString("asset")}",
-                        detail = "recipient ${Format.groupAddress(withdrawal.optString("recipient"))}" +
-                            (txHash?.let { "\ntx $it" } ?: ""),
-                        trailing = {
-                            // Cancellable only while it is still in the hold window.
-                            if (status == "PENDING_HOLD") {
-                                Text(
-                                    "Cancel",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { onCancelWithdrawal(withdrawal.optString("id")) }
-                                        .padding(6.dp),
-                                )
-                            }
-                        },
-                    )
-                    Spacer(Modifier.height(6.dp))
-                }
+    item {
+        SectionHeader("Withdrawals", "${withdrawals.size}")
+        Spacer(Modifier.height(6.dp))
+        if (withdrawals.isEmpty()) {
+            Text("No withdrawals yet.", style = MaterialTheme.typography.bodyMedium)
+        } else {
+            withdrawals.forEach { withdrawal ->
+                val status = withdrawal.optString("status")
+                val txHash = withdrawal.optString("tx_hash").takeIf { it.isNotBlank() && it != "null" }
+                RowCard(
+                    title = "${Format.money(withdrawal.optString("amount_usd"))} · $status",
+                    subtitle = "${withdrawal.optString("venue")} · ${withdrawal.optString("network")} · ${withdrawal.optString("asset")}",
+                    detail = "recipient ${Format.groupAddress(withdrawal.optString("recipient"))}" +
+                        (txHash?.let { "\ntx $it" } ?: ""),
+                    trailing = {
+                        // Cancellable only while it is still in the hold window.
+                        if (status == "PENDING_HOLD") {
+                            Text(
+                                "Cancel",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onCancelWithdrawal(withdrawal.optString("id")) }
+                                    .padding(6.dp),
+                            )
+                        }
+                    },
+                )
+                Spacer(Modifier.height(6.dp))
             }
         }
+    }
 
-        item {
-            SectionHeader("Deposit and withdrawal history")
-            Spacer(Modifier.height(6.dp))
-            if (fundsHistory.isEmpty()) {
-                Text("No history reported by the venues.", style = MaterialTheme.typography.bodyMedium)
-            } else {
-                fundsHistory.forEach { row ->
-                    RowCard(
-                        title = "${row.optString("kind")} " + if (row.optString("amount_usd").isBlank() && row.optString("amount").isNotBlank()) {
-                            "${row.optString("amount")} ${row.optString("asset")}"
-                        } else {
-                            Format.money(row.optString("amount_usd"))
-                        },
-                        subtitle = "${row.optString("venue")} · ${row.optString("status")}",
-                        detail = "${row.optString("type")} · fee ${Format.money(row.optString("fee_usd"))}",
-                    )
-                    Spacer(Modifier.height(6.dp))
-                }
+    item {
+        SectionHeader("Deposit and withdrawal history")
+        Spacer(Modifier.height(6.dp))
+        if (fundsHistory.isEmpty()) {
+            Text("No history reported by the venues.", style = MaterialTheme.typography.bodyMedium)
+        } else {
+            fundsHistory.forEach { row ->
+                RowCard(
+                    title = "${row.optString("kind")} " + if (row.optString("amount_usd").isBlank() && row.optString("amount").isNotBlank()) {
+                        "${row.optString("amount")} ${row.optString("asset")}"
+                    } else {
+                        Format.money(row.optString("amount_usd"))
+                    },
+                    subtitle = "${row.optString("venue")} · ${row.optString("status")}",
+                    detail = "${row.optString("type")} · fee ${Format.money(row.optString("fee_usd"))}",
+                )
+                Spacer(Modifier.height(6.dp))
             }
         }
     }

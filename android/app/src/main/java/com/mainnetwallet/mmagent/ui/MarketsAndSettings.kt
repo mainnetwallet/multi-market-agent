@@ -177,6 +177,9 @@ fun SettingsScreen(
     onSetAppLock: (enabled: Boolean, timeoutMinutes: Int) -> Unit,
     onLogout: () -> Unit,
     onOpenVenue: (url: String) -> Unit,
+    onAddAllowlist: () -> Unit,
+    onRemoveAllowlist: (String) -> Unit,
+    onCancelWithdrawal: (String) -> Unit,
     onBack: () -> Unit,
 ) {
     var newCeiling by remember { mutableStateOf("") }
@@ -432,6 +435,16 @@ fun SettingsScreen(
                 }
             }
         }
+        fundsSections(
+            allowlist = state.allowlist,
+            approvals = state.approvals,
+            withdrawals = state.withdrawals,
+            fundsHistory = state.fundsHistory,
+            onOpenUrl = onOpenVenue,
+            onAddAllowlist = onAddAllowlist,
+            onRemoveAllowlist = onRemoveAllowlist,
+            onCancelWithdrawal = onCancelWithdrawal,
+        )
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
