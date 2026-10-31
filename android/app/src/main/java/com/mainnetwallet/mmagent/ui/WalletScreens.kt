@@ -326,6 +326,8 @@ private fun DepositDetails(info: JSONObject, onCopy: (String) -> Unit) {
             val kind = info.optString("address_type")
             if (kind.isNotBlank()) ValueRow("Address type", kind.uppercase())
             if (tokenAddress.isNotBlank()) ValueRow("Token contract", shortMiddle(tokenAddress))
+            val wallet = info.optString("wallet")
+            if (wallet.isNotBlank() && wallet != "null") ValueRow("Credits wallet", shortMiddle(wallet))
             Spacer(Modifier.height(12.dp))
             Text(
                 "Send to",

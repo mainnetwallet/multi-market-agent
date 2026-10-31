@@ -61,6 +61,7 @@ class DepositInfo:
     address_type: str | None = None
     token_name: str | None = None
     token_address: str | None = None
+    wallet: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +78,7 @@ class DepositInfo:
             "address_type": self.address_type,
             "token_name": self.token_name,
             "token_address": self.token_address,
+            "wallet": self.wallet,
         }
 
 
@@ -444,6 +446,8 @@ class FundsService:
             "Wrong-token recovery: https://recovery.polymarket.com",
             "Polymarket funds sit in the funder/proxy wallet, which can differ from the "
             "signing wallet. Confirm you are sending to the funder wallet.",
+            f"This address credits the Polymarket wallet {wallet}. Check it matches the wallet address on "
+            "your polymarket.com profile before sending; if it does not, set POLYMARKET_WALLET_ADDRESS.",
         ]
         return DepositInfo(
             supported=True,
@@ -457,6 +461,7 @@ class FundsService:
             address_type=kind,
             token_name=str(picked["name"]),
             token_address=str(picked["address"]),
+            wallet=wallet,
         )
 
     def _limitless_deposit(self) -> DepositInfo:
