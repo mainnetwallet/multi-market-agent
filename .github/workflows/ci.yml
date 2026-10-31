@@ -31,7 +31,19 @@ jobs:
       - name: Mypy
         run: mypy src
       - name: Pytest
-        run: pytest -q
+        run: |
+          set +e
+          pytest -q --tb=short -rfE 2>&1 | tee /tmp/pytest.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            python - <<'EOF'
+          t = open('/tmp/pytest.log', encoding='utf-8', errors='replace').read()
+          lines = [l for l in t.splitlines() if l.startswith(('FAILED', 'ERROR', 'E  ')) or 'Error' in l]
+          msg = '\n'.join(lines[:30]) or t[-2000:]
+          print('::error title=pytest-failure::' + msg.replace('%', '%25').replace('\r', '').replace('\n', '%0A'))
+          EOF
+          fi
+          exit $code
       - name: Alembic upgrade on a fresh database
         env:
           DATABASE_URL: sqlite:///./data/ci.db
