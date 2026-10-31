@@ -131,7 +131,7 @@ fun AppScaffold(
                         }
                     },
                 ) {}
-                if (state.loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (state.loading && !state.startupLoad) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 if (state.unreachable) {
                     // Last data stays on screen; the money buttons are off until it is fresh.
                     AlertCard(

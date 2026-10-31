@@ -158,6 +158,8 @@ data class AppUiState(
     val fundsHistory: List<JSONObject> = emptyList(),
     val withdrawals: List<JSONObject> = emptyList(),
     val loading: Boolean = false,
+    /** True only for the refresh that runs as the app opens: the top progress line stays hidden for it. */
+    val startupLoad: Boolean = false,
     val error: String? = null,
     val loggedIn: Boolean = false,
 ) {
@@ -212,6 +214,8 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     private val pendingRenames = HashMap<String, String>()
     private val pendingDeletes = HashSet<String>()
     private var loadingEarlier = false
+    /** The first non-silent refresh after launch is the one that runs as the app opens. */
+    private var startupPending = true
 
     /** When the saved session was last swapped for a fresh one (0 = not yet this run). */
     private var lastRenewAt = 0L
@@ -242,7 +246,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             // Show the last answers right away. `loading` stays true until the live refresh below finishes
             // (or fails), so the money buttons stay off while the numbers on screen are old.
             appSnapshot.restore(baseUrl, REFRESH_PATHS.size)?.let { saved ->
-                _state.value = buildState(saved.status, saved.extras, AppUiState()).copy(loading = true)
+                _state.value = buildState(saved.status, saved.extras, AppUiState()).copy(loading = true, startupLoad = true)
             }
         }
         loadSession()
@@ -534,6 +538,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             fundsHistory = fundsHistory?.let { ApiClient.arrayOf(it, "history").objects() } ?: previous.fundsHistory,
             withdrawals = withdrawals?.let { ApiClient.arrayOf(it, "withdrawals").objects() } ?: previous.withdrawals,
             loading = false,
+            startupLoad = false,
             loggedIn = true,
         )
     }
@@ -555,7 +560,10 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             refreshJob?.cancel()
         }
         refreshJob = viewModelScope.launch {
-            if (!silent) _state.value = _state.value.copy(loading = true, error = null)
+            if (!silent) {
+                _state.value = _state.value.copy(loading = true, error = null, startupLoad = startupPending)
+                startupPending = false
+            }
             try {
                 val previous = _state.value
                 // /v1/status and everything else go out at once: one round trip to a remote server, not two.
@@ -576,7 +584,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             } catch (e: Exception) {
                 if (token.isNullOrBlank()) return@launch
                 // Keep the last good data on screen; `error` is what turns the money buttons off.
-                _state.value = _state.value.copy(loading = false, error = e.message ?: "Cannot reach the server.")
+                _state.value = _state.value.copy(loading = false, startupLoad = false, error = e.message ?: "Cannot reach the server.")
             }
         }
     }
