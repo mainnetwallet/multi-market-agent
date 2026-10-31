@@ -8,13 +8,14 @@ Rules:
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, event, func, select, update
+from sqlalchemy import Engine, create_engine, delete, event, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -34,12 +35,14 @@ from ..domain import (
     VenueId,
     utcnow,
 )
-from ..util import get_logger, redact
+from ..util import get_logger, redact, redact_text
 from ._result import rowcount
 from .models import (
     AllowlistRow,
     AuditRow,
     Base,
+    ChatMessageRow,
+    ConversationRow,
     DecisionRow,
     EventRow,
     FillRow,
@@ -84,6 +87,18 @@ PROPOSAL_TRANSITIONS: dict[str, set[str]] = {
     "EXPIRED": set(),
     "FAILED": set(),
 }
+
+
+class ConversationNotFound(LookupError):
+    """No such conversation for this owner. Another owner's id looks exactly the same."""
+
+
+class ConversationBusy(RuntimeError):
+    """The conversation is still answering its previous message."""
+
+
+CONVERSATION_STATUSES = frozenset({"idle", "running", "stopped", "error", "interrupted"})
+SUMMARY_MAX_CHARS = 6000
 
 
 def _dec(value: Decimal | None) -> Decimal:
@@ -1156,6 +1171,203 @@ class Store:
                 }
                 for r in s.scalars(stmt).all()
             ]
+
+    # --------------------------------------------------------- conversations
+    # Every method takes the owner and the conversation id and starts with _owned(): the one
+    # place that decides whether a chat may be touched. Messages are only ever read or written by
+    # that checked id, so one chat cannot reach another chat's history, summary or state.
+    @staticmethod
+    def _owned(s: Session, owner: str, conversation_id: str) -> ConversationRow:
+        try:
+            canonical = str(uuid.UUID(str(conversation_id)))
+        except ValueError:
+            raise ConversationNotFound(str(conversation_id)) from None
+        row = None
+        if owner:
+            row = s.scalar(
+                select(ConversationRow).where(ConversationRow.id == canonical, ConversationRow.owner == owner)
+            )
+        if row is None:
+            raise ConversationNotFound(str(conversation_id))
+        return row
+
+    @staticmethod
+    def _conversation_dict(r: ConversationRow) -> dict[str, Any]:
+        return {
+            "id": r.id,
+            "title": r.title,
+            "status": r.status,
+            "message_count": r.last_seq,
+            "created_at": r.created_at,
+            "updated_at": r.updated_at,
+        }
+
+    def chat_create(self, owner: str, title: str = "") -> dict[str, Any]:
+        if not owner:
+            raise ValueError("a conversation needs an owner")
+        now = utcnow()
+        with self.session() as s:
+            row = ConversationRow(owner=owner, title=title.strip()[:120], created_at=now, updated_at=now)
+            s.add(row)
+            s.flush()
+            return self._conversation_dict(row)
+
+    def chat_list(self, owner: str, q: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        """The owner's chats, newest first. [q] matches titles and message text (case-insensitive)."""
+
+        stmt = select(ConversationRow).where(ConversationRow.owner == owner)
+        needle = (q or "").strip()
+        if needle:
+            in_messages = (
+                select(ChatMessageRow.conversation_id)
+                .where(
+                    ChatMessageRow.conversation_id == ConversationRow.id,
+                    ChatMessageRow.content.icontains(needle, autoescape=True),
+                )
+                .exists()
+            )
+            stmt = stmt.where(or_(ConversationRow.title.icontains(needle, autoescape=True), in_messages))
+        stmt = stmt.order_by(ConversationRow.updated_at.desc(), ConversationRow.id).limit(max(1, min(limit, 200)))
+        with self.session() as s:
+            return [self._conversation_dict(r) for r in s.scalars(stmt).all()]
+
+    def chat_get(self, owner: str, conversation_id: str) -> dict[str, Any]:
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            return {
+                **self._conversation_dict(row),
+                "summary": row.summary,
+                "summary_upto": row.summary_upto,
+                "state": dict(row.state or {}),
+            }
+
+    def chat_rename(self, owner: str, conversation_id: str, title: str) -> dict[str, Any]:
+        clean = title.strip()[:120]
+        if not clean:
+            raise ValueError("a title is required")
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            row.title = clean
+            return self._conversation_dict(row)
+
+    def chat_delete(self, owner: str, conversation_id: str) -> None:
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            s.execute(delete(ChatMessageRow).where(ChatMessageRow.conversation_id == row.id))
+            s.delete(row)
+
+    def chat_messages(
+        self,
+        owner: str,
+        conversation_id: str,
+        *,
+        before: int | None = None,
+        after: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Messages of one chat, oldest first. Default: the latest [limit]; [before] pages back to
+        older ones; [after] returns the first [limit] newer than that sequence number."""
+
+        limit = max(1, min(int(limit), 500))
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            stmt = select(ChatMessageRow).where(ChatMessageRow.conversation_id == row.id)
+            if after is not None:
+                rows = list(s.scalars(stmt.where(ChatMessageRow.seq > after).order_by(ChatMessageRow.seq).limit(limit)))
+            else:
+                if before is not None:
+                    stmt = stmt.where(ChatMessageRow.seq < before)
+                rows = list(s.scalars(stmt.order_by(ChatMessageRow.seq.desc()).limit(limit)))[::-1]
+            return [
+                {
+                    "seq": m.seq,
+                    "role": m.role,
+                    "text": m.content,
+                    "tools": list(m.tools or []),
+                    "created_at": m.created_at,
+                }
+                for m in rows
+            ]
+
+    def chat_append(self, owner: str, conversation_id: str, messages: list[dict[str, Any]]) -> list[int]:
+        """Add messages to the end of one chat; returns their sequence numbers. Text is redacted."""
+
+        if not messages:
+            return []
+        now = utcnow()
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            # Atomic in the database, so two writers can never be given the same numbers.
+            s.execute(
+                update(ConversationRow)
+                .where(ConversationRow.id == row.id, ConversationRow.owner == owner)
+                .values(last_seq=ConversationRow.last_seq + len(messages), updated_at=now)
+            )
+            last = int(s.scalar(select(ConversationRow.last_seq).where(ConversationRow.id == row.id)) or 0)
+            first = last - len(messages) + 1
+            for offset, message in enumerate(messages):
+                s.add(
+                    ChatMessageRow(
+                        conversation_id=row.id,
+                        seq=first + offset,
+                        role=str(message["role"])[:16],
+                        content=redact_text(str(message.get("text", ""))),
+                        tools=list(message.get("tools") or []),
+                        created_at=now,
+                    )
+                )
+            return list(range(first, last + 1))
+
+    def chat_set_summary(self, owner: str, conversation_id: str, summary: str, upto: int) -> bool:
+        """Fold messages up to [upto] into the summary. Only moves forward, never past the last message."""
+
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            done = s.execute(
+                update(ConversationRow)
+                .where(
+                    ConversationRow.id == row.id,
+                    ConversationRow.owner == owner,
+                    ConversationRow.summary_upto < upto,
+                    ConversationRow.last_seq >= upto,
+                )
+                .values(summary=redact_text(summary)[:SUMMARY_MAX_CHARS], summary_upto=upto)
+            )
+            return rowcount(done) == 1
+
+    def chat_begin_run(self, owner: str, conversation_id: str) -> None:
+        """Claim the chat for one answer. Atomic: a second claim fails with ConversationBusy."""
+
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            claimed = s.execute(
+                update(ConversationRow)
+                .where(
+                    ConversationRow.id == row.id,
+                    ConversationRow.owner == owner,
+                    ConversationRow.status != "running",
+                )
+                .values(status="running", state={"started_at": utcnow().isoformat(), "tools": []})
+            )
+        if rowcount(claimed) != 1:
+            raise ConversationBusy(str(conversation_id))
+
+    def chat_finish_run(self, owner: str, conversation_id: str, status: str, state: dict[str, Any]) -> None:
+        if status not in CONVERSATION_STATUSES - {"running"}:
+            raise ValueError(f"bad conversation status {status}")
+        with self.session() as s:
+            row = self._owned(s, owner, conversation_id)
+            row.status = status
+            row.state = redact({**state, "finished_at": utcnow().isoformat()})
+
+    def chat_interrupt_stale_runs(self) -> int:
+        """At startup nothing can still be running: mark answers cut off by a restart."""
+
+        with self.session() as s:
+            done = s.execute(
+                update(ConversationRow).where(ConversationRow.status == "running").values(status="interrupted")
+            )
+            return rowcount(done)
 
     # ------------------------------------------------------------------ misc
     def status_counts(self) -> dict[str, int]:

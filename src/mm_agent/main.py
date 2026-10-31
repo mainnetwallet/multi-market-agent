@@ -87,6 +87,10 @@ def build_runtime(settings: Settings, *, bind_database: bool = True) -> Runtime:
 
     async def startup() -> None:
         logger.info("startup", env=settings.app_env, database=settings.database_url.split("?")[0])
+        # An answer that was running when the server stopped did not finish; say so when it is reopened.
+        interrupted = store.chat_interrupt_stale_runs()
+        if interrupted:
+            logger.warning("chat_runs_interrupted", count=interrupted)
         await registry.start()
         try:
             await registry.refresh_all()

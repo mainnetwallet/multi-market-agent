@@ -64,6 +64,10 @@ def _uuid() -> str:
     return uuid.uuid4().hex
 
 
+def _conversation_id() -> str:
+    return str(uuid.uuid4())
+
+
 class VenueStateRow(Base):
     __tablename__ = "venues"
 
@@ -415,3 +419,37 @@ class HardCeilingRow(Base):
     value: Mapped[Decimal] = mapped_column(DecimalString(40), nullable=False)
     actor: Mapped[str] = mapped_column(String(80), default="", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+
+class ConversationRow(Base):
+    """One chat. Its messages, summary and run state hang off its id and are never shared."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_conversation_id)
+    owner: Mapped[str] = mapped_column(String(80), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    summary_upto: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="idle", nullable=False)
+    state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+    __table_args__ = (Index("ix_conversations_owner_updated", "owner", "updated_at"),)
+
+
+class ChatMessageRow(Base):
+    """A message exists only inside one conversation: (conversation_id, seq) is its identity."""
+
+    __tablename__ = "chat_messages"
+
+    conversation_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True
+    )
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    tools: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
