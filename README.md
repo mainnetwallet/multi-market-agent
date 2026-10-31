@@ -308,7 +308,7 @@ never sees secrets/raw auth responses, and wraps tool output as DATA. If no LLM
 is configured, use slash commands.
 
 `GET /v1/chat/stream?message=...` and `POST /v1/chat/stream` (`{"message": ...}`, no
-URL-length limit, the Android app uses it) are the Server-Sent Events form of `/v1/chat`. Events: `status`, `delta` (reply text as the LLM
+URL-length limit, the Android app uses it and sends its `conversation_id`) are the Server-Sent Events form of `/v1/chat`. Events: `status`, `delta` (reply text as the LLM
 produces it), `tool` (`{id, name, state: running|done|error}`), `ping`, then
 `message` (the final, redacted reply) and `done`. If the client disconnects
 (Stop), no new tool is started, but a tool that is already running finishes, so

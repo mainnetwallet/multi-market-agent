@@ -28,6 +28,14 @@ directly — no WebView.
   USD, USDC — never hardcoded), Deposit and Withdraw, Allowlist, Approvals and
   withdrawal/deposit history. Where a venue has no API for something, a card
   explains why and opens the venue in a Custom Tab.
+- **Chat** — a ChatGPT/Claude-style chat with the agent. Every chat is a server conversation
+  (`/v1/conversations`), so the assistant sees that chat's earlier messages and only that chat's.
+  A history drawer groups chats by day and offers new chat, rename, delete and search (titles and
+  message text, searched on the server). Replies stream in with Markdown, aligned tables and
+  syntax-highlighted code blocks; each message and code block has a Copy action. Tool steps show as
+  they run, and Stop ends a reply (a step already running, such as a trade, still finishes, so check
+  Orders). Chats from before this change stay on the device and open as before; sending a message in
+  one starts its server copy. Slash commands (`/status`, `/positions`, ...) work as always.
 - **Settings** — a Security section with the mode, the app lock (on/off and the
   background timeout), the per-trade cap, the hard ceiling (raisable with a
   step-up token), the funds capability status and the heartbeat/resting-orders

@@ -54,8 +54,18 @@ data class ChatMessage(
     val streaming: Boolean = false,
 )
 
-/** A saved chat. The server keeps no chat history, so conversations live on this device. */
-data class Conversation(val id: String, val title: String, val messages: List<ChatMessage>, val updatedAt: Long)
+/**
+ * A saved chat. A [synced] chat lives on the server (its id is the server's conversation id, and the
+ * server gives the assistant that chat's history); [messages] are then a cache that is refreshed when the
+ * chat is opened. A chat that is not synced is an older one kept only on this device.
+ */
+data class Conversation(
+    val id: String,
+    val title: String,
+    val messages: List<ChatMessage>,
+    val updatedAt: Long,
+    val synced: Boolean = false,
+)
 
 /** [messages] belong to the open conversation ([activeId]; null = a new chat nothing was sent in yet). */
 data class ChatUiState(
@@ -73,11 +83,47 @@ internal fun mergeToolStep(steps: List<ToolStep>, step: ToolStep): List<ToolStep
     return if (index >= 0) steps.toMutableList().also { it[index] = step } else steps + step
 }
 
+/**
+ * The saved list after asking the server: every server chat (keeping any messages already cached here),
+ * plus the chats that exist only on this device. A synced chat the server no longer has was deleted
+ * elsewhere and is dropped, unless it is the one open right now ([openId]); that one stays as a
+ * device-only chat so its messages are not pulled out from under the reader.
+ */
+internal fun mergeChatLists(server: List<Conversation>, local: List<Conversation>, openId: String?): List<Conversation> {
+    val cached = local.associateBy { it.id }
+    val serverIds = server.mapTo(HashSet()) { it.id }
+    val fromServer = server.map { chat -> chat.copy(messages = cached[chat.id]?.messages ?: chat.messages) }
+    val kept = local.filter { it.id !in serverIds && (!it.synced || it.id == openId) }.map { it.copy(synced = false) }
+    return (fromServer + kept).sortedByDescending { it.updatedAt }
+}
+
 /** A chat is titled after its first line, shortened. */
 internal fun chatTitle(firstMessage: String): String {
     val line = firstMessage.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().trim()
     return if (line.length > 40) line.take(40).trimEnd() + "…" else line.ifBlank { "New chat" }
 }
+
+/** One row of `GET /v1/conversations`; its messages arrive when the chat is opened. */
+internal fun conversationFromServer(o: JSONObject): Conversation = Conversation(
+    id = o.optString("id"),
+    title = o.optString("title").ifBlank { "New chat" },
+    messages = emptyList(),
+    updatedAt = Format.parseInstant(o.optString("updated_at"))?.toEpochMilli() ?: 0L,
+    synced = true,
+)
+
+/**
+ * One stored message. The server keeps plan notes next to tool steps in `tools`; only entries with a
+ * tool name are steps.
+ */
+internal fun messageFromServer(o: JSONObject): ChatMessage = ChatMessage(
+    role = o.optString("role").ifBlank { "agent" },
+    text = o.optString("text"),
+    at = Format.parseInstant(o.optString("created_at"))?.toEpochMilli() ?: System.currentTimeMillis(),
+    tools = ApiClient.arrayOf(o, "tools").objects()
+        .filter { it.optString("name").isNotBlank() }
+        .map { ToolStep(it.optString("id"), it.optString("name"), it.optString("state").ifBlank { "done" }) },
+)
 
 /** The two read-only server documents Settings can show. */
 data class InfoUiState(
@@ -155,7 +201,10 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         // A 401 that means "the session is gone" sends the operator back to login.
         api.onUnauthorized = { expireSession() }
         loadSession()
-        if (!token.isNullOrBlank()) loadChats()
+        if (!token.isNullOrBlank()) {
+            loadChats()
+            refreshChats()
+        }
         if (token.isNullOrBlank()) warmUp()
     }
 
@@ -250,6 +299,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 savedUsername = username
                 lastRenewAt = System.currentTimeMillis()
                 loadChats()
+                refreshChats()
                 _state.value = _state.value.copy(loggedIn = true, loading = false, error = null)
                 refresh()
                 onDone(true)
@@ -496,8 +546,9 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     /**
      * Send one chat message; slash commands and plain text take the same route.
      *
-     * The reply streams in over /v1/chat/stream: tool progress and text arrive as they happen. The
-     * server answers each message on its own, so earlier messages are not part of the context.
+     * The reply streams in over /v1/chat/stream: tool progress and text arrive as they happen. Every
+     * chat is a server conversation, so the assistant sees that chat's earlier messages (and only
+     * that chat's). A chat that has no server copy yet gets one just before its first message.
      */
     fun sendChat(text: String) {
         val message = text.trim()
@@ -517,7 +568,8 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         chatJob = viewModelScope.launch {
             var reply: String? = null
             try {
-                api.stream("/v1/chat/stream", ApiClient.jsonOf("message" to message)) { event, data ->
+                val serverId = ensureServerChat()
+                api.stream("/v1/chat/stream", ApiClient.jsonOf("message" to message, "conversation_id" to serverId)) { event, data ->
                     when (event) {
                         "delta" -> updateReply { it.copy(text = it.text + data.optString("text")) }
                         "tool" -> updateReply {
@@ -542,6 +594,51 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         }
     }
 
+    /** The open chat's server id; a new or device-only chat is created on the server first and takes its id. */
+    private suspend fun ensureServerChat(): String {
+        val id = _chat.value.activeId ?: throw IllegalStateException("No chat is open.")
+        val current = _chat.value.conversations.firstOrNull { it.id == id }
+        if (current?.synced == true) return id
+        val created = api.post("/v1/conversations", ApiClient.jsonOf("title" to (current?.title ?: "")))
+        val serverId = created.optJSONObject("conversation")?.optString("id").orEmpty()
+        if (serverId.isBlank()) throw IllegalStateException("The server did not create the chat.")
+        _chat.update { s ->
+            s.copy(
+                activeId = serverId,
+                conversations = s.conversations.map { if (it.id == id) it.copy(id = serverId, synced = true) else it },
+            )
+        }
+        return serverId
+    }
+
+    /** Ask the server for this user's chats and merge them into the saved list; offline, the saved list stays. */
+    fun refreshChats() {
+        viewModelScope.launch {
+            try {
+                val rows = api.get("/v1/conversations?limit=$MAX_CHATS")
+                val server = ApiClient.arrayOf(rows, "conversations").objects().map { conversationFromServer(it) }.filter { it.id.isNotBlank() }
+                _chat.update { s -> s.copy(conversations = mergeChatLists(server, s.conversations, s.activeId).take(MAX_CHATS)) }
+                persistChats()
+            } catch (e: Exception) {
+                // The saved list is still usable; the next refresh tries again.
+            }
+        }
+    }
+
+    /** Ids of the chats whose title or message text match [query], as the server sees them; null if it could not be asked. */
+    suspend fun searchChats(query: String): List<String>? {
+        val needle = query.trim()
+        if (needle.isEmpty()) return emptyList()
+        return try {
+            val rows = api.get("/v1/conversations?limit=$MAX_CHATS&q=" + java.net.URLEncoder.encode(needle, "UTF-8"))
+            ApiClient.arrayOf(rows, "conversations").objects().map { it.optString("id") }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /**
      * Stop generating. The server never starts a new step after this, but a step that is already
      * running (a trade, say) finishes, so the reply says so and the lists are refreshed.
@@ -557,21 +654,67 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
 
     fun openChat(id: String) {
         if (_chat.value.busy) return
-        _chat.update { s ->
-            val chat = s.conversations.firstOrNull { it.id == id } ?: return@update s
-            s.copy(activeId = chat.id, messages = chat.messages)
+        val chat = _chat.value.conversations.firstOrNull { it.id == id } ?: return
+        _chat.update { s -> s.copy(activeId = chat.id, messages = chat.messages) }
+        if (chat.synced) loadChatMessages(chat)
+    }
+
+    /** Show the stored messages of a server chat; what was cached stays on screen until they arrive. */
+    private fun loadChatMessages(chat: Conversation) {
+        viewModelScope.launch {
+            try {
+                val res = api.get("/v1/conversations/${chat.id}/messages?limit=$MAX_CHAT_MESSAGES")
+                val stored = ApiClient.arrayOf(res, "messages").objects().map { messageFromServer(it) }
+                // Only if the reader is still on this chat and has not started typing to it.
+                _chat.update { s -> if (s.activeId == chat.id && !s.busy) s.copy(messages = stored) else s }
+                saveActiveChat()
+            } catch (e: ApiClient.ApiException) {
+                if (e.status == 404) {
+                    // Deleted from another device: forget it here too.
+                    _chat.update { s ->
+                        val open = s.activeId == chat.id
+                        s.copy(
+                            conversations = s.conversations.filterNot { it.id == chat.id },
+                            activeId = if (open) null else s.activeId,
+                            messages = if (open) emptyList() else s.messages,
+                        )
+                    }
+                    persistChats()
+                    _messages.tryEmit("That chat no longer exists on the server.")
+                } else if (chat.messages.isEmpty()) {
+                    _messages.tryEmit("Could not load this chat: ${e.message}")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (chat.messages.isEmpty()) _messages.tryEmit("Could not load this chat: ${e.message}")
+            }
         }
     }
 
     fun renameChat(id: String, title: String) {
         val clean = title.trim().take(60)
         if (clean.isEmpty()) return
+        val synced = _chat.value.conversations.firstOrNull { it.id == id }?.synced == true
         _chat.update { s -> s.copy(conversations = s.conversations.map { if (it.id == id) it.copy(title = clean) else it }) }
         persistChats()
+        if (synced) {
+            viewModelScope.launch {
+                try {
+                    api.post("/v1/conversations/$id/rename", ApiClient.jsonOf("title" to clean))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _messages.tryEmit("Could not rename the chat on the server: ${e.message}")
+                    refreshChats()
+                }
+            }
+        }
     }
 
     fun deleteChat(id: String) {
         if (_chat.value.busy && _chat.value.activeId == id) return
+        val synced = _chat.value.conversations.firstOrNull { it.id == id }?.synced == true
         _chat.update { s ->
             val open = s.activeId == id
             s.copy(
@@ -581,6 +724,24 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             )
         }
         persistChats()
+        if (synced) {
+            viewModelScope.launch {
+                try {
+                    api.delete("/v1/conversations/$id")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: ApiClient.ApiException) {
+                    // 404 means it is already gone, which is what was asked for.
+                    if (e.status != 404) {
+                        _messages.tryEmit("Could not delete the chat on the server: ${e.message}")
+                        refreshChats()
+                    }
+                } catch (e: Exception) {
+                    _messages.tryEmit("Could not delete the chat on the server: ${e.message}")
+                    refreshChats()
+                }
+            }
+        }
     }
 
     /** Change the reply that is still arriving (always the last message). */
@@ -622,6 +783,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         // A command or a tool may have changed orders, proposals or the venue.
         val lastUser = _chat.value.messages.lastOrNull { it.role == "user" }?.text.orEmpty()
         if (lastUser.startsWith("/") || usedTools) refresh()
+        refreshChats()
     }
 
     /** Copy the open conversation's messages into the saved list and write it to disk. */
@@ -638,12 +800,18 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
 
     private fun persistChats() {
         val chats = JSONArray()
-        for (chat in _chat.value.conversations) {
+        // Server chats can be fetched again, so only the newest few keep a cache; device-only chats keep everything.
+        for ((index, chat) in _chat.value.conversations.withIndex()) {
             val messages = JSONArray()
-            for (m in chat.messages.takeLast(MAX_CHAT_MESSAGES)) {
-                messages.put(JSONObject().put("role", m.role).put("text", m.text).put("at", m.at))
+            if (!chat.synced || index < CACHED_CHATS) {
+                for (m in chat.messages.takeLast(MAX_CHAT_MESSAGES)) {
+                    messages.put(JSONObject().put("role", m.role).put("text", m.text).put("at", m.at))
+                }
             }
-            chats.put(JSONObject().put("id", chat.id).put("title", chat.title).put("updatedAt", chat.updatedAt).put("messages", messages))
+            chats.put(
+                JSONObject().put("id", chat.id).put("title", chat.title).put("updatedAt", chat.updatedAt)
+                    .put("synced", chat.synced).put("messages", messages),
+            )
         }
         prefs.edit().putString(KEY_CHATS, chats.toString()).apply()
     }
@@ -656,6 +824,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                     id = o.optString("id"),
                     title = o.optString("title").ifBlank { "New chat" },
                     updatedAt = o.optLong("updatedAt"),
+                    synced = o.optBoolean("synced", false),
                     messages = ApiClient.arrayOf(o, "messages").objects().map { m ->
                         ChatMessage(m.optString("role"), m.optString("text"), m.optLong("at"))
                     },
@@ -862,7 +1031,8 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         const val KEY_TOKEN = "session_token"
         const val KEY_USERNAME = "username"
         private const val KEY_CHATS = "chat_history"
-        private const val MAX_CHATS = 50
+        private const val MAX_CHATS = 100
+        private const val CACHED_CHATS = 20
         private const val MAX_CHAT_MESSAGES = 200
         const val DEFAULT_USERNAME = "operator"
         private const val RENEW_EVERY_MS = 6L * 60 * 60 * 1000
