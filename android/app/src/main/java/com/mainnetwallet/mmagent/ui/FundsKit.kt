@@ -164,7 +164,7 @@ data class PickerOption(
 
 /**
  * A tappable field that shows the current choice (with an avatar) and a down arrow. It only reports the tap; the
- * screen decides what opens, normally a [PickerSheet].
+ * screen decides what opens, normally a [PickerSheet]. [compact] makes it one line high so two fit side by side.
  */
 @Composable
 fun SelectorField(
@@ -175,6 +175,7 @@ fun SelectorField(
     hint: String? = null,
     avatarSymbol: String? = null,
     enabled: Boolean = true,
+    compact: Boolean = false,
     onClick: () -> Unit,
 ) {
     Column(modifier.fillMaxWidth()) {
@@ -186,22 +187,23 @@ fun SelectorField(
                 .background(MaterialTheme.colorScheme.surface)
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp))
                 .clickable(enabled = enabled) { onClick() }
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(horizontal = if (compact) 10.dp else 14.dp, vertical = if (compact) 9.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (avatarSymbol != null && value.isNotBlank()) {
-                CoinAvatar(avatarSymbol, size = 32.dp)
-                Spacer(Modifier.width(12.dp))
+                CoinAvatar(avatarSymbol, size = if (compact) 26.dp else 32.dp)
+                Spacer(Modifier.width(if (compact) 8.dp else 12.dp))
             }
             Column(Modifier.weight(1f)) {
                 Text(
                     value.ifBlank { placeholder },
-                    style = MaterialTheme.typography.titleMedium,
+                    style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
                     color = if (value.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (!hint.isNullOrBlank()) {
+                // The compact form is one line high: the contract hint lives in the coin list instead.
+                if (!compact && !hint.isNullOrBlank()) {
                     Text(
                         hint,
                         style = MaterialTheme.typography.bodySmall,

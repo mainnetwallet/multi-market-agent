@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -268,31 +271,38 @@ fun DepositScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         FundsTopBar("Deposit", venue.uppercase(), onBack)
-        ErrorNote(error)
-        Spacer(Modifier.height(8.dp))
+        if (!error.isNullOrBlank()) {
+            ErrorNote(error)
+            Spacer(Modifier.height(8.dp))
+        }
 
         if (chains.isNotEmpty()) {
-            SelectorField(
-                label = "Network",
-                value = activeChain?.optString("chain_name").orEmpty(),
-                avatarSymbol = activeChain?.optString("chain_name"),
-                placeholder = "Select network",
-                onClick = { picker = "network" },
-            )
-            Spacer(Modifier.height(14.dp))
-            SelectorField(
-                label = "Coin",
-                value = activeTokenObject?.optString("symbol").orEmpty(),
-                avatarSymbol = activeTokenObject?.optString("symbol"),
-                hint = activeTokenObject?.optString("address")?.takeIf { it.isNotBlank() }?.let { shortMiddle(it) },
-                placeholder = "Select coin",
-                enabled = tokens.isNotEmpty(),
-                onClick = { picker = "coin" },
-            )
-            Spacer(Modifier.height(18.dp))
+            // Network and coin side by side: one row instead of two stacked fields.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SelectorField(
+                    label = "Network",
+                    value = activeChain?.optString("chain_name").orEmpty(),
+                    avatarSymbol = activeChain?.optString("chain_name"),
+                    placeholder = "Select",
+                    compact = true,
+                    onClick = { picker = "network" },
+                    modifier = Modifier.weight(1f),
+                )
+                SelectorField(
+                    label = "Coin",
+                    value = activeTokenObject?.optString("symbol").orEmpty(),
+                    avatarSymbol = activeTokenObject?.optString("symbol"),
+                    placeholder = "Select",
+                    enabled = tokens.isNotEmpty(),
+                    compact = true,
+                    onClick = { picker = "coin" },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
         }
 
         when {
@@ -310,7 +320,7 @@ fun DepositScreen(
 
             else -> DepositDetails(info, onCopy)
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
     }
 
     when (picker) {
@@ -357,7 +367,11 @@ fun DepositScreen(
     }
 }
 
-/** The QR code and address card, the limits, the three steps and the warnings for the pair the server answered for. */
+/**
+ * The deposit card for the pair the server answered for, kept to about one screen: QR code beside the "send only"
+ * line and the minimum, the address with a Copy button, the warnings in one banner, and the rest (address type,
+ * token contract, credited wallet, the three steps) behind one tap.
+ */
 @Composable
 private fun DepositDetails(info: JSONObject, onCopy: (String) -> Unit) {
     val address = info.optString("address")
@@ -365,6 +379,7 @@ private fun DepositDetails(info: JSONObject, onCopy: (String) -> Unit) {
     val network = info.optString("network")
     val tokenAddress = info.optString("token_address")
     var copied by remember(address) { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(false) }
     LaunchedEffect(copied) {
         if (copied) {
             delay(2_000)
@@ -373,66 +388,95 @@ private fun DepositDetails(info: JSONObject, onCopy: (String) -> Unit) {
     }
 
     FundsCard {
-        Text(
-            "Send only $asset on $network",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(14.dp))
-        if (address.isNotBlank()) {
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                QrCode(address, Modifier.size(200.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (address.isNotBlank()) {
+                QrCode(address, Modifier.size(148.dp))
+                Spacer(Modifier.width(14.dp))
             }
-            Spacer(Modifier.height(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Send only $asset on $network",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Minimum ${Format.money(info.optString("min_amount"))}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        FieldLabel("Deposit address")
-        Text(
-            Format.groupAddress(address),
-            style = MaterialTheme.typography.bodyMedium,
-            fontFamily = FontFamily.Monospace,
-        )
-        Spacer(Modifier.height(14.dp))
-        ConfirmButton(
-            if (copied) "Copied" else "Copy address",
-            enabled = address.isNotBlank(),
-            onClick = {
-                onCopy(address)
-                copied = true
-            },
-        )
-    }
-
-    Spacer(Modifier.height(12.dp))
-    FundsCard {
-        SummaryRow("Minimum deposit", Format.money(info.optString("min_amount")))
-        val kind = info.optString("address_type")
-        if (kind.isNotBlank()) SummaryRow("Address type", kind.uppercase())
-        if (tokenAddress.isNotBlank()) SummaryRow("Token contract", shortMiddle(tokenAddress), mono = true)
-        val wallet = info.optString("wallet")
-        if (wallet.isNotBlank() && wallet != "null") SummaryRow("Credits wallet", shortMiddle(wallet), mono = true)
-    }
-
-    val warnings = info.optJSONArray("warnings")
-    if (warnings != null && warnings.length() > 0) {
-        for (index in 0 until warnings.length()) {
-            val text = warnings.optString(index)
-            if (text.isBlank()) continue
-            Spacer(Modifier.height(12.dp))
-            NoticeBanner(text)
-        }
-    }
-
-    Spacer(Modifier.height(12.dp))
-    FundsCard {
-        Text("How it works", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
-        StepTimeline(
-            listOf(
-                "Send $asset on $network to the address above." to StepState.ACTIVE,
-                "The bridge converts it and credits your Polymarket wallet." to StepState.PENDING,
-                "The balance shows in Wallet after it lands, usually within minutes." to StepState.PENDING,
-            ),
-        )
+        FieldLabel("Deposit address")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                Format.groupAddress(address),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(10.dp))
+            OutlinedButton(
+                onClick = {
+                    onCopy(address)
+                    copied = true
+                },
+                enabled = address.isNotBlank(),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                modifier = Modifier.height(40.dp),
+            ) {
+                Text(if (copied) "Copied" else "Copy")
+            }
+        }
+    }
+
+    // Every warning stays visible, in one banner instead of one banner each.
+    val warningList = info.optJSONArray("warnings")
+    val warnings = warningList?.let { list -> (0 until list.length()).map { list.optString(it) } }
+        .orEmpty()
+        .filter { it.isNotBlank() }
+    if (warnings.isNotEmpty()) {
+        Spacer(Modifier.height(10.dp))
+        NoticeBanner(warnings.joinToString("\n"))
+    }
+
+    Spacer(Modifier.height(10.dp))
+    FundsCard {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Details and how it works",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "Hide details" else "Show details",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.rotate(if (expanded) 180f else 0f),
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(10.dp))
+            val kind = info.optString("address_type")
+            if (kind.isNotBlank()) SummaryRow("Address type", kind.uppercase())
+            if (tokenAddress.isNotBlank()) SummaryRow("Token contract", shortMiddle(tokenAddress), mono = true)
+            val wallet = info.optString("wallet")
+            if (wallet.isNotBlank() && wallet != "null") SummaryRow("Credits wallet", shortMiddle(wallet), mono = true)
+            Spacer(Modifier.height(10.dp))
+            StepTimeline(
+                listOf(
+                    "Send $asset on $network to the address above." to StepState.ACTIVE,
+                    "The bridge converts it and credits your Polymarket wallet." to StepState.PENDING,
+                    "The balance shows in Wallet after it lands, usually within minutes." to StepState.PENDING,
+                ),
+            )
+        }
     }
 }
 
