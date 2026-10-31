@@ -47,38 +47,80 @@ def tag_tabs(rows: Any) -> list[dict[str, str]]:
     return out
 
 
-# Kalshi has no tag API for events, so a tab is a list of substrings matched against the
-# event's ``category`` (case-insensitive). ``rank`` re-sorts the fetched batch locally.
+# Kalshi: only the two sort modes are fixed. The categories come from Kalshi's own list
+# (``GET /search/tags_by_categories``, see ``kalshi_category_tabs``). Kalshi has no category filter
+# on ``/events``, so a category tab scans a few pages and keeps the events whose ``category`` is that
+# exact category. ``rank`` re-sorts the fetched batch locally.
 KALSHI_TABS: dict[str, dict[str, Any]] = {
     "trending": {"label": "Trending", "rank": "volume"},
     "new": {"label": "New", "rank": "newest"},
-    "politics": {"label": "Politics", "match": ["politic"]},
-    "elections": {"label": "Elections", "match": ["election"]},
-    "sports": {"label": "Sports", "match": ["sport"]},
-    "crypto": {"label": "Crypto", "match": ["crypto"]},
-    "economics": {"label": "Economics", "match": ["econom"]},
-    "financials": {"label": "Financials", "match": ["financ"]},
-    "companies": {"label": "Companies", "match": ["compan"]},
-    "tech": {"label": "Tech & Science", "match": ["tech", "science"]},
-    "weather": {"label": "Weather", "match": ["climate", "weather"]},
-    "culture": {"label": "Culture", "match": ["culture", "entertain"]},
-    "world": {"label": "World", "match": ["world"]},
-    "health": {"label": "Health", "match": ["health"]},
-    "mentions": {"label": "Mentions", "match": ["mention"]},
 }
 
-# Limitless: ``sort`` is the API's ``sortBy``; ``match`` filters on the market's category labels.
+
+def _slug(text: str) -> str:
+    return "-".join("".join(c if c.isalnum() else " " for c in text.lower()).split())
+
+
+def kalshi_category_tabs(data: Any) -> list[dict[str, str]]:
+    """Kalshi ``/search/tags_by_categories`` -> category tabs, one per category name Kalshi lists."""
+
+    mapping = data.get("tags_by_categories") if isinstance(data, dict) else None
+    if not isinstance(mapping, dict):
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[str] = set(KALSHI_TABS)
+    for name in mapping:
+        label = _text(name)
+        slug = _slug(label)
+        if not label or not slug or slug in seen:
+            continue
+        seen.add(slug)
+        out.append({"id": slug, "label": label, "category": label})
+    return out
+
+
+# Limitless: ``sort`` is the API's ``sortBy``. Only the sort modes are fixed; the categories come from
+# Limitless's own list (``GET /markets/categories/count`` plus ``GET /markets/active/{categoryId}``).
 LIMITLESS_TABS: dict[str, dict[str, Any]] = {
     "trending": {"label": "Trending", "sort": "volume"},
     "new": {"label": "New", "sort": "newest"},
     "liquid": {"label": "Liquid", "sort": "liquidity"},
-    "crypto": {"label": "Crypto", "sort": "volume", "match": ["crypto", "bitcoin", "ethereum"]},
-    "sports": {"label": "Sports", "sort": "volume", "match": ["sport"]},
-    "politics": {"label": "Politics", "sort": "volume", "match": ["politic", "election"]},
-    "economy": {"label": "Economy", "sort": "volume", "match": ["econom", "financ"]},
-    "tech": {"label": "Tech", "sort": "volume", "match": ["tech", "ai"]},
-    "culture": {"label": "Culture", "sort": "volume", "match": ["culture", "entertain", "music", "film"]},
 }
+
+
+def limitless_category_counts(data: Any) -> list[tuple[str, int]]:
+    """``/markets/categories/count`` -> ``(category id, active markets)``, busiest first, empty ones dropped.
+
+    The ids are numeric and carry no names; see ``limitless_category_name``.
+    """
+
+    mapping = data.get("category") if isinstance(data, dict) else None
+    if not isinstance(mapping, dict):
+        return []
+    out: list[tuple[str, int]] = []
+    for key, value in mapping.items():
+        cid = _text(key)
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            continue
+        if cid.isdigit() and count > 0:
+            out.append((cid, count))
+    return sorted(out, key=lambda x: x[1], reverse=True)
+
+
+def limitless_category_name(rows: Any) -> str:
+    """The name of a category, read the documented way: ``categories[0]`` of one of its markets."""
+
+    if not isinstance(rows, list):
+        return ""
+    for row in rows:
+        if isinstance(row, dict):
+            cats = [c for c in json_list(row.get("categories")) if _text(c)]
+            if cats:
+                return _text(cats[0])
+    return ""
+
 
 VENUE_TABS: dict[str, dict[str, dict[str, Any]]] = {
     "polymarket": TABS,
@@ -300,16 +342,23 @@ def shape_kalshi_event(raw: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def shape_kalshi_events(rows: Any, *, match: list[str] | None = None, q: str | None = None) -> list[dict[str, Any]]:
+def shape_kalshi_events(
+    rows: Any, *, match: list[str] | None = None, category: str | None = None, q: str | None = None
+) -> list[dict[str, Any]]:
+    """Cards from Kalshi events. ``category`` keeps only events whose category is exactly that name."""
+
     if not isinstance(rows, list):
         return []
     needle = (q or "").strip().lower()
+    wanted = (category or "").strip().lower()
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw in rows:
         if not isinstance(raw, dict):
             continue
         if match and not _matches(_text(raw.get("category")), match):
+            continue
+        if wanted and _text(raw.get("category")).lower() != wanted:
             continue
         item = shape_kalshi_event(raw)
         if item is None or item["event_id"] in seen:

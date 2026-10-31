@@ -89,6 +89,8 @@ class KalshiVenue(HttpVenue):
         self._order_markets: dict[str, str] = {}
         # (tab, query, offset) -> Kalshi cursor, so the app's integer offset can page a cursor API.
         self._discover_cursors: dict[tuple[str, str, int], str] = {}
+        # (valid until, category tabs from Kalshi's own category list, note for the app)
+        self._category_tabs: tuple[float, list[dict[str, str]], str] | None = None
         self.test_orders = False
 
     @property
@@ -154,6 +156,40 @@ class KalshiVenue(HttpVenue):
         next_cursor = data.get("cursor")
         return Page(items=markets[: query.limit], next_cursor=next_cursor)
 
+    async def _category_tab_rows(self) -> tuple[list[dict[str, str]], str]:
+        """Category tabs from Kalshi's own list, plus a note when it could not be read.
+
+        ``GET /search/tags_by_categories`` maps every series category Kalshi has to its tags; the
+        categories are the tabs. A good answer is kept for hours, a failure for a minute, and the last
+        good list keeps being served meanwhile.
+        """
+
+        now = time.monotonic()
+        cached = self._category_tabs
+        if cached is not None and cached[0] > now:
+            return cached[1], cached[2]
+        stale = cached[1] if cached is not None else []
+        try:
+            data = await self.get_json(self.base_url + "/search/tags_by_categories")
+            rows = discover_lib.kalshi_category_tabs(data)
+            note = "" if rows else "Kalshi returned no categories."
+            ttl = 6 * 3600 if rows else 60
+        except Exception as exc:
+            rows = stale
+            note = f"Could not load Kalshi categories: {str(exc)[:120]}"
+            ttl = 60
+        self._category_tabs = (now + ttl, rows, note)
+        return rows, note
+
+    async def discover_tabs(self) -> dict[str, Any]:
+        """Tabs for the app: the sort modes, then every category Kalshi lists."""
+
+        rows, note = await self._category_tab_rows()
+        tabs = discover_lib.tab_list("kalshi") + [
+            {"id": r["id"], "label": r["label"], "supported": True, "note": ""} for r in rows
+        ]
+        return {"tabs": tabs, "note": note}
+
     async def discover(self, *, tab: str, q: str | None, limit: int, offset: int) -> dict[str, Any]:
         """Polymarket-style browse for Kalshi: open events with nested markets as cards.
 
@@ -165,7 +201,11 @@ class KalshiVenue(HttpVenue):
         offset = max(offset, 0)
         cfg = discover_lib.KALSHI_TABS.get(tab)
         if cfg is None:
-            raise ValueError(f"unknown tab: {tab}")
+            categories, _ = await self._category_tab_rows()
+            found = next((c for c in categories if c["id"] == tab), None)
+            if found is None:
+                raise ValueError(f"unknown tab: {tab}")
+            cfg = {"label": found["label"], "category": found["category"]}
         query = (q or "").strip()
         cursor: str | None = None
         if offset > 0:
@@ -174,7 +214,7 @@ class KalshiVenue(HttpVenue):
                 return {"tab": tab, "items": [], "next_offset": None, "note": ""}
         rank = cfg.get("rank")
         min_pages = 3 if rank else 1
-        max_pages = 5 if (query or cfg.get("match") or rank) else 2
+        max_pages = 5 if (query or cfg.get("category") or rank) else 2
         items: list[dict[str, Any]] = []
         seen: set[str] = set()
         pages = 0
@@ -186,7 +226,7 @@ class KalshiVenue(HttpVenue):
             rows = data.get("events") if isinstance(data, dict) else None
             if not isinstance(rows, list):
                 raise VenueUnavailableError("Kalshi returned a non-list events payload")
-            for item in discover_lib.shape_kalshi_events(rows, match=cfg.get("match"), q=query):
+            for item in discover_lib.shape_kalshi_events(rows, category=cfg.get("category"), q=query):
                 if item["event_id"] not in seen:
                     seen.add(item["event_id"])
                     items.append(item)
@@ -203,7 +243,12 @@ class KalshiVenue(HttpVenue):
             self._discover_cursors[(tab, query, next_offset)] = cursor
             while len(self._discover_cursors) > 200:
                 self._discover_cursors.pop(next(iter(self._discover_cursors)))
-        return {"tab": tab, "items": items, "next_offset": next_offset, "note": ""}
+        note = (
+            "No open events in this category in Kalshi's latest listing."
+            if not items and not query and cfg.get("category")
+            else ""
+        )
+        return {"tab": tab, "items": items, "next_offset": next_offset, "note": note}
 
     def _parse_market(self, raw: dict[str, Any]) -> Market | None:
         if raw.get("market_type") not in {None, "binary"}:

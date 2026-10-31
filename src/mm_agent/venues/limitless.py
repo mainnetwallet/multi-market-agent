@@ -95,6 +95,8 @@ class LimitlessVenue(HttpVenue):
         self._markets: dict[str, Market] = {}
         self._raw: dict[str, dict[str, Any]] = {}
         self._profile: dict[str, Any] | None = None
+        # (valid until, category tabs from Limitless's own category list, note for the app)
+        self._category_tabs: tuple[float, list[dict[str, str]], str] | None = None
         self.test_orders = False
 
     @property
@@ -137,7 +139,9 @@ class LimitlessVenue(HttpVenue):
                     return value
         return []
 
-    async def _discover_page(self, page: int, *, sort: str | None, query: str) -> list[Any]:
+    async def _discover_page(
+        self, page: int, *, sort: str | None, query: str, category_id: str | None = None
+    ) -> list[Any]:
         size = self.LIMITLESS_PAGE
         if query:
             try:
@@ -150,14 +154,72 @@ class LimitlessVenue(HttpVenue):
         params: dict[str, Any] = {"limit": size, "page": page}
         if sort:
             params["sortBy"] = sort
+        path = "/markets/active" + (f"/{category_id}" if category_id else "")
         try:
-            data = await self.get_json(self.base_url + "/markets/active", params=params)
+            data = await self.get_json(self.base_url + path, params=params)
         except VenueHTTPError as exc:
             if sort is None or exc.status_code not in {400, 422}:
                 raise
             params.pop("sortBy")
-            data = await self.get_json(self.base_url + "/markets/active", params=params)
+            data = await self.get_json(self.base_url + path, params=params)
         return self._rows(data)
+
+    async def _category_tab_rows(self) -> tuple[list[dict[str, str]], str]:
+        """Category tabs from Limitless's own list, plus a note when it could not be read.
+
+        Done the documented way: ``GET /markets/categories/count`` lists the active category ids, and
+        ``GET /markets/active/{id}?limit=1`` gives one market whose ``categories[0]`` is the name. A
+        category whose name cannot be read is left out rather than shown as a bare number. A good answer
+        is kept for hours, a failure for a minute, and the last good list keeps being served meanwhile.
+        """
+
+        now = time.monotonic()
+        cached = self._category_tabs
+        if cached is not None and cached[0] > now:
+            return cached[1], cached[2]
+        stale = cached[1] if cached is not None else []
+        try:
+            counts = discover_lib.limitless_category_counts(
+                await self.get_json(self.base_url + "/markets/categories/count")
+            )[:30]
+            gate = asyncio.Semaphore(4)
+
+            async def name_of(cid: str) -> str:
+                try:
+                    async with gate:
+                        data = await self.get_json(self.base_url + f"/markets/active/{cid}", params={"limit": 1})
+                    return discover_lib.limitless_category_name(self._rows(data))
+                except Exception:
+                    return ""
+
+            names = await asyncio.gather(*(name_of(cid) for cid, _ in counts))
+            rows: list[dict[str, str]] = []
+            taken = {t.lower() for t in discover_lib.LIMITLESS_TABS} | {
+                str(c["label"]).lower() for c in discover_lib.LIMITLESS_TABS.values()
+            }
+            for (cid, _), name in zip(counts, names, strict=True):
+                if name and name.lower() not in taken:
+                    taken.add(name.lower())
+                    rows.append({"id": cid, "label": name})
+            if rows:
+                note, ttl = "", 6 * 3600
+            else:
+                note, ttl = "Limitless returned no readable categories.", 60
+        except Exception as exc:
+            rows = stale
+            note = f"Could not load Limitless categories: {str(exc)[:120]}"
+            ttl = 60
+        self._category_tabs = (now + ttl, rows, note)
+        return rows, note
+
+    async def discover_tabs(self) -> dict[str, Any]:
+        """Tabs for the app: the sort modes, then every category Limitless lists."""
+
+        rows, note = await self._category_tab_rows()
+        tabs = discover_lib.tab_list("limitless") + [
+            {"id": r["id"], "label": r["label"], "supported": True, "note": ""} for r in rows
+        ]
+        return {"tabs": tabs, "note": note}
 
     async def discover(self, *, tab: str, q: str | None, limit: int, offset: int) -> dict[str, Any]:
         """Polymarket-style browse for Limitless: active CLOB markets (groups nested) as cards.
@@ -167,18 +229,26 @@ class LimitlessVenue(HttpVenue):
 
         offset = max(offset, 0)
         cfg = discover_lib.LIMITLESS_TABS.get(tab)
+        category_id: str | None = None
         if cfg is None:
-            raise ValueError(f"unknown tab: {tab}")
+            categories, _ = await self._category_tab_rows()
+            found = next((c for c in categories if c["id"] == tab), None)
+            if found is None:
+                raise ValueError(f"unknown tab: {tab}")
+            category_id = found["id"]
+            cfg = {"label": found["label"], "sort": "volume"}
         query = (q or "").strip()
-        match = cfg.get("match")
         size = self.LIMITLESS_PAGE
-        pages_per = 4 if (match or query) else 2
+        pages_per = 4 if query else 2
         first = offset // size + 1
         pages = await asyncio.gather(
-            *(self._discover_page(first + i, sort=cfg.get("sort"), query=query) for i in range(pages_per))
+            *(
+                self._discover_page(first + i, sort=cfg.get("sort"), query=query, category_id=category_id)
+                for i in range(pages_per)
+            )
         )
         rows = [row for page in pages for row in page]
-        items = discover_lib.shape_limitless_events(rows, match=match, q=query)
+        items = discover_lib.shape_limitless_events(rows, q=query)
         # Warm the adapter so tapping a card opens the trade sheet without another lookup.
         for row in rows:
             if not isinstance(row, dict):
@@ -190,7 +260,8 @@ class LimitlessVenue(HttpVenue):
                     continue
         more = len(pages[-1]) >= size
         next_offset = (first - 1) * size + pages_per * size if more else None
-        return {"tab": tab, "items": items, "next_offset": next_offset, "note": ""}
+        note = "No active markets in this category right now." if not items and not query and category_id else ""
+        return {"tab": tab, "items": items, "next_offset": next_offset, "note": note}
 
     def parse_market(self, raw: dict[str, Any]) -> Market:
         slug = str(raw.get("slug") or "").strip()

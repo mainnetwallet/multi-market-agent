@@ -451,11 +451,17 @@ curl -s -X POST https://<service>/v1/orders/limit \
 ```
 
 Browse for markets with `GET /v1/discover?venue=polymarket|kalshi|limitless&tab=<id from /v1/discover/tabs>&q=&limit=&offset=`
-(public data only; `venue` defaults to the active venue) and `GET /v1/discover/tabs?venue=`. Polymarket's tabs are
-Trending, Breaking and New (sort modes) plus whatever categories Gamma lists at `GET /tags?is_carousel=true` (read at
-runtime, cached 6 hours, nothing hardcoded; a tag marked `forceHide` is skipped, and `note` in the tabs response says
-why when the list could not be read). Kalshi and Limitless tabs
-are filtered locally from the venue's public market list; Kalshi volume is in contracts, not dollars. Each card carries the
+(public data only; `venue` defaults to the active venue) and `GET /v1/discover/tabs?venue=`. Every venue's category tabs
+are read from that venue's own API at runtime (cached 6 hours, nothing hardcoded); only the sort modes are fixed, and a
+`note` in the tabs response says why when a list could not be read:
+
+- **Polymarket:** Trending, Breaking, New, then `GET /tags?is_carousel=true` (tags marked `forceHide` are skipped).
+- **Kalshi:** Trending, New, then the categories in `GET /search/tags_by_categories`. Kalshi has no category filter on
+  `/events`, so a category tab scans the latest open events and keeps those whose `category` is exactly that name.
+- **Limitless:** Trending, New, Liquid, then the ids in `GET /markets/categories/count`, each named the documented way
+  (`categories[0]` of one market from `GET /markets/active/{id}?limit=1`) and listed by `GET /markets/active/{id}`.
+
+Kalshi volume is in contracts, not dollars. Each card carries the
 Yes/No prices, volume and close time, and the `market_id` to trade.
 
 The routes are `POST /v1/orders/limit`, `POST /v1/orders/market`,

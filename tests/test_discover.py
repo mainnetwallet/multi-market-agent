@@ -252,6 +252,26 @@ def test_kalshi_category_filter_and_search() -> None:
     assert [e["event_id"] for e in discover.shape_kalshi_events(rows, match=["sport"])] == ["S"]
     assert [e["event_id"] for e in discover.shape_kalshi_events(rows, match=["tech", "science"])] == ["T"]
     assert [e["event_id"] for e in discover.shape_kalshi_events(rows, q="super")] == ["S"]
+    # A category tab keeps events whose category is exactly the name Kalshi listed, in any letter case.
+    assert [e["event_id"] for e in discover.shape_kalshi_events(rows, category="science and technology")] == ["T"]
+    assert discover.shape_kalshi_events(rows, category="Science") == []
+
+
+def test_kalshi_category_tabs_come_from_tags_by_categories() -> None:
+    data = {
+        "tags_by_categories": {
+            "Politics": ["Trump"],
+            "Science and Technology": [],
+            "New": ["x"],  # must not shadow the New sort tab
+            "": ["junk"],
+        }
+    }
+    assert discover.kalshi_category_tabs(data) == [
+        {"id": "politics", "label": "Politics", "category": "Politics"},
+        {"id": "science-and-technology", "label": "Science and Technology", "category": "Science and Technology"},
+    ]
+    assert discover.kalshi_category_tabs({"tags_by_categories": []}) == []
+    assert discover.kalshi_category_tabs("nope") == []
 
 
 def test_rank_items_volume_and_newest() -> None:
@@ -271,6 +291,8 @@ def test_kalshi_discover_pages_with_cursor(tmp_path: Path) -> None:
     calls: list[dict[str, Any]] = []
 
     async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        if url.endswith("/search/tags_by_categories"):
+            return {"tags_by_categories": {"Politics": []}}
         calls.append(dict(params or {}))
         n = len(calls)
         return {"events": [_kevent(f"E{n}", [_kmarket(f"M{n}")])], "cursor": f"c{n}" if n < 9 else ""}
@@ -289,6 +311,47 @@ def test_kalshi_discover_pages_with_cursor(tmp_path: Path) -> None:
     assert stale["items"] == [] and stale["next_offset"] is None
     with pytest.raises(ValueError):
         asyncio.run(venue.discover(tab="nope", q=None, limit=1, offset=0))
+
+
+def test_kalshi_discover_tabs_and_category_tab(tmp_path: Path) -> None:
+    from mm_agent.venues.kalshi import KalshiVenue
+
+    venue = KalshiVenue(make_settings(tmp_path))
+    urls: list[str] = []
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        urls.append(url)
+        if url.endswith("/search/tags_by_categories"):
+            return {"tags_by_categories": {"Politics": [], "Sports": []}}
+        return {
+            "events": [
+                _kevent("P", [_kmarket("P1")], category="Politics"),
+                _kevent("S", [_kmarket("S1")], category="Sports"),
+            ],
+            "cursor": "",
+        }
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    tabs = asyncio.run(venue.discover_tabs())
+    assert [t["id"] for t in tabs["tabs"]] == ["trending", "new", "politics", "sports"] and tabs["note"] == ""
+    out = asyncio.run(venue.discover(tab="sports", q=None, limit=10, offset=0))
+    assert [i["event_id"] for i in out["items"]] == ["S"]
+    assert sum(u.endswith("/search/tags_by_categories") for u in urls) == 1  # kept for hours
+    with pytest.raises(ValueError):
+        asyncio.run(venue.discover(tab="perps", q=None, limit=10, offset=0))
+
+
+def test_kalshi_discover_tabs_failure_says_why(tmp_path: Path) -> None:
+    from mm_agent.venues.kalshi import KalshiVenue
+
+    venue = KalshiVenue(make_settings(tmp_path))
+
+    async def boom(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        raise RuntimeError("kalshi down")
+
+    venue.get_json = boom  # type: ignore[method-assign]
+    tabs = asyncio.run(venue.discover_tabs())
+    assert [t["id"] for t in tabs["tabs"]] == ["trending", "new"] and "kalshi down" in tabs["note"]
 
 
 def _lmarket(slug: str, **extra: Any) -> dict[str, Any]:
@@ -364,10 +427,66 @@ def test_limitless_discover_pages_and_warms(tmp_path: Path) -> None:
     asyncio.run(venue.discover(tab="trending", q=None, limit=30, offset=50))
     assert [p["page"] for _, p in seen] == [3, 4]
     seen.clear()
-    asyncio.run(venue.discover(tab="crypto", q=None, limit=30, offset=0))
-    assert len(seen) == 4  # category tabs scan more pages, then filter locally
     with pytest.raises(ValueError):
         asyncio.run(venue.discover(tab="nope", q=None, limit=30, offset=0))
+
+
+def test_limitless_category_helpers() -> None:
+    data = {"category": {"3": 8, "1": 10, "2": 0, "x": 4}, "totalCount": 22}
+    assert discover.limitless_category_counts(data) == [("1", 10), ("3", 8)]  # busiest first, empty/odd ids dropped
+    assert discover.limitless_category_counts({"category": []}) == []
+    assert discover.limitless_category_name([{"categories": ["Crypto", "Hourly"]}]) == "Crypto"
+    assert discover.limitless_category_name([{"categories": []}, {"categories": ["Sports"]}]) == "Sports"
+    assert discover.limitless_category_name("nope") == ""
+
+
+def test_limitless_category_tabs_use_the_documented_id_to_name_lookup(tmp_path: Path) -> None:
+    from mm_agent.venues.limitless import LimitlessVenue
+
+    venue = LimitlessVenue(make_settings(tmp_path))
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_get_json(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        seen.append((url, dict(params or {})))
+        if url.endswith("/markets/categories/count"):
+            return {"category": {"1": 10, "2": 5, "9": 3}, "totalCount": 18}
+        if url.endswith("/markets/active/1") and (params or {}).get("limit") == 1:
+            return {"data": [_lmarket("a", categories=["Crypto"])]}
+        if url.endswith("/markets/active/2"):
+            return {"data": [_lmarket("b", categories=["Sports"])]}
+        if url.endswith("/markets/active/9"):
+            raise RuntimeError("no name for this one")
+        return {"data": [_lmarket(f"c{(params or {}).get('page')}-{i}") for i in range(25)]}
+
+    venue.get_json = fake_get_json  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover_tabs())
+    ids = [(t["id"], t["label"]) for t in out["tabs"]]
+    assert ids == [("trending", "Trending"), ("new", "New"), ("liquid", "Liquid"), ("1", "Crypto"), ("2", "Sports")]
+    assert [p["limit"] for u, p in seen if u.endswith(("/active/1", "/active/2"))] == [1, 1]
+    n = len(seen)
+    asyncio.run(venue.discover_tabs())
+    assert len(seen) == n  # the id -> name mapping is kept for hours
+
+    seen.clear()
+    res = asyncio.run(venue.discover(tab="1", q=None, limit=30, offset=0))
+    assert [u for u, _ in seen] == [venue.base_url + "/markets/active/1"] * 2  # the venue filters, not us
+    assert all(p["sortBy"] == "volume" and p["limit"] == 25 for _, p in seen)
+    assert len(res["items"]) == 50
+    with pytest.raises(ValueError):
+        asyncio.run(venue.discover(tab="77", q=None, limit=30, offset=0))  # not one of the listed categories
+
+
+def test_limitless_tabs_failure_keeps_sort_modes(tmp_path: Path) -> None:
+    from mm_agent.venues.limitless import LimitlessVenue
+
+    venue = LimitlessVenue(make_settings(tmp_path))
+
+    async def boom(url: str, *, params: dict[str, Any] | None = None, headers: Any = None) -> Any:
+        raise RuntimeError("limitless down")
+
+    venue.get_json = boom  # type: ignore[method-assign]
+    out = asyncio.run(venue.discover_tabs())
+    assert [t["id"] for t in out["tabs"]] == ["trending", "new", "liquid"] and "limitless down" in out["note"]
 
 
 def test_limitless_search_falls_back_to_active_list(tmp_path: Path) -> None:
@@ -387,7 +506,8 @@ def test_limitless_search_falls_back_to_active_list(tmp_path: Path) -> None:
 
 
 def test_tab_lists_per_venue() -> None:
-    assert {t["id"] for t in discover.tab_list("kalshi")} >= {"trending", "politics", "sports", "crypto"}
-    assert {t["id"] for t in discover.tab_list("limitless")} >= {"trending", "new", "crypto"}
+    # Only sort modes are fixed; every category comes from the venue's own API at runtime.
+    assert [t["id"] for t in discover.tab_list("kalshi")] == ["trending", "new"]
+    assert [t["id"] for t in discover.tab_list("limitless")] == ["trending", "new", "liquid"]
     assert discover.tab_list("fake") == []
     assert all(t["supported"] for t in discover.tab_list("kalshi") + discover.tab_list("limitless"))

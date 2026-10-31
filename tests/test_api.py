@@ -90,9 +90,11 @@ def test_discover_routes_are_venue_aware(harness: Harness) -> None:
     assert login.status_code == 200, login.text
     assert client.get("/v1/discover/tabs").json()["venue"] == "polymarket"  # fake venue active: old default
     kalshi = client.get("/v1/discover/tabs", params={"venue": "kalshi"}).json()
-    assert kalshi["venue"] == "kalshi" and {"trending", "sports"} <= {t["id"] for t in kalshi["tabs"]}
+    # Kalshi is not enabled in this harness, so only its fixed sort modes are listed (categories need its API).
+    assert kalshi["venue"] == "kalshi" and [t["id"] for t in kalshi["tabs"]] == ["trending", "new"]
     assert client.get("/v1/discover", params={"venue": "fake"}).status_code == 404
-    assert client.get("/v1/discover", params={"venue": "kalshi", "tab": "perps"}).status_code == 404
+    # A category tab cannot be validated without the venue's own list, so a venue that is off says so.
+    assert client.get("/v1/discover", params={"venue": "kalshi", "tab": "politics"}).status_code == 409
     # Tab is valid but the venue is not enabled on this server.
     assert client.get("/v1/discover", params={"venue": "limitless", "tab": "new"}).status_code == 409
 

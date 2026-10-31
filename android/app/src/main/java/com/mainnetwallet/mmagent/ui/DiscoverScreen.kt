@@ -60,34 +60,17 @@ private val POLYMARKET_TABS: List<Pair<String, String>> = listOf(
     "new" to "New",
 )
 
+// Kalshi and Limitless categories also come from each venue's own API through the server; these are only
+// the sort modes, shown if that request fails.
 private val KALSHI_TABS: List<Pair<String, String>> = listOf(
     "trending" to "Trending",
     "new" to "New",
-    "politics" to "Politics",
-    "elections" to "Elections",
-    "sports" to "Sports",
-    "crypto" to "Crypto",
-    "economics" to "Economics",
-    "financials" to "Financials",
-    "companies" to "Companies",
-    "tech" to "Tech & Science",
-    "weather" to "Weather",
-    "culture" to "Culture",
-    "world" to "World",
-    "health" to "Health",
-    "mentions" to "Mentions",
 )
 
 private val LIMITLESS_TABS: List<Pair<String, String>> = listOf(
     "trending" to "Trending",
     "new" to "New",
     "liquid" to "Liquid",
-    "crypto" to "Crypto",
-    "sports" to "Sports",
-    "politics" to "Politics",
-    "economy" to "Economy",
-    "tech" to "Tech",
-    "culture" to "Culture",
 )
 
 /** Offline fallback only: the server owns the tabs and `/v1/discover/tabs?venue=` is what the screen shows. */
