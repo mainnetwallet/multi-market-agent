@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -251,7 +252,7 @@ def test_kalshi_discover_pages_with_cursor(tmp_path: Path) -> None:
 
 def _lmarket(slug: str, **extra: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
-        "id": abs(hash(slug)) % 10_000,
+        "id": int.from_bytes(hashlib.sha256(slug.encode()).digest()[:4], "big"),
         "slug": slug,
         "title": f"Market {slug}",
         "status": "FUNDED",
