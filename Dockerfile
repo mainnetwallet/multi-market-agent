@@ -21,7 +21,7 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN pip install . \
+RUN pip install ".[postgres]" \
     && mkdir -p /app/data \
     && chown -R mmagent:mmagent /app \
     && chmod 0755 /usr/local/bin/docker-entrypoint.sh
