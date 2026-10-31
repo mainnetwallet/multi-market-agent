@@ -141,7 +141,7 @@ def test_event_tag_tabs_rank_by_how_many_events_carry_the_tag() -> None:
     events = [
         _tagged("a", politics, sports),
         _tagged("b", sports, crypto),
-        _tagged("c", sports, _tag("9", "Recurring", "recurring")),  # internal flag
+        _tagged("c", sports),
         _tagged("d", politics, _tag("8", "Hidden", "hidden", forceHide=True)),
         _tagged("e", _tag("5", "Same as sort", "new"), _tag("6", "Once", "once")),  # sort-mode slug; seen once
         "junk",

@@ -47,11 +47,6 @@ def tag_tabs(rows: Any) -> list[dict[str, str]]:
     return out
 
 
-# Internal bookkeeping tags that Gamma attaches to events but that are not topics a person browses.
-# Gamma's own ``forceHide`` flag is honoured first; this only guards the few flags it does not cover.
-_NON_CATEGORY_SLUGS = frozenset({"all", "recurring", "hide-from-new", "weekly", "daily", "monthly"})
-
-
 def event_tag_tabs(
     events: Any, *, exclude: frozenset[str] | set[str] = frozenset(), limit: int = 14, min_events: int = 2
 ) -> list[dict[str, str]]:
@@ -60,7 +55,7 @@ def event_tag_tabs(
     ``GET /tags?is_carousel=true`` turned out to list only a handful of tags (not the category bar), so
     the topics that really have open markets are read from a page of the busiest active events instead.
     A tag counts once per event, must appear in at least ``min_events`` of them, and is dropped when Gamma
-    marks it ``forceHide`` or its slug is in ``exclude`` (the sort modes) or is a known internal flag.
+    marks it ``forceHide`` or its slug is in ``exclude`` (the sort modes). No tag name is hardcoded.
     """
 
     if not isinstance(events, list):
@@ -75,7 +70,7 @@ def event_tag_tabs(
             if not isinstance(raw, dict) or raw.get("forceHide") is True:
                 continue
             tag_id, slug, label = _text(raw.get("id")), _text(raw.get("slug")), _text(raw.get("label"))
-            if not tag_id or not slug or not label or slug in exclude or slug in _NON_CATEGORY_SLUGS:
+            if not tag_id or not slug or not label or slug in exclude:
                 continue
             if slug in seen_here:
                 continue
