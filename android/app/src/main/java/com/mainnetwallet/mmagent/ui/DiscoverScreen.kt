@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +46,11 @@ import com.mainnetwallet.mmagent.data.ApiClient
 import com.mainnetwallet.mmagent.data.Format
 import com.mainnetwallet.mmagent.data.objects
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -54,6 +60,29 @@ val BROWSABLE_VENUES: Set<String> = setOf("polymarket", "kalshi", "limitless")
 
 /** org.json turns a JSON null into the string "null"; the server sends null for missing values. */
 private fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(key)
+
+/**
+ * One request per page at a time. The background prefetch and the Markets screen ask for the same tab list and the
+ * same first pages; whoever asks second waits for the request already running instead of sending its own, so there is
+ * no duplicate request and no spinner for a page that is already on its way. The request lives in its own scope, so
+ * leaving the screen or changing tab does not cancel it: the answer still reaches the cache.
+ */
+internal object DiscoverFlights {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val flights = HashMap<String, Deferred<JSONObject>>()
+
+    suspend fun run(key: String, block: suspend () -> JSONObject): JSONObject {
+        val flight = synchronized(flights) {
+            flights[key] ?: scope.async { block() }.also { created ->
+                flights[key] = created
+                created.invokeOnCompletion {
+                    synchronized(flights) { if (flights[key] === created) flights.remove(key) }
+                }
+            }
+        }
+        return flight.await()
+    }
+}
 
 /**
  * Pages already fetched per venue, tab and search, so going Trending -> New -> Trending shows the
@@ -70,6 +99,13 @@ internal object DiscoverCache {
     private const val MAX_ENTRIES = 400
     private val map = LinkedHashMap<String, Entry>()
 
+    /**
+     * Bumped on every put. The screen watches it (snapshotFlow, no recomposition) so a page the prefetch or the
+     * saved copy delivers AFTER the screen opened is picked up, instead of the cache being read only once.
+     */
+    var version by mutableIntStateOf(0)
+        private set
+
     fun key(venue: String, tab: String, query: String): String = "$venue|$tab|$query"
 
     @Synchronized
@@ -80,6 +116,7 @@ internal object DiscoverCache {
         map.remove(key)
         map[key] = entry
         while (map.size > MAX_ENTRIES) map.remove(map.keys.first())
+        version += 1
     }
 
     @Synchronized
@@ -117,6 +154,10 @@ internal object DiscoverTabsCache {
     const val FRESH_MS = 5 * 60_000L
     private val map = HashMap<String, Entry>()
 
+    /** Bumped whenever a tab list is stored; see [DiscoverCache.version]. */
+    var version by mutableIntStateOf(0)
+        private set
+
     @Synchronized
     fun get(venue: String): Entry? = map[venue]
 
@@ -140,7 +181,10 @@ internal object DiscoverTabsCache {
     @Synchronized
     fun store(venue: String, body: JSONObject, at: Long = System.currentTimeMillis()): List<Tab> {
         val tabs = parse(body)
-        if (tabs.isNotEmpty()) map[venue] = Entry(tabs, body.text("note"), at)
+        if (tabs.isNotEmpty()) {
+            map[venue] = Entry(tabs, body.text("note"), at)
+            version += 1
+        }
         return tabs
     }
 }
@@ -201,7 +245,7 @@ fun DiscoverScreen(
         }
         tabsLoading = true
         try {
-            val body = fetchTabs(venue)
+            val body = DiscoverFlights.run("tabs|$venue") { fetchTabs(venue) }
             val loaded = DiscoverTabsCache.store(venue, body)
             tabsNote = body.text("note")
             if (loaded.isEmpty()) {
@@ -223,7 +267,11 @@ fun DiscoverScreen(
     suspend fun load(offset: Int, gen: Int, tabId: String, text: String) {
         loading = true
         try {
-            val body = fetch(venue, tabId, text, offset)
+            val body = if (offset == 0) {
+                DiscoverFlights.run(DiscoverCache.key(venue, tabId, text) + "|0") { fetch(venue, tabId, text, 0) }
+            } else {
+                fetch(venue, tabId, text, offset)
+            }
             if (gen != generation) return
             val page = ApiClient.arrayOf(body, "items").objects()
             items = if (offset == 0) {
@@ -247,6 +295,37 @@ fun DiscoverScreen(
             if (gen == generation) error = e.message ?: "Could not load markets."
         } finally {
             if (gen == generation) loading = false
+        }
+    }
+
+    // The tab list or saved copy can land after this screen opened (prefetch, last run's snapshot). Watch the
+    // cache instead of reading it once: adopt the tabs as soon as they exist.
+    LaunchedEffect(venue) {
+        snapshotFlow { DiscoverTabsCache.version }.collect {
+            val cached = DiscoverTabsCache.get(venue)
+            if (cached != null && tabs.isEmpty()) {
+                tabs = cached.tabs
+                tabsNote = cached.note
+                if (tabs.none { it.id == tab.substringBefore(':') }) tab = tabs.first().id
+                tabsLoading = false
+            }
+        }
+    }
+
+    // Same for the open list: a page that arrives in the cache while the list is empty is shown at once; the
+    // request already running still replaces it with the fresh answer.
+    LaunchedEffect(venue, tab, query) {
+        if (tab.isBlank()) return@LaunchedEffect
+        snapshotFlow { DiscoverCache.version }.collect {
+            if (items.isEmpty()) {
+                val cached = DiscoverCache.get(DiscoverCache.key(venue, tab, query.trim()))
+                if (cached != null && cached.items.isNotEmpty()) {
+                    items = cached.items
+                    nextOffset = cached.nextOffset
+                    note = cached.note
+                    error = null
+                }
+            }
         }
     }
 

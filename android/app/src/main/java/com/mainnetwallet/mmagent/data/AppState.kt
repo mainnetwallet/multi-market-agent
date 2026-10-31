@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mainnetwallet.mmagent.ui.BROWSABLE_VENUES
 import com.mainnetwallet.mmagent.ui.DiscoverCache
+import com.mainnetwallet.mmagent.ui.DiscoverFlights
 import com.mainnetwallet.mmagent.ui.DiscoverTabsCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -411,7 +412,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         if (!synchronized(prefetching) { prefetching.add(venue) }) return
         viewModelScope.launch {
             try {
-                val tabs = if (tabsFresh && cached != null) cached.tabs else DiscoverTabsCache.store(venue, discoverTabs(venue))
+                val tabs = if (tabsFresh && cached != null) cached.tabs else DiscoverTabsCache.store(venue, DiscoverFlights.run("tabs|$venue") { discoverTabs(venue) })
                 if (tabs.isEmpty()) return@launch
                 // A few pages at a time, so the server is not asked for a hundred at once. The first batch holds the
                 // first tabs, and it is saved right away so a start soon after still finds them.
@@ -452,7 +453,8 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     /** One tab's first page into the cache. A failure is ignored: that tab then loads when it is opened. */
     private suspend fun prefetchDiscoverPage(venue: String, tab: String) {
         try {
-            DiscoverCache.store(venue, tab, "", discover(venue, tab, "", 0))
+            val key = DiscoverCache.key(venue, tab, "")
+            DiscoverCache.store(venue, tab, "", DiscoverFlights.run("$key|0") { discover(venue, tab, "", 0) })
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
