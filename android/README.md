@@ -19,8 +19,8 @@ directly — no WebView.
   dollars, with +$1 / +$5 / +$10 / +$100 / Max chips; a sell is shares with 25% / 50% / 75% / Max of what you
   hold; a limit order has a − / + price stepper in cents (one tick per tap) and a shares field. A summary card
   shows **To win**, the average price, shares and cost, walked through the real book, before anything is sent.
-  Order book, price history, slippage and post-only sit under **Advanced**. Placing an order is still a slide,
-  never a single tap.
+  Price history, slippage and post-only sit under **Advanced**. Placing an order is still a 2-second press-and-hold,
+  never a single tap. A limit order shows the order book as a tappable ladder right under the price.
 - **Portfolio** — tabs for Positions, Orders, Rules and History. Positions offer
   Sell 25/50/100%, Redeem (when the venue supports it) and Split/Merge on
   Polymarket. Open orders can be cancelled one at a time or all at once; the

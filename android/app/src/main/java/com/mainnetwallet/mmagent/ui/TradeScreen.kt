@@ -55,10 +55,10 @@ import java.math.RoundingMode
 /**
  * The trade ticket, laid out like Polymarket's: Buy / Sell, a big Yes and No button that show the live
  * price, one number to type (dollars for a market buy, shares for a sell or a limit order), a "To win"
- * summary, and a slide to confirm. Order book, price history and the venue's finer settings sit under
+ * summary, and a 2-second press-and-hold to confirm. Order book, price history and the venue's finer settings sit under
  * "Advanced" so the first screen stays simple.
  *
- * Every order is still real money, so placing one is still a slide, never a single tap.
+ * Every order is still real money, so placing one is still a press-and-hold, never a single tap.
  */
 @Composable
 fun TradeSheetScreen(
@@ -191,6 +191,15 @@ fun TradeSheetScreen(
                         PriceStepper(draft = draft, onPrice = onPrice, onStep = onStepPrice)
                     }
                     Spacer(Modifier.height(10.dp))
+                    // A limit price only makes sense next to the book it will rest in, so it is shown right here.
+                    InputCard("Order book · $outcomeName", "Tap a price to use it") {
+                        OrderBookLadder(
+                            bids = bids,
+                            asks = asks,
+                            onPick = { price -> onPrice(price.stripTrailingZeros().toPlainString()) },
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
                 }
                 InputCard("Shares", if (!buy && held.signum() > 0) "You hold ${held.setScale(2, RoundingMode.DOWN).stripTrailingZeros().toPlainString()}" else null) {
                     BigNumberField(
@@ -273,14 +282,16 @@ fun TradeSheetScreen(
                         Text("Post-only (never takes a price, only rests)", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        SectionHeader("Order book", outcomeName)
-                        DepthView(bids = bids, asks = asks)
+                if (draft.isMarketOrder) {
+                    Spacer(Modifier.height(10.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(16.dp)) {
+                            SectionHeader("Order book", outcomeName)
+                            OrderBookLadder(bids = bids, asks = asks, onPick = null)
+                        }
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -330,13 +341,120 @@ fun TradeSheetScreen(
                 ConfirmButton("Done", enabled = true, onClick = onCancel)
             } else {
                 HoldToConfirmButton(
-                    label = "Slide to ${draft.side.lowercase()} $outcomeName",
+                    label = "Hold 2s to ${draft.side.lowercase()} $outcomeName",
                     enabled = canSubmit,
                     busy = submitting,
                     danger = !yes,
+                    holdMillis = 2_000L,
                     onConfirmed = onSubmit,
                 )
             }
+        }
+    }
+}
+
+/**
+ * The order book as a ladder: asks (red) on top with the lowest nearest the middle, the spread, then bids (green).
+ * Each row shows price in cents, shares and the dollar total; the bar behind it is the row's size against the
+ * biggest row shown. With [onPick] a tap on a row hands that price to the caller (the limit price field).
+ */
+@Composable
+private fun OrderBookLadder(bids: List<BookLevel>, asks: List<BookLevel>, onPick: ((BigDecimal) -> Unit)?) {
+    val topAsks = asks.sortedBy { it.price }.take(LADDER_ROWS).reversed()
+    val topBids = bids.sortedByDescending { it.price }.take(LADDER_ROWS)
+    if (topAsks.isEmpty() && topBids.isEmpty()) {
+        Text(
+            "No orders in the book yet.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    val biggest = (topAsks + topBids).maxOf { it.shares }.max(BigDecimal.ONE)
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+            Text("Price", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = muted)
+            Text("Shares", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = muted, textAlign = TextAlign.End)
+            Text("Total", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = muted, textAlign = TextAlign.End)
+        }
+        Spacer(Modifier.height(4.dp))
+        topAsks.forEach { level -> LadderRow(level, Palette.Short, "Ask", biggest, onPick) }
+        val bestAsk = topAsks.lastOrNull()?.price
+        val bestBid = topBids.firstOrNull()?.price
+        Text(
+            if (bestAsk != null && bestBid != null) {
+                "Spread ${centsText((bestAsk - bestBid).max(BigDecimal.ZERO))}"
+            } else {
+                "One-sided book"
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = muted,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+        )
+        topBids.forEach { level -> LadderRow(level, Palette.Long, "Bid", biggest, onPick) }
+    }
+}
+
+private const val LADDER_ROWS = 5
+
+@Composable
+private fun LadderRow(
+    level: BookLevel,
+    color: Color,
+    kind: String,
+    biggest: BigDecimal,
+    onPick: ((BigDecimal) -> Unit)?,
+) {
+    val fraction = level.shares.divide(biggest, 3, RoundingMode.HALF_UP).toFloat().coerceIn(0.04f, 1f)
+    val total = level.price.multiply(level.shares).setScale(2, RoundingMode.HALF_UP)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(32.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .then(if (onPick != null) Modifier.clickable { onPick(level.price) } else Modifier),
+    ) {
+        Box(
+            Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxWidth(fraction)
+                .height(32.dp)
+                .background(color.copy(alpha = 0.16f)),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(32.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "${centsText(level.price)} $kind",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                color = color,
+            )
+            Text(
+                level.shares.setScale(2, RoundingMode.DOWN).stripTrailingZeros().toPlainString(),
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.End,
+            )
+            Text(
+                "$" + total.toPlainString(),
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.End,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
