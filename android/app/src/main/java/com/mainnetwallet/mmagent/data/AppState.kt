@@ -8,6 +8,7 @@ import com.mainnetwallet.mmagent.ui.BROWSABLE_VENUES
 import com.mainnetwallet.mmagent.ui.DiscoverCache
 import com.mainnetwallet.mmagent.ui.DiscoverTabsCache
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
@@ -213,6 +215,12 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     /** When the saved session was last swapped for a fresh one (0 = not yet this run). */
     private var lastRenewAt = 0L
 
+    /** Venues whose Markets lists are being fetched right now. Declared before `init`, which starts a prefetch. */
+    private val prefetching = HashSet<String>()
+
+    /** The Markets lists of the last run, so the page has something to show at once. */
+    private val discoverSnapshot = DiscoverSnapshot(context.applicationContext)
+
     init {
         // A 401 that means "the session is gone" sends the operator back to login.
         api.onUnauthorized = { expireSession() }
@@ -220,6 +228,11 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         if (!token.isNullOrBlank()) {
             loadChats()
             refreshChats()
+            // Do not wait for /v1/status to learn the venue: put the last run's Markets lists back and
+            // refresh them straight away, in parallel with everything else the app loads.
+            viewModelScope.launch(Dispatchers.IO) {
+                discoverSnapshot.restore()?.let { prefetchDiscover(it) }
+            }
         }
         if (token.isNullOrBlank()) warmUp()
     }
@@ -345,6 +358,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         chatJob?.cancel()
         token = null
         if (wipeChats) prefs.edit().remove(KEY_CHATS).apply()
+        discoverSnapshot.clear()
         _chat.value = ChatUiState()
         _state.value = AppUiState(error = error)
     }
@@ -356,23 +370,47 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         return api.get("/v1/discover?venue=" + enc(venue) + "&tab=" + enc(tab) + q + "&limit=30&offset=" + offset)
     }
 
-    private val prefetching = HashSet<String>()
 
     /**
-     * Fetch the active venue's browse tabs (and the first page of its first tab) in the background, so the
-     * Markets page opens with them already there. Best effort and public data only: a failure leaves the
-     * page to fetch for itself, and nothing is kept unless the server answered with tabs.
+     * Fetch the venue's browse tabs and the first page of its first [PREFETCH_TABS] tabs in the background, so
+     * the Markets page opens with them already there, and save them for the next start. Best effort and public
+     * data only: a failure leaves the page to fetch for itself, and nothing is kept unless the server answered
+     * with tabs.
      */
     private fun prefetchDiscover(venue: String) {
         if (venue !in BROWSABLE_VENUES) return
+        val now = System.currentTimeMillis()
         val cached = DiscoverTabsCache.get(venue)
-        if (cached != null && System.currentTimeMillis() - cached.at < DiscoverTabsCache.FRESH_MS) return
+        val tabsFresh = cached != null && now - cached.at < DiscoverTabsCache.FRESH_MS
+        val pagesFresh = cached != null && cached.tabs.take(PREFETCH_TABS).all { tab ->
+            val page = DiscoverCache.get(DiscoverCache.key(venue, tab.id, ""))
+            page != null && now - page.at < PREFETCH_PAGE_MS
+        }
+        if (tabsFresh && pagesFresh) return
         if (!synchronized(prefetching) { prefetching.add(venue) }) return
         viewModelScope.launch {
             try {
-                val tabs = DiscoverTabsCache.store(venue, discoverTabs(venue))
-                val first = tabs.firstOrNull()?.id ?: return@launch
-                DiscoverCache.store(venue, first, "", discover(venue, first, "", 0))
+                val tabs = if (tabsFresh && cached != null) cached.tabs else DiscoverTabsCache.store(venue, discoverTabs(venue))
+                if (tabs.isEmpty()) return@launch
+                // The first few tabs' first pages go out together, so tapping Trending, New or Politics shows a list at once.
+                coroutineScope {
+                    tabs.take(PREFETCH_TABS).map { tab ->
+                        async {
+                            val have = DiscoverCache.get(DiscoverCache.key(venue, tab.id, ""))
+                            if (have == null || System.currentTimeMillis() - have.at >= PREFETCH_PAGE_MS) {
+                                try {
+                                    DiscoverCache.store(venue, tab.id, "", discover(venue, tab.id, "", 0))
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    // That tab loads when it is opened.
+                                }
+                            }
+                            Unit
+                        }
+                    }.awaitAll()
+                }
+                withContext(Dispatchers.IO) { discoverSnapshot.save(venue, PREFETCH_TABS) }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1126,5 +1164,11 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         const val DEFAULT_USERNAME = "operator"
         private const val RENEW_EVERY_MS = 6L * 60 * 60 * 1000
         private const val RENEW_RETRY_MS = 5L * 60 * 1000
+
+        /** How many of a venue's first tabs have their first page loaded ahead of time. */
+        private const val PREFETCH_TABS = 4
+
+        /** A prefetched page younger than this is not fetched again by the background refresh. */
+        private const val PREFETCH_PAGE_MS = 2L * 60 * 1000
     }
 }

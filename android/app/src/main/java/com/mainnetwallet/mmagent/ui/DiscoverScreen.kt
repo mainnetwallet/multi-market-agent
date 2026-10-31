@@ -85,11 +85,11 @@ internal object DiscoverCache {
     }
 
     /** Keep a page the server just answered, so the screen can show it the moment it opens. */
-    fun store(venue: String, tab: String, query: String, body: JSONObject) {
+    fun store(venue: String, tab: String, query: String, body: JSONObject, at: Long = System.currentTimeMillis()) {
         val next = if (body.isNull("next_offset")) null else body.optInt("next_offset")
         put(
             key(venue, tab, query),
-            Entry(ApiClient.arrayOf(body, "items").objects(), next, body.optString("note"), System.currentTimeMillis()),
+            Entry(ApiClient.arrayOf(body, "items").objects(), next, body.optString("note"), at),
         )
     }
 }
@@ -135,9 +135,9 @@ internal object DiscoverTabsCache {
 
     /** Store a server answer; returns the tabs, or an empty list (and stores nothing) when it had none. */
     @Synchronized
-    fun store(venue: String, body: JSONObject): List<Tab> {
+    fun store(venue: String, body: JSONObject, at: Long = System.currentTimeMillis()): List<Tab> {
         val tabs = parse(body)
-        if (tabs.isNotEmpty()) map[venue] = Entry(tabs, body.text("note"), System.currentTimeMillis())
+        if (tabs.isNotEmpty()) map[venue] = Entry(tabs, body.text("note"), at)
         return tabs
     }
 }
@@ -171,11 +171,15 @@ fun DiscoverScreen(
     var tabsLoading by remember(venue) { mutableStateOf(seeded == null) }
     var tabsReloadKey by remember { mutableIntStateOf(0) }
     var tab by rememberSaveable(venue) { mutableStateOf(seeded?.tabs?.firstOrNull()?.id ?: "") }
-    var items by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    // A page the background prefetch (or the saved copy from the last run) already has is on screen in the very first frame.
+    val seededPage = remember(venue) {
+        if (query.isBlank() && tab.isNotBlank()) DiscoverCache.get(DiscoverCache.key(venue, tab, "")) else null
+    }
+    var items by remember { mutableStateOf<List<JSONObject>>(seededPage?.items ?: emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var note by remember { mutableStateOf("") }
-    var nextOffset by remember { mutableStateOf<Int?>(null) }
+    var note by remember { mutableStateOf(seededPage?.note ?: "") }
+    var nextOffset by remember { mutableStateOf<Int?>(seededPage?.nextOffset) }
     var generation by remember { mutableIntStateOf(0) }
     var reloadKey by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
