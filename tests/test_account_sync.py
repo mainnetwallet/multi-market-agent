@@ -280,3 +280,34 @@ async def test_service_records_and_announces_a_website_trade_after_the_baseline(
     assert (trade["side"], trade["shares"], trade["position_after"]) == ("BUY", "5", "8")
     (fill,) = harness.store.list_fills(venue=V)
     assert (fill["side"], fill["shares"]) == ("BUY", "5")
+
+
+async def test_stream_failure_is_visible_in_status_and_cleared_by_the_next_event(harness: Harness) -> None:
+    import asyncio
+
+    attempts = {"n": 0}
+
+    async def flaky():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("handshake refused")
+        yield None
+        await asyncio.sleep(30)
+
+    harness.fake.account_events = flaky  # type: ignore[method-assign]
+    sync = AccountSync(harness.settings, harness.store, harness.registry, harness.bus)
+    sync.start()
+    try:
+        for _ in range(100):
+            if (sync.status()["venues"][V.value].get("stream_error") or "").endswith("handshake refused"):
+                break
+            await asyncio.sleep(0.05)
+        assert "handshake refused" in sync.status()["venues"][V.value]["stream_error"]
+        for _ in range(200):  # the retry backs off a couple of seconds, then the stream yields
+            if sync.status()["venues"][V.value]["stream_error"] is None:
+                break
+            await asyncio.sleep(0.05)
+        assert sync.status()["venues"][V.value]["stream_error"] is None
+        assert sync.status()["venues"][V.value]["streaming"] is True
+    finally:
+        await sync.stop()

@@ -77,6 +77,7 @@ class AccountSync:
                 "last_sync": None,
                 "last_change": None,
                 "streaming": False,
+                "stream_error": None,
             }
             self._tasks.append(asyncio.create_task(self._venue_loop(venue), name=f"account-sync-{venue.value}"))
             self._tasks.append(asyncio.create_task(self._stream_loop(venue), name=f"account-stream-{venue.value}"))
@@ -160,13 +161,14 @@ class AccountSync:
                 self._streaming.add(venue)
                 backoff = 2.0
                 async for _ in stream:
+                    self._diag.setdefault(venue.value, {})["stream_error"] = None
                     self.trigger(venue)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning(
-                    "account_stream_failed", venue=venue.value, error=f"{type(exc).__name__}: {str(exc)[:160]}"
-                )
+                error = f"{type(exc).__name__}: {str(exc)[:160]}"
+                self._diag.setdefault(venue.value, {})["stream_error"] = error
+                logger.warning("account_stream_failed", venue=venue.value, error=error)
             finally:
                 self._streaming.discard(venue)
             # The stream ended or failed: read once now (something may have happened meanwhile), then retry.

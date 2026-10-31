@@ -99,10 +99,13 @@ class Settings(BaseSettings):
     kalshi_private_key_path: str = ""
     kalshi_base_url: str = "https://api.elections.kalshi.com/trade-api/v2"
     kalshi_demo_base_url: str = "https://demo-api.kalshi.co/trade-api/v2"
+    # Empty = derive from the REST base (demo keys get the demo stream).
+    kalshi_ws_url: str = ""
     kalshi_use_demo_for_doctor: bool = True
     lmts_token_id: str = ""
     lmts_owner_id: int = 0
     limitless_api_url: str = "https://api.limitless.exchange"
+    limitless_ws_url: str = "wss://ws.limitless.exchange"
     base_rpc_url: str = "https://mainnet.base.org"
     limitless_usdc_address: str = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 

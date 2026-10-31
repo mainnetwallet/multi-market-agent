@@ -45,6 +45,7 @@ from ..domain import (
     to_decimal,
     utcnow,
 )
+from .account_ws import kalshi_account_events
 from .base import HttpVenue, MarketQuery, Page, VenueAuthError, VenueHTTPError, VenueUnavailableError
 from .kalshi_signing import KalshiSigner
 
@@ -105,6 +106,22 @@ class KalshiVenue(HttpVenue):
                 self._signer_error = str(exc)
                 raise VenueAuthError(f"Kalshi credentials unavailable: {exc}") from exc
         return self._signer
+
+    def _ws_url(self) -> str:
+        if self.settings.kalshi_ws_url.strip():
+            return self.settings.kalshi_ws_url.strip()
+        demo = "demo" in (urlparse(self.base_url).hostname or "")
+        host = "external-api-ws.demo.kalshi.co" if demo else "external-api-ws.kalshi.com"
+        return f"wss://{host}/trade-api/ws/v2"
+
+    async def account_events(self) -> AsyncIterator[None]:
+        """Kalshi's private fill / order / position channels: one tick per change on the account."""
+
+        url = self._ws_url()
+        signer = self._ensure_signer()
+        path = urlparse(url).path
+        async for _ in kalshi_account_events(url, lambda: signer.headers("GET", path)):
+            yield None
 
     async def _signed(self, method: str, path: str, *, params: dict[str, Any] | None = None, json: Any = None) -> Any:
         signer = self._ensure_signer()

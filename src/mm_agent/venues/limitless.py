@@ -50,6 +50,7 @@ from ..domain import (
     utcnow,
 )
 from . import limitless_signing
+from .account_ws import limitless_account_events
 from .base import HttpVenue, MarketQuery, Page, VenueAuthError, VenueHTTPError, VenueUnavailableError
 
 ZERO = Decimal("0")
@@ -95,6 +96,8 @@ class LimitlessVenue(HttpVenue):
         self._markets: dict[str, Market] = {}
         self._raw: dict[str, dict[str, Any]] = {}
         self._profile: dict[str, Any] | None = None
+        # Markets the account holds, from the last positions read: what the account stream subscribes to.
+        self._watch_slugs: set[str] = set()
         # (valid until, category tabs from Limitless's own category list, note for the app)
         self._category_tabs: tuple[float, list[dict[str, str]], str] | None = None
         self.test_orders = False
@@ -441,6 +444,23 @@ class LimitlessVenue(HttpVenue):
         available = Decimal(raw) / Decimal("1000000")
         return Balance(venue=self.id, available_usd=available, total_usd=available, currency="USDC")
 
+    def _ws_url(self) -> str:
+        return self.settings.limitless_ws_url.rstrip("/") + "/socket.io/?EIO=4&transport=websocket"
+
+    async def account_events(self) -> AsyncIterator[None]:
+        """Limitless position/order events for the markets the account holds.
+
+        The venue's ``subscribe_positions`` needs market slugs, so this covers markets already held; a
+        position in a market the app has not seen yet is found by the poll.
+        """
+
+        async for _ in limitless_account_events(
+            self._ws_url(),
+            limitless_signing.ws_auth_headers,
+            lambda: sorted(self._watch_slugs),
+        ):
+            yield None
+
     async def get_positions(self) -> list[Position]:
         data = await self._signed_json("GET", "/portfolio/positions")
         rows = data.get("clob") or [] if isinstance(data, dict) else []
@@ -483,6 +503,7 @@ class LimitlessVenue(HttpVenue):
                         market_title=title,
                     )
                 )
+        self._watch_slugs = {p.market_id for p in out if p.market_id}
         return out
 
     async def get_open_orders(self, ref: MarketRef | None = None) -> list[VenueOrder]:
