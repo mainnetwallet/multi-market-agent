@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 from fastapi.testclient import TestClient
@@ -93,3 +94,80 @@ def test_discover_routes_are_venue_aware(harness: Harness) -> None:
     assert client.get("/v1/discover", params={"venue": "kalshi", "tab": "perps"}).status_code == 404
     # Tab is valid but the venue is not enabled on this server.
     assert client.get("/v1/discover", params={"venue": "limitless", "tab": "new"}).status_code == 409
+
+
+def _sse(body: str) -> list[tuple[str, dict[str, object]]]:
+    events: list[tuple[str, dict[str, object]]] = []
+    for block in body.strip().split("\n\n"):
+        lines = dict(line.split(": ", 1) for line in block.splitlines() if ": " in line)
+        events.append((lines["event"], json.loads(lines["data"])))
+    return events
+
+
+class _ScriptedLLM:
+    """Stands in for the LLM: one tool round, then a streamed answer."""
+
+    enabled = True
+
+    def __init__(self, tool: str, on_call: object = None) -> None:
+        self.tool = tool
+        self.on_call = on_call
+        self.rounds = 0
+
+    async def chat(self, messages, tools=None, on_delta=None):  # type: ignore[no-untyped-def]
+        from mm_agent.llm import LLMReply
+
+        self.rounds += 1
+        if callable(self.on_call):
+            self.on_call()
+        if self.rounds == 1:
+            return LLMReply(content="", tool_calls=({"id": "c1", "name": self.tool, "arguments": "{}"},))
+        if on_delta is not None:
+            await on_delta("All ")
+            await on_delta("good.")
+        return LLMReply(content="All good.")
+
+
+def test_chat_stream_slash_command_events(harness: Harness) -> None:
+    client = make_client(harness)
+    client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})
+    events = _sse(client.get("/v1/chat/stream", params={"message": "/status"}).text)
+    names = [name for name, _ in events]
+    assert names[0] == "status" and names[-2:] == ["message", "done"]
+    assert "FAKE" in str(events[-2][1]["reply"])
+
+
+def test_chat_stream_reports_tool_progress_and_tokens(harness: Harness) -> None:
+    harness.chat.llm = _ScriptedLLM("get_status")  # type: ignore[assignment]
+    client = make_client(harness)
+    client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})
+    events = _sse(client.get("/v1/chat/stream", params={"message": "how are we doing"}).text)
+    tools = [(p["name"], p["state"]) for name, p in events if name == "tool"]
+    assert tools == [("get_status", "running"), ("get_status", "done")]
+    assert "".join(str(p["text"]) for name, p in events if name == "delta") == "All good."
+    assert events[-2] == ("message", events[-2][1]) and events[-2][1]["reply"] == "All good."
+
+
+def test_chat_stream_post_takes_a_long_message_in_the_body(harness: Harness) -> None:
+    client = make_client(harness)
+    client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})
+    # 3000 Bengali characters would be ~27 KB once URL-encoded; the body has no such limit.
+    long_text = "/status " + "\u0995" * 3000
+    events = _sse(client.post("/v1/chat/stream", json={"message": long_text}).text)
+    assert [name for name, _ in events][-2:] == ["message", "done"]
+    assert client.post("/v1/chat/stream", json={"message": ""}).status_code == 422
+
+
+async def test_stop_prevents_a_new_tool_from_starting(harness: Harness) -> None:
+    stop = {"now": False}
+    # The operator presses Stop while the model is deciding to pause the agent.
+    harness.chat.llm = _ScriptedLLM("pause_agent", on_call=lambda: stop.update(now=True))  # type: ignore[assignment]
+    result = await harness.chat.handle(
+        "pause everything", actor="web:operator", on_event=_noop, should_stop=lambda: stop["now"]
+    )
+    assert result["data"]["stopped"] is True
+    assert harness.agent.status()["paused"] is False
+
+
+async def _noop(kind: str, payload: dict[str, object]) -> None:
+    return None

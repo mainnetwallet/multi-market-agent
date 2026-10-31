@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -14,7 +15,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
 
@@ -38,13 +41,43 @@ data class AgentStatus(
     val venues: List<JSONObject> = emptyList(),
 )
 
-/** One line of the chat tab. [role] is "user", "agent" or "error". */
-data class ChatMessage(val role: String, val text: String, val at: Long = System.currentTimeMillis())
+/** One thing the assistant did while answering. [state] is "running", "done", "error" or "unknown". */
+data class ToolStep(val id: String, val name: String, val state: String)
 
+/** One line of the chat tab. [role] is "user", "agent" or "error". */
+data class ChatMessage(
+    val role: String,
+    val text: String,
+    val at: Long = System.currentTimeMillis(),
+    val tools: List<ToolStep> = emptyList(),
+    /** True while the reply is still arriving. */
+    val streaming: Boolean = false,
+)
+
+/** A saved chat. The server keeps no chat history, so conversations live on this device. */
+data class Conversation(val id: String, val title: String, val messages: List<ChatMessage>, val updatedAt: Long)
+
+/** [messages] belong to the open conversation ([activeId]; null = a new chat nothing was sent in yet). */
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val busy: Boolean = false,
+    val conversations: List<Conversation> = emptyList(),
+    val activeId: String? = null,
 )
+
+/** Replace the step with the same id (or, with no id, the running step of the same name), else add it. */
+internal fun mergeToolStep(steps: List<ToolStep>, step: ToolStep): List<ToolStep> {
+    val index = steps.indexOfLast {
+        if (step.id.isNotBlank()) it.id == step.id else it.name == step.name && it.state == "running"
+    }
+    return if (index >= 0) steps.toMutableList().also { it[index] = step } else steps + step
+}
+
+/** A chat is titled after its first line, shortened. */
+internal fun chatTitle(firstMessage: String): String {
+    val line = firstMessage.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().trim()
+    return if (line.length > 40) line.take(40).trimEnd() + "…" else line.ifBlank { "New chat" }
+}
 
 /** The two read-only server documents Settings can show. */
 data class InfoUiState(
@@ -112,6 +145,9 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
 
     private var refreshJob: Job? = null
 
+    /** The running chat request; cancelling it is "Stop". */
+    private var chatJob: Job? = null
+
     /** When the saved session was last swapped for a fresh one (0 = not yet this run). */
     private var lastRenewAt = 0L
 
@@ -119,6 +155,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         // A 401 that means "the session is gone" sends the operator back to login.
         api.onUnauthorized = { expireSession() }
         loadSession()
+        if (!token.isNullOrBlank()) loadChats()
         if (token.isNullOrBlank()) warmUp()
     }
 
@@ -212,6 +249,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 token = newToken
                 savedUsername = username
                 lastRenewAt = System.currentTimeMillis()
+                loadChats()
                 _state.value = _state.value.copy(loggedIn = true, loading = false, error = null)
                 refresh()
                 onDone(true)
@@ -225,19 +263,22 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     fun logout() {
         viewModelScope.launch {
             runCatching { api.post("/v1/auth/logout", JSONObject()) }
-            clearSession(null)
+            clearSession(null, wipeChats = true)
         }
     }
 
     /** The server rejected the session: forget it and ask for the password again. */
     private fun expireSession() {
         if (token.isNullOrBlank()) return
-        clearSession("Your session expired. Sign in again.")
+        // Signing in again brings the saved chats back; only an explicit sign-out erases them.
+        clearSession("Your session expired. Sign in again.", wipeChats = false)
     }
 
-    private fun clearSession(error: String?) {
+    private fun clearSession(error: String?, wipeChats: Boolean) {
         refreshJob?.cancel()
+        chatJob?.cancel()
         token = null
+        if (wipeChats) prefs.edit().remove(KEY_CHATS).apply()
         _chat.value = ChatUiState()
         _state.value = AppUiState(error = error)
     }
@@ -452,26 +493,179 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         }
     }
 
-    /** Send one chat message; slash commands and plain text take the same route. */
+    /**
+     * Send one chat message; slash commands and plain text take the same route.
+     *
+     * The reply streams in over /v1/chat/stream: tool progress and text arrive as they happen. The
+     * server answers each message on its own, so earlier messages are not part of the context.
+     */
     fun sendChat(text: String) {
         val message = text.trim()
         if (message.isEmpty() || _chat.value.busy) return
-        _chat.value = ChatUiState(_chat.value.messages + ChatMessage("user", message), busy = true)
-        viewModelScope.launch {
-            val reply = try {
-                // The LLM can take longer than the default 30 s read timeout.
-                val response = api.post(
-                    "/v1/chat",
-                    ApiClient.jsonOf("message" to message),
-                    readTimeoutSeconds = 120,
-                )
-                ChatMessage("agent", response.optString("reply").ifBlank { "(no reply)" })
+        _chat.update { s ->
+            val id = s.activeId ?: java.util.UUID.randomUUID().toString()
+            val known = s.conversations.any { it.id == id }
+            val now = System.currentTimeMillis()
+            s.copy(
+                activeId = id,
+                busy = true,
+                messages = s.messages + ChatMessage("user", message) + ChatMessage("agent", "", streaming = true),
+                conversations = if (known) s.conversations else listOf(Conversation(id, chatTitle(message), emptyList(), now)) + s.conversations,
+            )
+        }
+        saveActiveChat()
+        chatJob = viewModelScope.launch {
+            var reply: String? = null
+            try {
+                api.stream("/v1/chat/stream", ApiClient.jsonOf("message" to message)) { event, data ->
+                    when (event) {
+                        "delta" -> updateReply { it.copy(text = it.text + data.optString("text")) }
+                        "tool" -> updateReply {
+                            val step = ToolStep(data.optString("id"), data.optString("name"), data.optString("state"))
+                            it.copy(tools = mergeToolStep(it.tools, step))
+                        }
+                        "message" -> reply = data.optString("reply").ifBlank { "(no reply)" }
+                    }
+                }
+                val finalReply = reply
+                if (finalReply != null) {
+                    finishTurn(finalReply, null, isError = false)
+                } else {
+                    finishTurn(null, "The connection closed before the agent replied.", isError = true)
+                }
+            } catch (e: CancellationException) {
+                finishTurn(null, "Stopped.", isError = false)
+                throw e
             } catch (e: Exception) {
-                ChatMessage("error", e.message ?: "Chat failed.")
+                finishTurn(null, e.message ?: "Chat failed.", isError = true)
             }
-            _chat.value = ChatUiState(_chat.value.messages + reply, busy = false)
-            // A slash command may have changed orders, proposals or the venue.
-            if (message.startsWith("/")) refresh()
+        }
+    }
+
+    /**
+     * Stop generating. The server never starts a new step after this, but a step that is already
+     * running (a trade, say) finishes, so the reply says so and the lists are refreshed.
+     */
+    fun stopChat() {
+        chatJob?.cancel()
+    }
+
+    fun newChat() {
+        if (_chat.value.busy) return
+        _chat.update { it.copy(activeId = null, messages = emptyList()) }
+    }
+
+    fun openChat(id: String) {
+        if (_chat.value.busy) return
+        _chat.update { s ->
+            val chat = s.conversations.firstOrNull { it.id == id } ?: return@update s
+            s.copy(activeId = chat.id, messages = chat.messages)
+        }
+    }
+
+    fun renameChat(id: String, title: String) {
+        val clean = title.trim().take(60)
+        if (clean.isEmpty()) return
+        _chat.update { s -> s.copy(conversations = s.conversations.map { if (it.id == id) it.copy(title = clean) else it }) }
+        persistChats()
+    }
+
+    fun deleteChat(id: String) {
+        if (_chat.value.busy && _chat.value.activeId == id) return
+        _chat.update { s ->
+            val open = s.activeId == id
+            s.copy(
+                conversations = s.conversations.filterNot { it.id == id },
+                activeId = if (open) null else s.activeId,
+                messages = if (open) emptyList() else s.messages,
+            )
+        }
+        persistChats()
+    }
+
+    /** Change the reply that is still arriving (always the last message). */
+    private fun updateReply(change: (ChatMessage) -> ChatMessage) {
+        _chat.update { s ->
+            val last = s.messages.lastOrNull()
+            if (last == null || !last.streaming) s else s.copy(messages = s.messages.dropLast(1) + change(last))
+        }
+    }
+
+    /**
+     * End the current turn. [reply] is the server's final text; [note] is a line added below
+     * whatever arrived (a stop or an error). Steps still "running" are shown as unknown, never as done.
+     */
+    private fun finishTurn(reply: String?, note: String?, isError: Boolean) {
+        val last = _chat.value.messages.lastOrNull()?.takeIf { it.streaming }
+        val usedTools = last?.tools?.isNotEmpty() == true
+        val cutMidStep = last?.tools?.any { it.state == "running" } == true
+        _chat.update { s ->
+            val open = s.messages.lastOrNull()?.takeIf { it.streaming }
+            val before = if (open != null) s.messages.dropLast(1) else s.messages
+            val settled = open?.copy(
+                text = reply ?: open.text,
+                streaming = false,
+                tools = open.tools.map {
+                    if (it.state != "running") it else it.copy(state = if (reply != null) "done" else "unknown")
+                },
+            )
+            val keep = if (settled != null && (settled.text.isNotBlank() || settled.tools.isNotEmpty())) listOf(settled) else emptyList()
+            val warning = if (note != null && cutMidStep) {
+                "$note A step was already running and may have finished. Check Orders and Positions."
+            } else {
+                note
+            }
+            val tail = if (warning.isNullOrBlank()) emptyList() else listOf(ChatMessage(if (isError) "error" else "agent", warning))
+            s.copy(messages = before + keep + tail, busy = false)
+        }
+        saveActiveChat()
+        // A command or a tool may have changed orders, proposals or the venue.
+        val lastUser = _chat.value.messages.lastOrNull { it.role == "user" }?.text.orEmpty()
+        if (lastUser.startsWith("/") || usedTools) refresh()
+    }
+
+    /** Copy the open conversation's messages into the saved list and write it to disk. */
+    private fun saveActiveChat() {
+        _chat.update { s ->
+            val id = s.activeId ?: return@update s
+            val now = System.currentTimeMillis()
+            val saved = s.messages.filterNot { it.streaming }
+            val updated = s.conversations.map { if (it.id == id) it.copy(messages = saved, updatedAt = now) else it }
+            s.copy(conversations = updated.sortedByDescending { it.updatedAt }.take(MAX_CHATS))
+        }
+        persistChats()
+    }
+
+    private fun persistChats() {
+        val chats = JSONArray()
+        for (chat in _chat.value.conversations) {
+            val messages = JSONArray()
+            for (m in chat.messages.takeLast(MAX_CHAT_MESSAGES)) {
+                messages.put(JSONObject().put("role", m.role).put("text", m.text).put("at", m.at))
+            }
+            chats.put(JSONObject().put("id", chat.id).put("title", chat.title).put("updatedAt", chat.updatedAt).put("messages", messages))
+        }
+        prefs.edit().putString(KEY_CHATS, chats.toString()).apply()
+    }
+
+    private fun loadChats() {
+        val raw = prefs.getString(KEY_CHATS, null)?.takeIf { it.isNotBlank() } ?: return
+        val chats = try {
+            JSONArray(raw).objects().map { o ->
+                Conversation(
+                    id = o.optString("id"),
+                    title = o.optString("title").ifBlank { "New chat" },
+                    updatedAt = o.optLong("updatedAt"),
+                    messages = ApiClient.arrayOf(o, "messages").objects().map { m ->
+                        ChatMessage(m.optString("role"), m.optString("text"), m.optLong("at"))
+                    },
+                )
+            }.filter { it.id.isNotBlank() }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        if (chats.isNotEmpty()) {
+            _chat.value = ChatUiState(conversations = chats.sortedByDescending { it.updatedAt }.take(MAX_CHATS))
         }
     }
 
@@ -502,10 +696,6 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 _info.value = _info.value.copy(loading = false, error = e.message ?: "Could not load the audit log.")
             }
         }
-    }
-
-    fun clearChat() {
-        _chat.value = ChatUiState()
     }
 
     fun cancelAll(onDone: (String) -> Unit = {}) {
@@ -671,6 +861,9 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         const val KEY_BASE_URL = "base_url"
         const val KEY_TOKEN = "session_token"
         const val KEY_USERNAME = "username"
+        private const val KEY_CHATS = "chat_history"
+        private const val MAX_CHATS = 50
+        private const val MAX_CHAT_MESSAGES = 200
         const val DEFAULT_USERNAME = "operator"
         private const val RENEW_EVERY_MS = 6L * 60 * 60 * 1000
         private const val RENEW_RETRY_MS = 5L * 60 * 1000

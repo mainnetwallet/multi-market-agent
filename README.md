@@ -307,6 +307,32 @@ The optional LLM assistant has all required tools, is instructed to report
 never sees secrets/raw auth responses, and wraps tool output as DATA. If no LLM
 is configured, use slash commands.
 
+`GET /v1/chat/stream?message=...` and `POST /v1/chat/stream` (`{"message": ...}`, no
+URL-length limit, the Android app uses it) are the Server-Sent Events form of `/v1/chat`. Events: `status`, `delta` (reply text as the LLM
+produces it), `tool` (`{id, name, state: running|done|error}`), `ping`, then
+`message` (the final, redacted reply) and `done`. If the client disconnects
+(Stop), no new tool is started, but a tool that is already running finishes, so
+check `/orders` after stopping a trade.
+
+**Conversations.** Chats live in the same database (`conversations`, `chat_messages`; Alembic
+`c7e2a91f4b30`). Each has a UUID, its own messages, summary and run state, and belongs to the user
+who created it: every store method takes `(owner, conversation_id)` and goes through one ownership
+check, so another user's chat looks exactly like a missing one (404). Send `conversation_id` with
+`POST /v1/chat` or either `/v1/chat/stream` form and the model is given that chat's summary and
+recent messages (never another chat's); without it a message is answered on its own and not stored
+(Telegram). A chat answers one message at a time (409 otherwise). Past 30 unsummarized messages the
+older ones fold into a summary (by the LLM, or a plain extract if it is down); nothing is deleted.
+
+| Route | |
+|---|---|
+| `GET /v1/conversations?q=` | your chats, newest first; `q` searches titles and message text |
+| `POST /v1/conversations` | create `{title?}`; an empty title becomes the first message |
+| `GET /v1/conversations/{id}` | restore: summary, run state (`idle/running/stopped/error/interrupted`), latest 50 messages |
+| `GET /v1/conversations/{id}/messages?before=&limit=` | older history, page by page |
+| `POST /v1/conversations/{id}/rename` / `DELETE` | rename / delete with its messages |
+
+An answer that was still running when the server stopped is reported as `interrupted`.
+
 ---
 
 ## UNKNOWN of an order

@@ -38,6 +38,7 @@ from .events import EventBus
 from .full_control import FullControlError, FullControlService
 from .funds import FundsError, FundsService
 from .scanner import Scanner
+from .store import ConversationBusy, ConversationNotFound
 from .util import get_logger, redact
 from .venues.registry import VenueRegistry
 
@@ -83,8 +84,17 @@ class RuleBody(BaseModel):
     trigger_at: datetime | None = None
 
 
+_CHAT_TASKS: set[asyncio.Task[Any]] = set()
+CHAT_PAGE_SIZE = 50
+
+
 class ChatBody(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    conversation_id: str | None = Field(default=None, max_length=36)
+
+
+class ConversationBody(BaseModel):
+    title: str = Field(default="", max_length=120)
 
 
 class LimitBody(BaseModel):
@@ -997,36 +1007,151 @@ def create_app(
         report = daily_report(agent.store, agent)
         return {"report": report, "text": render_report(report)}
 
+    def own_conversation(user: str, conversation_id: str) -> dict[str, Any]:
+        """The chat if it belongs to this user; otherwise a 404 that looks the same as 'no such chat'."""
+
+        try:
+            return agent.store.chat_get(f"web:{user}", conversation_id)
+        except ConversationNotFound:
+            raise HTTPException(status_code=404, detail="conversation not found") from None
+
     @app.post("/v1/chat")
     async def chat_message(body: ChatBody, request: Request, user: str = Depends(require_auth)) -> dict[str, Any]:
-        return await chat.handle(body.message, actor=f"web:{user}", source="web_chat")
+        try:
+            return await chat.handle(
+                body.message, actor=f"web:{user}", source="web_chat", conversation_id=body.conversation_id
+            )
+        except ConversationNotFound:
+            raise HTTPException(status_code=404, detail="conversation not found") from None
+        except ConversationBusy:
+            raise HTTPException(status_code=409, detail="this chat is still answering its previous message") from None
 
-    @app.get("/v1/chat/stream")
-    async def chat_stream(message: str, request: Request, user: str = Depends(require_auth)) -> StreamingResponse:
+    def chat_event_stream(message: str, user: str, conversation_id: str | None = None) -> StreamingResponse:
+        if conversation_id is not None and own_conversation(user, conversation_id)["status"] == "running":
+            raise HTTPException(status_code=409, detail="this chat is still answering its previous message")
+
         async def event_stream() -> Any:
             yield 'event: status\ndata: {"state":"working"}\n\n'
 
-            async def run() -> dict[str, Any]:
-                return await chat.handle(message, actor=f"web:{user}", source="web_chat")
+            queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+            stop = {"now": False}
 
-            task = asyncio.create_task(run())
-            while not task.done():
-                try:
-                    await asyncio.wait_for(asyncio.shield(task), timeout=10)
-                except TimeoutError:
-                    yield "event: ping\ndata: {}\n\n"
+            async def on_event(kind: str, payload: dict[str, Any]) -> None:
+                queue.put_nowait((kind, payload))
+
+            task = asyncio.create_task(
+                chat.handle(
+                    message,
+                    actor=f"web:{user}",
+                    source="web_chat",
+                    on_event=on_event,
+                    should_stop=lambda: stop["now"],
+                    conversation_id=conversation_id,
+                )
+            )
+            # Keep a reference: if the app disconnects, the task still ends cleanly.
+            _CHAT_TASKS.add(task)
+            task.add_done_callback(_CHAT_TASKS.discard)
+            getter: asyncio.Future[tuple[str, dict[str, Any]]] | None = None
             try:
-                result = task.result()
-            except Exception as exc:
-                result = {"reply": f"Chat failed: {type(exc).__name__}", "data": {}}
-            yield "event: message\ndata: " + json.dumps(redact(result), default=str) + "\n\n"
-            yield "event: done\ndata: {}\n\n"
+                while True:
+                    if task.done() and queue.empty():
+                        break
+                    getter = asyncio.ensure_future(queue.get())
+                    await asyncio.wait({getter, task}, timeout=10, return_when=asyncio.FIRST_COMPLETED)
+                    if getter.done():
+                        kind, payload = getter.result()
+                        yield f"event: {kind}\ndata: " + json.dumps(redact(payload), default=str) + "\n\n"
+                    else:
+                        getter.cancel()
+                        if not task.done():
+                            yield "event: ping\ndata: {}\n\n"
+                try:
+                    result = task.result()
+                except ConversationBusy:  # lost a race with another message to the same chat
+                    result = {"reply": "This chat is still answering its previous message.", "data": {"error": True}}
+                except ConversationNotFound:
+                    result = {"reply": "This chat no longer exists.", "data": {"error": True}}
+                except Exception as exc:
+                    result = {"reply": f"Chat failed: {type(exc).__name__}", "data": {}}
+                yield "event: message\ndata: " + json.dumps(redact(result), default=str) + "\n\n"
+                yield "event: done\ndata: {}\n\n"
+            finally:
+                if getter is not None and not getter.done():
+                    getter.cancel()
+                # The app pressed Stop (or lost the connection). Never cancel the task: a trade
+                # that already started must finish. It just may not start anything new.
+                if not task.done():
+                    stop["now"] = True
 
         return StreamingResponse(
             event_stream(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.get("/v1/chat/stream")
+    async def chat_stream(
+        message: str, request: Request, conversation_id: str | None = None, user: str = Depends(require_auth)
+    ) -> StreamingResponse:
+        return chat_event_stream(message, user, conversation_id)
+
+    # Same stream with the message in the body: a long or non-Latin message does not fit in a URL,
+    # and the text stays out of access logs. The Android app uses this form.
+    @app.post("/v1/chat/stream")
+    async def chat_stream_post(
+        body: ChatBody, request: Request, user: str = Depends(require_auth)
+    ) -> StreamingResponse:
+        return chat_event_stream(body.message, user, body.conversation_id)
+
+    # ----------------------------------------------------------- conversations
+    # Every route is scoped to the signed-in user in the store itself; see Store._owned.
+    @app.get("/v1/conversations")
+    async def conversations_list(
+        q: str | None = None, limit: int = 100, user: str = Depends(require_auth)
+    ) -> dict[str, Any]:
+        return {"conversations": agent.store.chat_list(f"web:{user}", q, limit)}
+
+    @app.post("/v1/conversations")
+    async def conversations_create(body: ConversationBody, user: str = Depends(require_auth)) -> dict[str, Any]:
+        return {"conversation": agent.store.chat_create(f"web:{user}", body.title)}
+
+    @app.get("/v1/conversations/{conversation_id}")
+    async def conversations_open(conversation_id: str, user: str = Depends(require_auth)) -> dict[str, Any]:
+        """Everything needed to restore a chat: its summary, run state and the latest messages."""
+
+        conversation = own_conversation(user, conversation_id)
+        messages = agent.store.chat_messages(f"web:{user}", conversation_id, limit=CHAT_PAGE_SIZE)
+        return {
+            "conversation": conversation,
+            "messages": messages,
+            "has_more": bool(messages) and messages[0]["seq"] > 1,
+        }
+
+    @app.get("/v1/conversations/{conversation_id}/messages")
+    async def conversation_messages(
+        conversation_id: str, before: int | None = None, limit: int = CHAT_PAGE_SIZE, user: str = Depends(require_auth)
+    ) -> dict[str, Any]:
+        """One page of older history: the [limit] messages before sequence number [before]."""
+
+        own_conversation(user, conversation_id)
+        messages = agent.store.chat_messages(f"web:{user}", conversation_id, before=before, limit=limit)
+        return {"messages": messages, "has_more": bool(messages) and messages[0]["seq"] > 1}
+
+    @app.post("/v1/conversations/{conversation_id}/rename")
+    async def conversations_rename(
+        conversation_id: str, body: ConversationBody, user: str = Depends(require_auth)
+    ) -> dict[str, Any]:
+        own_conversation(user, conversation_id)
+        if not body.title.strip():
+            raise HTTPException(status_code=422, detail="a title is required")
+        return {"conversation": agent.store.chat_rename(f"web:{user}", conversation_id, body.title)}
+
+    @app.delete("/v1/conversations/{conversation_id}")
+    async def conversations_delete(conversation_id: str, user: str = Depends(require_auth)) -> dict[str, Any]:
+        own_conversation(user, conversation_id)
+        agent.store.chat_delete(f"web:{user}", conversation_id)
+        return {"deleted": True}
 
     @app.websocket("/v1/ws")
     async def websocket(ws: WebSocket) -> None:
