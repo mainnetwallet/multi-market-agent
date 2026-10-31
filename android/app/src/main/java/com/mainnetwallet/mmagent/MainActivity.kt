@@ -27,6 +27,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.mainnetwallet.mmagent.data.ApiClient
 import com.mainnetwallet.mmagent.data.AppLock
 import com.mainnetwallet.mmagent.data.AppViewModel
+import com.mainnetwallet.mmagent.data.LiveSocket
 import com.mainnetwallet.mmagent.data.TradeSheetViewModel
 import com.mainnetwallet.mmagent.data.WithdrawViewModel
 import com.mainnetwallet.mmagent.ui.AllowlistAddScreen
@@ -93,7 +94,26 @@ class MainActivity : FragmentActivity() {
             }
         }
 
-        // 15 s background refresh, only while the app is on screen. Silent: it never
+        // Live updates: the server pushes `account.updated` the moment the venue's own account changes
+        // (including a trade made on the venue's website), and the screens re-read at once. Only while the
+        // app is on screen; the timer below is the fallback if the socket is down.
+        val live = LiveSocket(
+            baseUrl = { appViewModel.baseUrl },
+            token = { appViewModel.token },
+            onTopic = { runOnUiThread { appViewModel.liveRefresh() } },
+        )
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                live.start()
+                try {
+                    kotlinx.coroutines.awaitCancellation()
+                } finally {
+                    live.stop()
+                }
+            }
+        }
+
+        // 5 s background refresh, only while the app is on screen. Silent: it never
         // flips the loading flag, and a failed tick keeps the last good data.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -493,7 +513,7 @@ class MainActivity : FragmentActivity() {
     }
 
     companion object {
-        private const val AUTO_REFRESH_MS = 15_000L
+        private const val AUTO_REFRESH_MS = 5_000L
     }
 
     override fun onStop() {

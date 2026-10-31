@@ -200,6 +200,7 @@ class PolymarketVenue(HttpVenue):
         self._sub_tags: dict[str, tuple[float, list[dict[str, str]]]] = {}
         self.test_orders = False
         self._test_error: str | None = None
+        self._unresolvable_assets: set[str] = set()
 
     @property
     def display_name(self) -> str:
@@ -556,15 +557,55 @@ class PolymarketVenue(HttpVenue):
         available = Decimal(allowance.balance) / Decimal("1000000")
         return Balance(venue=self.id, available_usd=available, total_usd=available, currency="pUSD")
 
-    async def get_positions(self) -> list[Position]:
-        client = await self._secure()
-        owner = self.settings.polymarket_wallet_address.strip() or str(client.wallet or "")
-        page = await client.list_positions(user=owner or None).first_page()
+    async def _resolve_asset(self, asset_id: str, condition_id: str) -> tuple[str, Outcome] | None:
+        """Map a token id to our (market id, outcome) for a market the app has not browsed.
+
+        A position or order made on polymarket.com is in markets the scanner may never have loaded, so the
+        token id is not in ``_asset_index``. Gamma can look a market up by its token id; the parsed market is
+        remembered so later reads, books and sells work on it like any other.
+        """
+
+        known = self._asset_index.get(asset_id)
+        if known is not None:
+            return known
+        if asset_id in self._unresolvable_assets:
+            return None
+        try:
+            data = await self.get_json(GAMMA + "/markets", params={"clob_token_ids": asset_id})
+            raw = data[0] if isinstance(data, list) and data else None
+            if not isinstance(raw, dict):
+                raise VenueUnavailableError("no Gamma market for token")
+            self._remember(self.parse_gamma_market(raw))
+        except Exception:
+            # Do not hammer Gamma for a token it cannot place; the caller falls back to the condition id.
+            self._unresolvable_assets.add(asset_id)
+            return None
+        return self._asset_index.get(asset_id)
+
+    @staticmethod
+    async def _drain(paginator: Any, cap: int = 500) -> tuple[list[Any], bool]:
+        """All items of an SDK paginator up to ``cap``; the flag says the whole list was read."""
+
+        items: list[Any] = []
+        async for page in paginator:
+            items.extend(page.items)
+            if page.limit_reached:
+                return items, False
+            if len(items) >= cap:
+                return items[:cap], not page.has_more
+        return items, True
+
+    async def _positions_from(self, rows: list[Any]) -> list[Position]:
         out: list[Position] = []
-        for p in page.items:
-            market_id = self._asset_index.get(str(p.asset_id), (str(p.condition_id), Outcome.YES))[0]
+        for p in rows:
+            asset_id = str(p.asset_id)
+            mapping = self._asset_index.get(asset_id) or await self._resolve_asset(asset_id, str(p.condition_id))
             outcome_index = int(str(getattr(p, "outcome_index", 0) or 0))
-            outcome = Outcome.YES if outcome_index == 0 else Outcome.NO
+            if mapping is not None:
+                market_id, outcome = mapping
+            else:
+                market_id = str(p.condition_id)
+                outcome = Outcome.YES if outcome_index == 0 else Outcome.NO
             out.append(
                 Position(
                     venue=self.id,
@@ -580,22 +621,19 @@ class PolymarketVenue(HttpVenue):
             )
         return out
 
-    async def get_open_orders(self, ref: MarketRef | None = None) -> list[VenueOrder]:
-        client = await self._secure()
-        page = await client.list_open_orders().first_page()
+    async def _orders_from(self, rows: list[Any], ref: MarketRef | None = None) -> list[VenueOrder]:
         out: list[VenueOrder] = []
-        for order in page.items:
+        for order in rows:
             asset_id = str(order.asset_id)
-            mapping = self._asset_index.get(asset_id)
+            mapping = self._asset_index.get(asset_id) or await self._resolve_asset(asset_id, str(order.condition_id))
             if ref and mapping and mapping[0] != ref.market_id:
                 continue
-            outcome = mapping[1] if mapping else None
             out.append(
                 VenueOrder(
                     venue=self.id,
                     market_id=mapping[0] if mapping else str(order.condition_id),
                     order_id=str(order.id),
-                    outcome=outcome,
+                    outcome=mapping[1] if mapping else None,
                     side=Side(order.side),
                     price=order.price,
                     size=order.original_size,
@@ -605,6 +643,47 @@ class PolymarketVenue(HttpVenue):
                 )
             )
         return out
+
+    async def get_positions(self) -> list[Position]:
+        client = await self._secure()
+        owner = self.settings.polymarket_wallet_address.strip() or str(client.wallet or "")
+        rows, _complete = await self._drain(client.list_positions(user=owner or None))
+        return await self._positions_from(rows)
+
+    async def get_open_orders(self, ref: MarketRef | None = None) -> list[VenueOrder]:
+        client = await self._secure()
+        rows, _complete = await self._drain(client.list_open_orders())
+        return await self._orders_from(rows, ref)
+
+    async def get_account_snapshot(self) -> tuple[list[Any], list[VenueOrder], bool, bool]:
+        client = await self._secure()
+        owner = self.settings.polymarket_wallet_address.strip() or str(client.wallet or "")
+        position_rows, positions_complete = await self._drain(client.list_positions(user=owner or None))
+        order_rows, orders_complete = await self._drain(client.list_open_orders())
+        return (
+            await self._positions_from(position_rows),
+            await self._orders_from(order_rows),
+            positions_complete,
+            orders_complete,
+        )
+
+    async def account_events(self) -> AsyncIterator[None]:
+        """Polymarket's own authenticated user stream: one tick per order or trade event.
+
+        This is what makes a trade made on polymarket.com show up in the app within a moment instead of at
+        the next poll. The event body is not used; any order/trade event just means "read the account now",
+        so a missed or reordered message can never leave the app wrong.
+        """
+
+        from polymarket.streams import UserSpec
+
+        client = await self._secure()
+        handle = await client.subscribe(UserSpec())
+        try:
+            async for _event in handle:
+                yield None
+        finally:
+            await handle.close()
 
     async def get_recent_trades(self, ref: MarketRef) -> list[VenueTrade]:
         client = await self._secure()

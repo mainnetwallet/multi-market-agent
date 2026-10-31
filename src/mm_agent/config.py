@@ -132,6 +132,10 @@ class Settings(BaseSettings):
     book_feed_markets: int = 5
     book_feed_interval_seconds: int = 5
     book_fresh_seconds: int = 30
+    # Account sync: the venue, not the local database, is the truth for positions and resting orders.
+    account_sync_enabled: bool = True
+    account_sync_interval_seconds: float = 3.0
+    account_sync_other_interval_seconds: float = 15.0
     proposal_ttl_seconds: int = 300
     auto_propose: bool = True
     proposals_per_cycle: int = 2

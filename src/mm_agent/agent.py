@@ -9,6 +9,7 @@ from datetime import timedelta
 from decimal import ROUND_CEILING, Decimal
 from typing import Any
 
+from .account_sync import AccountSync
 from .books import BookCache, BookFeed, UnitGuard
 from .config import Settings
 from .domain import (
@@ -70,6 +71,7 @@ class AgentService:
         self.books = books
         self.unit_guard = unit_guard
         self.book_feed = BookFeed(settings, registry, store, books, bus)
+        self.account_sync = AccountSync(settings, store, registry, bus)
         self.research_service = research or ResearchService(settings)
         self.strategy = StrategyEngine(settings)
         self.risk = RiskEngine(settings)
@@ -94,6 +96,7 @@ class AgentService:
             self.risk.restore({str(k): str(v) for k, v in overrides.items()})
         self._stop.clear()
         self.book_feed.start()
+        self.account_sync.start()
         self._expiry_task = asyncio.create_task(self._expiry_loop(), name="proposal-expiry")
         if self.settings.auto_propose:
             self._auto_task = asyncio.create_task(self._auto_loop(), name="auto-propose")
@@ -103,6 +106,7 @@ class AgentService:
     async def stop(self) -> None:
         self._stop.set()
         await self.book_feed.stop()
+        await self.account_sync.stop()
         for task in (self._expiry_task, self._auto_task, self._funds_task):
             if task:
                 task.cancel()
@@ -122,6 +126,7 @@ class AgentService:
             "unit_guard": {"ok": self.unit_guard.ok, "reason": self.unit_guard.reason},
             "feed_diag": self.scanner.feed_diag().model_dump(mode="json"),
             "book_feed": self.book_feed.status(),
+            "account_sync": self.account_sync.status(),
             "research": {
                 "available": self.research_service.available,
                 "reason": self.research_service.disabled_reason,
