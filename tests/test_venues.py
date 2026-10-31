@@ -78,6 +78,98 @@ def test_polymarket_fee_rate_follows_resolved_category() -> None:
     assert market.fee_info["taker_rate"] == "0.07"
 
 
+# A Gamma row shaped like the live one: no category or tags anywhere, a zero feeSchedule.
+GAMMA_ROW_NO_CATEGORY = {
+    "id": "559651",
+    "question": "Xi Jinping out before 2027?",
+    "clobTokenIds": '["111", "222"]',
+    "outcomes": '["Yes", "No"]',
+    "active": True,
+    "closed": False,
+    "acceptingOrders": True,
+    "feesEnabled": True,
+    "feeSchedule": {"exponent": 1, "rate": 0, "takerOnly": True, "rebateRate": 0},
+    "events": [{"id": "30828", "title": "Xi Jinping out before 2027?", "slug": "xi"}],
+}
+
+
+def _polymarket_with_tags(tags: object) -> tuple[PolymarketVenue, list[str]]:
+    venue = PolymarketVenue(make_settings(__import__("pathlib").Path(".")))
+    calls: list[str] = []
+
+    async def fake_get_json(self, url, *, params=None, headers=None):  # type: ignore[no-untyped-def]
+        calls.append(url)
+        if isinstance(tags, Exception):
+            raise tags
+        return tags
+
+    venue.get_json = MethodType(fake_get_json, venue)
+    return venue, calls
+
+
+async def test_polymarket_category_from_event_tags() -> None:
+    venue, calls = _polymarket_with_tags(
+        [{"label": "Politics", "slug": "politics"}, {"label": "China", "slug": "china"}]
+    )
+    market = venue.parse_gamma_market(GAMMA_ROW_NO_CATEGORY)
+    assert market.category == "Other"
+    assert market.fee_info["category_resolved"] is False
+    (market,) = await venue.with_event_categories([market])
+    assert calls == ["https://gamma-api.polymarket.com/events/30828/tags"]
+    assert market.category == "Politics"
+    # The market's own feeSchedule says 0, but the rate is never taken below the category's.
+    assert market.fee_info["taker_rate"] == "0.04"
+    assert market.fee_info["category_resolved"] is True
+
+
+async def test_polymarket_event_tags_are_fetched_once_per_event() -> None:
+    venue, calls = _polymarket_with_tags([{"label": "Crypto", "slug": "crypto"}])
+    first = venue.parse_gamma_market(GAMMA_ROW_NO_CATEGORY)
+    second = venue.parse_gamma_market({**GAMMA_ROW_NO_CATEGORY, "id": "559652"})
+    out = await venue.with_event_categories([first, second])
+    out += await venue.with_event_categories([first])
+    assert len(calls) == 1
+    assert [m.fee_info["taker_rate"] for m in out] == ["0.07", "0.07", "0.07"]
+
+
+async def test_polymarket_failed_tag_lookup_assumes_the_highest_rate() -> None:
+    venue, calls = _polymarket_with_tags(RuntimeError("gamma down"))
+    market = venue.parse_gamma_market(GAMMA_ROW_NO_CATEGORY)
+    (market,) = await venue.with_event_categories([market])
+    assert market.fee_info["taker_rate"] == "0.07"
+    assert market.fee_info["category_lookup"] == "failed"
+    assert market.fee_info["category_resolved"] is False
+    # The failure is remembered briefly, so a second pass does not call Gamma again.
+    await venue.with_event_categories([market])
+    assert len(calls) == 1
+
+
+async def test_polymarket_unmatched_tags_resolve_to_other_at_five_percent() -> None:
+    venue, _ = _polymarket_with_tags([{"label": "Trump", "slug": "trump"}])
+    (market,) = await venue.with_event_categories([venue.parse_gamma_market(GAMMA_ROW_NO_CATEGORY)])
+    assert market.category == "Other"
+    assert market.fee_info["taker_rate"] == "0.05"
+    assert market.fee_info["category_resolved"] is True
+
+
+async def test_polymarket_market_schedule_rate_above_category_wins() -> None:
+    venue, _ = _polymarket_with_tags([{"label": "Politics", "slug": "politics"}])
+    row = {**GAMMA_ROW_NO_CATEGORY, "feeSchedule": {"rate": 0.07, "exponent": 1}}
+    (market,) = await venue.with_event_categories([venue.parse_gamma_market(row)])
+    assert market.fee_info["taker_rate"] == "0.07"
+
+
+async def test_polymarket_get_market_fills_category_of_a_remembered_card() -> None:
+    from mm_agent.domain import MarketRef
+
+    venue, calls = _polymarket_with_tags([{"label": "Sports", "slug": "sports"}])
+    venue._remember(venue.parse_gamma_market(GAMMA_ROW_NO_CATEGORY))
+    market = await venue.get_market(MarketRef(venue=VenueId.POLYMARKET, market_id="559651"))
+    assert market.category == "Sports"
+    assert venue._markets["559651"].category == "Sports"
+    assert len(calls) == 1
+
+
 def test_polymarket_v2_position_ids() -> None:
     venue = PolymarketVenue(make_settings(__import__("pathlib").Path(".")))
     market = venue.parse_gamma_market(

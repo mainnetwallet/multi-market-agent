@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -52,6 +53,9 @@ ZERO = Decimal("0")
 ONE = Decimal("1")
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
+
+EVENT_TAG_TTL_SECONDS = 6 * 3600
+EVENT_TAG_RETRY_SECONDS = 60
 
 CATEGORY_FEE_RATES: dict[str, Decimal] = {
     "crypto": Decimal("0.07"),
@@ -107,6 +111,41 @@ def resolve_category(raw: dict[str, Any], event: dict[str, Any]) -> str:
     return named[0] if named else "Other"
 
 
+def _fee_info(
+    category: str,
+    schedule: dict[str, Any] | None,
+    fees_enabled: Any,
+    *,
+    lookup_failed: bool = False,
+) -> dict[str, Any]:
+    """Fee fields for a market.
+
+    The taker rate is the category's rate from the fee schedule, raised to the market's own
+    ``feeSchedule.rate`` when that is higher. If the category could not be read at all
+    (``lookup_failed``) the highest documented rate is assumed, so a fee is never understated.
+    """
+    rate = CATEGORY_FEE_RATES.get(category.lower(), CATEGORY_FEE_RATES["other"])
+    if lookup_failed:
+        rate = max(CATEGORY_FEE_RATES.values())
+    schedule_rate = (schedule or {}).get("rate")
+    if schedule_rate is not None:
+        try:
+            rate = max(rate, Decimal(str(schedule_rate)))
+        except Exception:
+            rate = max(rate, max(CATEGORY_FEE_RATES.values()))
+    info: dict[str, Any] = {
+        "taker_rate": str(rate),
+        "maker_rate": "0",
+        "category": category,
+        "source": "polymarket category fee schedule 2026-10-30",
+        "fees_enabled": fees_enabled,
+        "fee_schedule": schedule,
+    }
+    if lookup_failed:
+        info["category_lookup"] = "failed"
+    return info
+
+
 def _handle_summary(handle: Any) -> dict[str, Any]:
     """Reduce a SDK transaction handle to the few fields the operator needs."""
 
@@ -153,6 +192,8 @@ class PolymarketVenue(HttpVenue):
         self._markets: dict[str, Market] = {}
         self._asset_index: dict[str, tuple[str, Outcome]] = {}
         self._condition_index: dict[str, str] = {}
+        self._event_tag_cache: dict[str, tuple[float, list[Any] | None]] = {}
+        self._tag_gate = asyncio.Semaphore(4)
         self.test_orders = False
         self._test_error: str | None = None
 
@@ -173,12 +214,14 @@ class PolymarketVenue(HttpVenue):
         data = await self.get_json(GAMMA + "/markets", params=params)
         if not isinstance(data, list):
             raise VenueUnavailableError("Polymarket Gamma returned a non-list markets payload")
-        markets: list[Market] = []
+        parsed: list[Market] = []
         for raw in data:
             try:
-                market = self.parse_gamma_market(raw)
+                parsed.append(self.parse_gamma_market(raw))
             except Exception:
                 continue
+        markets: list[Market] = []
+        for market in await self.with_event_categories(parsed):
             if query.q and query.q.lower() not in market.title.lower():
                 continue
             self._remember(market)
@@ -284,14 +327,10 @@ class PolymarketVenue(HttpVenue):
         category = resolve_category(raw, event)
         tick_raw = raw.get("orderPriceMinTickSize") or raw.get("minimumTickSize") or "0.01"
         tick = Decimal(str(tick_raw))
-        fee_rate = CATEGORY_FEE_RATES.get(category.lower(), CATEGORY_FEE_RATES["other"])
-        fee_info = {
-            "taker_rate": str(fee_rate),
-            "maker_rate": "0",
-            "category": category,
-            "source": "polymarket category fee schedule 2026-10-30",
-            "fees_enabled": raw.get("feesEnabled"),
-        }
+        schedule = raw.get("feeSchedule") if isinstance(raw.get("feeSchedule"), dict) else None
+        fee_info = _fee_info(category, schedule, raw.get("feesEnabled"))
+        # Gamma often sends no category at all; get_market/list_markets then read the event's tags.
+        fee_info["category_resolved"] = category != "Other"
         outcomes = (
             OutcomeInfo(outcome=Outcome.YES, native_id=asset_ids[0], label=labels[0]),
             OutcomeInfo(outcome=Outcome.NO, native_id=asset_ids[1], label=labels[1]),
@@ -332,11 +371,59 @@ class PolymarketVenue(HttpVenue):
         for info in market.outcomes:
             self._asset_index[info.native_id] = (market.native_id, info.outcome)
 
+    async def _event_tags(self, event_id: str) -> list[Any] | None:
+        """Tags of an event from ``GET /events/{id}/tags``; None when the lookup failed.
+
+        Tags rarely change, so a good answer is kept for hours; a failure is only
+        remembered briefly so the next scan tries again without hammering Gamma.
+        """
+        cached = self._event_tag_cache.get(event_id)
+        now = time.monotonic()
+        if cached is not None and cached[0] > now:
+            return cached[1]
+        try:
+            async with self._tag_gate:
+                data = await self.get_json(GAMMA + f"/events/{event_id}/tags")
+            tags = data if isinstance(data, list) else None
+        except Exception:
+            tags = None
+        ttl = EVENT_TAG_TTL_SECONDS if tags is not None else EVENT_TAG_RETRY_SECONDS
+        self._event_tag_cache[event_id] = (now + ttl, tags)
+        return tags
+
+    async def with_event_categories(self, markets: Sequence[Market]) -> list[Market]:
+        """Fill in the fee category of markets whose Gamma row carried none, from their event's tags."""
+        pending = {m.event_id for m in markets if m.event_id and not m.fee_info.get("category_resolved")}
+        if not pending:
+            return list(markets)
+        await asyncio.gather(*(self._event_tags(str(event_id)) for event_id in pending))
+        out: list[Market] = []
+        for market in markets:
+            if not market.event_id or market.fee_info.get("category_resolved"):
+                out.append(market)
+                continue
+            tags = await self._event_tags(market.event_id)
+            schedule = market.fee_info.get("fee_schedule")
+            enabled = market.fee_info.get("fees_enabled")
+            if tags is None:
+                info = _fee_info(market.category, schedule, enabled, lookup_failed=True)
+                info["category_resolved"] = False
+                out.append(market.model_copy(update={"fee_info": info}))
+                continue
+            category = resolve_category({}, {"tags": tags})
+            info = _fee_info(category, schedule, enabled)
+            info["category_resolved"] = True
+            out.append(market.model_copy(update={"category": category, "fee_info": info}))
+        return out
+
     async def get_market(self, ref: MarketRef) -> Market:
-        if ref.market_id in self._markets:
-            return self._markets[ref.market_id]
-        data = await self.get_json(GAMMA + f"/markets/{ref.market_id}")
-        market = self.parse_gamma_market(data)
+        market = self._markets.get(ref.market_id)
+        if market is None:
+            data = await self.get_json(GAMMA + f"/markets/{ref.market_id}")
+            market = self.parse_gamma_market(data)
+        # A market remembered from a browse card may still lack its category; fill it in.
+        if market.event_id and not market.fee_info.get("category_resolved"):
+            market = (await self.with_event_categories([market]))[0]
         self._remember(market)
         return market
 
