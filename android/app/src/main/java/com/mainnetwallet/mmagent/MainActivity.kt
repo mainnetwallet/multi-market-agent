@@ -305,7 +305,11 @@ class MainActivity : FragmentActivity() {
                                 Tab.CHAT -> ChatScreen(
                                     chat = chatState,
                                     onSend = { appViewModel.sendChat(it) },
-                                    onClear = { appViewModel.clearChat() },
+                                    onStop = { appViewModel.stopChat() },
+                                    onNewChat = { appViewModel.newChat() },
+                                    onOpenChat = { appViewModel.openChat(it) },
+                                    onRenameChat = { id, title -> appViewModel.renameChat(id, title) },
+                                    onDeleteChat = { appViewModel.deleteChat(it) },
                                 )
 
                                 Tab.PORTFOLIO -> PortfolioScreen(

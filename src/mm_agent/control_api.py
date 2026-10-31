@@ -83,6 +83,9 @@ class RuleBody(BaseModel):
     trigger_at: datetime | None = None
 
 
+_CHAT_TASKS: set[asyncio.Task[Any]] = set()
+
+
 class ChatBody(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
@@ -1006,21 +1009,48 @@ def create_app(
         async def event_stream() -> Any:
             yield 'event: status\ndata: {"state":"working"}\n\n'
 
-            async def run() -> dict[str, Any]:
-                return await chat.handle(message, actor=f"web:{user}", source="web_chat")
+            queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+            stop = {"now": False}
 
-            task = asyncio.create_task(run())
-            while not task.done():
-                try:
-                    await asyncio.wait_for(asyncio.shield(task), timeout=10)
-                except TimeoutError:
-                    yield "event: ping\ndata: {}\n\n"
+            async def on_event(kind: str, payload: dict[str, Any]) -> None:
+                queue.put_nowait((kind, payload))
+
+            task = asyncio.create_task(
+                chat.handle(
+                    message,
+                    actor=f"web:{user}",
+                    source="web_chat",
+                    on_event=on_event,
+                    should_stop=lambda: stop["now"],
+                )
+            )
+            # Keep a reference: if the app disconnects, the task still ends cleanly.
+            _CHAT_TASKS.add(task)
+            task.add_done_callback(_CHAT_TASKS.discard)
             try:
-                result = task.result()
-            except Exception as exc:
-                result = {"reply": f"Chat failed: {type(exc).__name__}", "data": {}}
-            yield "event: message\ndata: " + json.dumps(redact(result), default=str) + "\n\n"
-            yield "event: done\ndata: {}\n\n"
+                while True:
+                    if task.done() and queue.empty():
+                        break
+                    getter = asyncio.ensure_future(queue.get())
+                    await asyncio.wait({getter, task}, timeout=10, return_when=asyncio.FIRST_COMPLETED)
+                    if getter.done():
+                        kind, payload = getter.result()
+                        yield f"event: {kind}\ndata: " + json.dumps(redact(payload), default=str) + "\n\n"
+                    else:
+                        getter.cancel()
+                        if not task.done():
+                            yield "event: ping\ndata: {}\n\n"
+                try:
+                    result = task.result()
+                except Exception as exc:
+                    result = {"reply": f"Chat failed: {type(exc).__name__}", "data": {}}
+                yield "event: message\ndata: " + json.dumps(redact(result), default=str) + "\n\n"
+                yield "event: done\ndata: {}\n\n"
+            finally:
+                # The app pressed Stop (or lost the connection). Never cancel the task: a trade
+                # that already started must finish. It just may not start anything new.
+                if not task.done():
+                    stop["now"] = True
 
         return StreamingResponse(
             event_stream(),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -26,6 +27,10 @@ from .util import fmt_dhaka, redact
 BENGALI_RE = re.compile(r"[\u0980-\u09FF]")
 
 
+ChatEvent = Callable[[str, dict[str, Any]], Awaitable[None]]
+StopCheck = Callable[[], bool]
+
+
 class ChatError(Exception):
     def __init__(self, message: str, *, options: list[str] | None = None) -> None:
         super().__init__(message)
@@ -40,7 +45,15 @@ class ChatService:
         self.llm = LLMClient(settings)
 
     # ----------------------------------------------------------------- public
-    async def handle(self, text: str, *, actor: str, source: str = "web_chat") -> dict[str, Any]:
+    async def handle(
+        self,
+        text: str,
+        *,
+        actor: str,
+        source: str = "web_chat",
+        on_event: ChatEvent | None = None,
+        should_stop: StopCheck | None = None,
+    ) -> dict[str, Any]:
         text = text.strip()
         if not text:
             return {"reply": "Send /help for commands.", "data": {}}
@@ -63,7 +76,7 @@ class ChatService:
                     lang,
                     error=True,
                 )
-        return await self._llm_chat(text, actor=actor, source=source)
+        return await self._llm_chat(text, actor=actor, source=source, on_event=on_event, should_stop=should_stop)
 
     @staticmethod
     def _language(text: str) -> str:
@@ -140,8 +153,6 @@ class ChatService:
         parts = text.split(maxsplit=1)
         command = parts[0].lower()
         rest = parts[1].strip() if len(parts) > 1 else ""
-        from collections.abc import Awaitable, Callable
-
         handlers: dict[str, Callable[..., Awaitable[dict[str, Any]]]] = {
             "/help": self._cmd_help,
             "/status": self._cmd_status,
@@ -593,7 +604,15 @@ class ChatService:
             f"Current venue={status['active_venue']} mode={status['badge']} paused={status['paused']}."
         )
 
-    async def _llm_chat(self, text: str, *, actor: str, source: str) -> dict[str, Any]:
+    async def _llm_chat(
+        self,
+        text: str,
+        *,
+        actor: str,
+        source: str,
+        on_event: ChatEvent | None = None,
+        should_stop: StopCheck | None = None,
+    ) -> dict[str, Any]:
         if not self.llm.enabled:
             return {
                 "reply": "The LLM assistant is not configured. Slash commands still work; send /help.",
@@ -605,9 +624,21 @@ class ChatService:
         ]
         tools = self._tool_specs()
         last_data: dict[str, Any] = {}
+
+        async def delta(piece: str) -> None:
+            if on_event is not None:
+                await on_event("delta", {"text": piece})
+
         for _ in range(4):
+            # Stop is checked between steps only: a tool that already started always finishes,
+            # and no new tool (trade, cancel, pause) starts once the operator pressed Stop.
+            if should_stop is not None and should_stop():
+                return {"reply": "Stopped.", "data": {**last_data, "stopped": True}}
             try:
-                reply = await self.llm.chat(messages, tools=tools)
+                if on_event is not None:
+                    reply = await self.llm.chat(messages, tools=tools, on_delta=delta)
+                else:
+                    reply = await self.llm.chat(messages, tools=tools)
             except LLMUnavailable as exc:
                 return {
                     "reply": f"Assistant unavailable: {exc}. Slash commands still work.",
@@ -624,14 +655,24 @@ class ChatService:
                 ]
                 messages.append({"role": "assistant", "content": reply.content or None, "tool_calls": calls})
                 for call in reply.tool_calls:
+                    if should_stop is not None and should_stop():
+                        return {"reply": "Stopped.", "data": {**last_data, "stopped": True}}
                     try:
                         args = json.loads(call["arguments"] or "{}")
                     except json.JSONDecodeError:
                         args = {}
+                    if on_event is not None:
+                        await on_event("tool", {"id": call["id"], "name": call["name"], "state": "running"})
                     try:
                         result = await self._execute_tool(call["name"], args, actor=actor, source=source)
                     except Exception as exc:
                         result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+                    if on_event is not None:
+                        failed = isinstance(result, dict) and (result.get("ok") is False or "error" in result)
+                        await on_event(
+                            "tool",
+                            {"id": call["id"], "name": call["name"], "state": "error" if failed else "done"},
+                        )
                     last_data = result
                     messages.append(
                         {

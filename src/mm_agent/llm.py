@@ -7,6 +7,7 @@ never receives API keys, auth headers, or raw venue responses.
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,6 +48,7 @@ class LLMClient:
         *,
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.1,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMReply:
         if not self.enabled:
             raise LLMUnavailable("LLM_BASE_URL and LLM_MODEL are not configured")
@@ -62,6 +64,11 @@ class LLMClient:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        if on_delta is not None:
+            streamed = await self._chat_stream(url, payload, headers, on_delta)
+            if streamed is not None:
+                return streamed
+            # The provider refused streaming before sending anything: use the plain call.
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(url, json=payload, headers=headers)
         if response.status_code >= 400:
@@ -82,6 +89,52 @@ class LLMClient:
                 }
             )
         return LLMReply(content=str(choice.get("content") or ""), tool_calls=tuple(calls), raw=data)
+
+    async def _chat_stream(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        on_delta: Callable[[str], Awaitable[None]],
+    ) -> LLMReply | None:
+        """OpenAI-style SSE completion. Returns None if the provider rejects `stream` up front."""
+        content: list[str] = []
+        calls: dict[int, dict[str, str]] = {}
+        async with (
+            httpx.AsyncClient(timeout=self.timeout) as client,
+            client.stream("POST", url, json={**payload, "stream": True}, headers=headers) as response,
+        ):
+            if response.status_code in (400, 404, 405, 422):
+                return None
+            if response.status_code >= 400:
+                body = (await response.aread()).decode("utf-8", "replace")
+                raise LLMUnavailable(f"LLM HTTP {response.status_code}: {body[:200]}")
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    delta = json.loads(data)["choices"][0].get("delta") or {}
+                except (ValueError, KeyError, IndexError, TypeError):
+                    continue
+                text = delta.get("content")
+                if text:
+                    content.append(str(text))
+                    await on_delta(str(text))
+                for call in delta.get("tool_calls") or []:
+                    slot = calls.setdefault(int(call.get("index", 0)), {"id": "", "name": "", "arguments": ""})
+                    function = call.get("function") or {}
+                    slot["id"] = call.get("id") or slot["id"]
+                    slot["name"] = function.get("name") or slot["name"]
+                    slot["arguments"] += function.get("arguments") or ""
+        tool_calls = tuple(
+            {"id": c["id"], "name": c["name"], "arguments": c["arguments"] or "{}"}
+            for _, c in sorted(calls.items())
+            if c["name"]
+        )
+        return LLMReply(content="".join(content), tool_calls=tool_calls)
 
 
 class WebSearchClient:
