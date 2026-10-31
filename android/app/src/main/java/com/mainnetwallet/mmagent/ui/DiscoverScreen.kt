@@ -52,34 +52,6 @@ import org.json.JSONObject
 /** Venues that have a browse feed on the server (`/v1/discover`). */
 val BROWSABLE_VENUES: Set<String> = setOf("polymarket", "kalshi", "limitless")
 
-// Only the sort modes are fixed. Polymarket's categories (Politics, Sports, Culture, ...) are whatever
-// Gamma's tag list says, fetched from the server; this is what shows if that request fails.
-private val POLYMARKET_TABS: List<Pair<String, String>> = listOf(
-    "trending" to "Trending",
-    "breaking" to "Breaking",
-    "new" to "New",
-)
-
-// Kalshi and Limitless categories also come from each venue's own API through the server; these are only
-// the sort modes, shown if that request fails.
-private val KALSHI_TABS: List<Pair<String, String>> = listOf(
-    "trending" to "Trending",
-    "new" to "New",
-)
-
-private val LIMITLESS_TABS: List<Pair<String, String>> = listOf(
-    "trending" to "Trending",
-    "new" to "New",
-    "liquid" to "Liquid",
-)
-
-/** Offline fallback only: the server owns the tabs and `/v1/discover/tabs?venue=` is what the screen shows. */
-private fun tabsFor(venue: String): List<Pair<String, String>> = when (venue) {
-    "kalshi" -> KALSHI_TABS
-    "limitless" -> LIMITLESS_TABS
-    else -> POLYMARKET_TABS
-}
-
 /** org.json turns a JSON null into the string "null"; the server sends null for missing values. */
 private fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(key)
 
@@ -128,9 +100,12 @@ fun DiscoverScreen(
     fetchTabs: suspend (venue: String) -> JSONObject,
     onTrade: (marketId: String, title: String, outcome: String) -> Unit,
 ) {
-    var tabs by remember { mutableStateOf(tabsFor(venue)) }
-    var tabsNote by remember { mutableStateOf("") }
-    var tab by rememberSaveable { mutableStateOf("trending") }
+    // No tab is built into the app: every tab (sort modes and categories) is whatever the server returns.
+    var tabs by remember(venue) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var tabsNote by remember(venue) { mutableStateOf("") }
+    var tabsLoading by remember(venue) { mutableStateOf(true) }
+    var tabsReloadKey by remember { mutableIntStateOf(0) }
+    var tab by rememberSaveable(venue) { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }
     var items by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -141,20 +116,27 @@ fun DiscoverScreen(
     var reloadKey by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
 
-    // The tab list comes from the server (for Polymarket, from Gamma's own category tags).
-    LaunchedEffect(venue) {
+    // The tab list comes from the server (for Polymarket, from the tags of live Gamma events).
+    LaunchedEffect(venue, tabsReloadKey) {
+        tabsLoading = true
         try {
             val body = fetchTabs(venue)
             val loaded = ApiClient.arrayOf(body, "tabs").objects()
                 .map { it.optString("id") to it.optString("label") }
                 .filter { it.first.isNotBlank() && it.second.isNotBlank() }
-            if (loaded.isNotEmpty()) tabs = loaded
             tabsNote = body.text("note")
-            if (tabs.none { it.first == tab }) tab = "trending"
+            if (loaded.isEmpty()) {
+                if (tabsNote.isBlank()) tabsNote = "The server returned no categories."
+            } else {
+                tabs = loaded
+                if (tabs.none { it.first == tab }) tab = tabs.first().first
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             tabsNote = e.message ?: "Could not load categories."
+        } finally {
+            tabsLoading = false
         }
     }
 
@@ -192,6 +174,15 @@ fun DiscoverScreen(
     LaunchedEffect(tab, query, reloadKey) {
         generation += 1
         val gen = generation
+        if (tab.isBlank()) {
+            // No tab yet: nothing to show until the server has said which tabs exist.
+            items = emptyList()
+            nextOffset = null
+            note = ""
+            error = null
+            loading = false
+            return@LaunchedEffect
+        }
         val cached = DiscoverCache.get(DiscoverCache.key(venue, tab, query.trim()))
         error = null
         if (cached != null) {
@@ -241,7 +232,7 @@ fun DiscoverScreen(
         Box(
             Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
         )
-        if (tabsNote.isNotBlank()) {
+        if (tabsNote.isNotBlank() && tabs.isNotEmpty()) {
             Text(
                 tabsNote,
                 style = MaterialTheme.typography.bodySmall,
@@ -260,6 +251,21 @@ fun DiscoverScreen(
             }
             item {
                 when {
+                    tab.isBlank() -> if (tabsLoading) {
+                        Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    } else {
+                        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                tabsNote.ifBlank { "Could not load categories." },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Palette.Alert,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            LinkText("Retry", onClick = { tabsReloadKey += 1 })
+                        }
+                    }
                     error != null -> Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(error ?: "", style = MaterialTheme.typography.bodyMedium, color = Palette.Alert)
                         Spacer(Modifier.height(8.dp))
