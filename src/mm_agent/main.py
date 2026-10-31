@@ -16,13 +16,14 @@ from .books import BookCache, UnitGuard
 from .chat import ChatService
 from .config import Settings, get_settings
 from .control_api import create_app
+from .domain import VenueId
 from .events import EventBus
 from .rules import RulesEngine
 from .scanner import Scanner
 from .store import Store
 from .telegram import TelegramBot
 from .util import configure_logging, get_logger
-from .venues.base import MarketQuery
+from .venues.base import MarketQuery, Venue
 from .venues.registry import VenueRegistry
 
 logger = get_logger(__name__)
@@ -62,13 +63,18 @@ def _run_migrations(settings: Settings) -> None:
     command.upgrade(cfg, "head")
 
 
-def build_runtime(settings: Settings, *, bind_database: bool = True) -> Runtime:
+def build_runtime(
+    settings: Settings,
+    *,
+    bind_database: bool = True,
+    test_adapters: dict[VenueId, Venue] | None = None,
+) -> Runtime:
     settings.ensure_data_dir()
     store = Store(settings.database_url)
     if bind_database:
         _run_migrations(settings)
     bus = EventBus()
-    registry = VenueRegistry(settings, store, bus)
+    registry = VenueRegistry(settings, store, bus, test_adapters=test_adapters)
     books = BookCache(settings.book_fresh_seconds)
     guard = UnitGuard()
     scanner = Scanner(settings, store, registry, bus)

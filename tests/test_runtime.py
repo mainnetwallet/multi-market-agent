@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from mm_agent.config import Settings
 from mm_agent.domain import VenueId
 from mm_agent.main import build_runtime
+from tests.fake_venue import FakeVenue
 
 
 def test_full_runtime_serves_ui_and_stops(tmp_path: Path) -> None:
@@ -21,7 +22,7 @@ def test_full_runtime_serves_ui_and_stops(tmp_path: Path) -> None:
         llm_base_url="",
         llm_model="",
     )
-    runtime = build_runtime(settings)
+    runtime = build_runtime(settings, test_adapters={VenueId.FAKE: FakeVenue(settings)})
     with TestClient(runtime.app) as client:
         assert client.get("/health").status_code == 200
         page = client.get("/")

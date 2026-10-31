@@ -83,7 +83,6 @@ class Settings(BaseSettings):
     bankroll_polymarket: Decimal | None = None
     bankroll_kalshi: Decimal | None = None
     bankroll_limitless: Decimal | None = None
-    bankroll_fake: Decimal | None = None
     max_trade_usd: Decimal = HARD_MAX_TRADE_USD
     max_event_pct: Decimal = HARD_MAX_EVENT_PCT
     max_total_exposure_pct: Decimal = HARD_MAX_TOTAL_EXPOSURE_PCT
@@ -200,7 +199,6 @@ class Settings(BaseSettings):
         "bankroll_polymarket",
         "bankroll_kalshi",
         "bankroll_limitless",
-        "bankroll_fake",
         mode="before",
     )
     @classmethod
@@ -215,7 +213,6 @@ class Settings(BaseSettings):
         "bankroll_polymarket",
         "bankroll_kalshi",
         "bankroll_limitless",
-        "bankroll_fake",
     )
     @classmethod
     def _bankroll_positive(cls, v: Decimal | None) -> Decimal | None:
@@ -246,7 +243,6 @@ class Settings(BaseSettings):
             VenueId.POLYMARKET: self.bankroll_polymarket,
             VenueId.KALSHI: self.bankroll_kalshi,
             VenueId.LIMITLESS: self.bankroll_limitless,
-            VenueId.FAKE: self.bankroll_fake,
         }.get(venue) or self.bankroll_usd
 
     @property

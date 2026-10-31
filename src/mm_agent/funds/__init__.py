@@ -138,7 +138,6 @@ class FundsService:
             )
         return DepositInfo(
             supported=False,
-            official_url="https://example.invalid/fake",
             reason="This venue has no deposit API.",
         )
 

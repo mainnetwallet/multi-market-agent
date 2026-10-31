@@ -12,7 +12,6 @@ from ..events import EventBus
 from ..store import Store
 from ..util import get_logger
 from .base import Venue
-from .fake import FakeVenue
 from .kalshi import KalshiVenue
 from .limitless import LimitlessVenue
 from .polymarket import PolymarketVenue
@@ -33,7 +32,17 @@ class VenueStatus:
 
 
 class VenueRegistry:
-    def __init__(self, settings: Settings, store: Store, bus: EventBus) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        store: Store,
+        bus: EventBus,
+        *,
+        test_adapters: dict[VenueId, Venue] | None = None,
+    ) -> None:
+        """Production has exactly three venues, all real. ``test_adapters`` exists
+        only so the test suite can plug in an in-memory venue; the app never passes it."""
+
         self.settings = settings
         self.store = store
         self.bus = bus
@@ -41,8 +50,12 @@ class VenueRegistry:
             VenueId.POLYMARKET: PolymarketVenue(settings),
             VenueId.KALSHI: KalshiVenue(settings),
             VenueId.LIMITLESS: LimitlessVenue(settings),
-            VenueId.FAKE: FakeVenue(settings),
         }
+        self._test_venues: frozenset[VenueId] = frozenset(test_adapters or {})
+        self.adapters.update(test_adapters or {})
+        unknown = [v.value for v in settings.enabled_venues if v not in self.adapters]
+        if unknown:
+            raise ValueError(f"unknown venue(s) in ENABLED_VENUES: {', '.join(unknown)}")
         self.doctors: dict[VenueId, DoctorReport] = {}
         self._ready: dict[VenueId, bool] = {}
         self._reasons: dict[VenueId, str] = {}
@@ -77,7 +90,7 @@ class VenueRegistry:
         return self.adapters[self.active]
 
     def is_ready(self, venue: VenueId) -> bool:
-        if venue is VenueId.FAKE:
+        if venue in self._test_venues:
             return True
         return bool(self._ready.get(venue))
 
@@ -87,7 +100,7 @@ class VenueRegistry:
     def reason(self, venue: VenueId) -> str:
         if not self._ready.get(venue):
             return self._reasons.get(venue, "doctor not run")
-        if venue is VenueId.FAKE:
+        if venue in self._test_venues:
             return ""
         if not self.settings.credentials_present(venue):
             return "credentials absent"
@@ -156,7 +169,7 @@ class VenueRegistry:
         auth_ok = any(c.status is DoctorStatus.OK for c in auth_checks)
         ready = public_ok
         reason = report.reason
-        if venue is not VenueId.FAKE and not auth_ok:
+        if venue not in self._test_venues and not auth_ok:
             ready = False
             reason = "authenticated doctor checks must pass before trading"
         if report.status is DoctorStatus.UNAVAILABLE:
@@ -196,7 +209,7 @@ class VenueRegistry:
             )
 
     async def switch(self, venue: VenueId, *, actor: str) -> dict[str, Any]:
-        if venue not in self.enabled() and venue is not VenueId.FAKE:
+        if venue not in self.enabled():
             raise ValueError(f"venue {venue.value} is not enabled")
         if not self.is_ready(venue):
             raise ValueError(f"venue {venue.value} is not ready: {self.reason(venue)}")

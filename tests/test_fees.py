@@ -3,9 +3,9 @@ from __future__ import annotations
 from decimal import Decimal
 
 from mm_agent.domain import Market, MarketStatus, Outcome, OutcomeInfo, Side, VenueId
-from mm_agent.venues.fake import FakeVenue
 from mm_agent.venues.kalshi import KalshiVenue
 from tests.conftest import make_settings
+from tests.fake_venue import FakeVenue
 
 
 def market() -> Market:

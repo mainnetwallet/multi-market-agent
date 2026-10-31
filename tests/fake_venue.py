@@ -9,8 +9,8 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
-from ..config import Settings
-from ..domain import (
+from mm_agent.config import Settings
+from mm_agent.domain import (
     Balance,
     BookLevel,
     BookSnapshot,
@@ -37,7 +37,7 @@ from ..domain import (
     quantize_shares,
     utcnow,
 )
-from .base import MarketQuery, Page, Venue
+from mm_agent.venues.base import MarketQuery, Page, Venue
 
 ZERO = Decimal("0")
 ONE = Decimal("1")
@@ -393,7 +393,7 @@ class FakeVenue(Venue):
     async def get_price_history(self, market_id: str, *, interval: str = "1d") -> list[dict[str, Any]]:
         """A short synthetic series so the history route can be exercised."""
 
-        from ..domain import utcnow
+        from mm_agent.domain import utcnow
 
         now = utcnow()
         points: list[dict[str, Any]] = []

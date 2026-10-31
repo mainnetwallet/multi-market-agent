@@ -154,3 +154,26 @@ async def test_limitless_book_derives_no_side() -> None:
     assert no.best_bid == Decimal("0.56")
     assert no.best_ask == Decimal("0.60")
     assert no.asks[0].size == Decimal("2")
+
+
+def test_production_registry_has_no_simulated_venue(tmp_path) -> None:
+    """Every order is real: the app must not be able to enable or switch to a test venue."""
+
+    import pytest
+
+    from mm_agent.events import EventBus
+    from mm_agent.store import Store
+    from mm_agent.venues.registry import VenueRegistry
+    from tests.conftest import make_settings
+
+    settings = make_settings(tmp_path)  # enabled_venues_raw="fake"
+    store = Store(settings.database_url)
+    store.create_all()
+    with pytest.raises(ValueError, match="unknown venue"):
+        VenueRegistry(settings, store, EventBus())
+
+    real = make_settings(tmp_path, enabled_venues_raw="polymarket,kalshi,limitless", active_venue="polymarket")
+    registry = VenueRegistry(real, store, EventBus())
+    assert set(registry.adapters) == {"polymarket", "kalshi", "limitless"}
+    assert registry.is_ready(VenueId.FAKE) is False
+    store.close()
