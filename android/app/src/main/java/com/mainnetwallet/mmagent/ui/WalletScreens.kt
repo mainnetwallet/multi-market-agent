@@ -3,6 +3,7 @@ package com.mainnetwallet.mmagent.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,15 +13,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +42,8 @@ import com.mainnetwallet.mmagent.data.AllowlistEntry
 import com.mainnetwallet.mmagent.data.Format
 import com.mainnetwallet.mmagent.data.WithdrawPreview
 import com.mainnetwallet.mmagent.data.WithdrawStep
+import com.mainnetwallet.mmagent.data.objects
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 
 /**
@@ -182,7 +190,11 @@ fun WalletScreen(
             } else {
                 fundsHistory.forEach { row ->
                     RowCard(
-                        title = "${row.optString("kind")} ${Format.money(row.optString("amount_usd"))}",
+                        title = "${row.optString("kind")} " + if (row.optString("amount_usd").isBlank() && row.optString("amount").isNotBlank()) {
+                            "${row.optString("amount")} ${row.optString("asset")}"
+                        } else {
+                            Format.money(row.optString("amount_usd"))
+                        },
                         subtitle = "${row.optString("venue")} · ${row.optString("status")}",
                         detail = "${row.optString("type")} · fee ${Format.money(row.optString("fee_usd"))}",
                     )
@@ -193,87 +205,198 @@ fun WalletScreen(
     }
 }
 
+/** The chain and token the person picked on the deposit sheet; empty means "the venue's default". */
+data class DepositChoice(val chainId: String = "", val token: String = "")
+
 /**
- * The deposit sheet: where to send money, in the asset and network the venue
- * itself lists. The asset name is never hardcoded.
+ * The deposit sheet. For Polymarket it lists every chain and token the bridge accepts (the server reads them
+ * from the bridge's own supported-assets list) and shows the address for the pair picked; other venues have one
+ * route and show it directly. Nothing about chains or assets is hardcoded here.
  */
 @Composable
 fun DepositScreen(
     venue: String,
+    options: JSONObject?,
     info: JSONObject?,
+    loading: Boolean,
     error: String?,
+    choice: DepositChoice,
+    onChoose: (DepositChoice) -> Unit,
     onCopy: (String) -> Unit,
     onBack: () -> Unit,
 ) {
+    val chains = options?.optJSONArray("chains")?.objects().orEmpty()
+    // The chip the person just tapped wins at once; before any tap, what the server answered for, then its default.
+    val activeChainId = choice.chainId.ifBlank { info?.optString("chain_id").orEmpty() }
+        .ifBlank { options?.optJSONObject("default")?.optString("chain_id").orEmpty() }
+    val activeChain = chains.firstOrNull { it.optString("chain_id") == activeChainId }
+    val tokens = activeChain?.optJSONArray("tokens")?.objects().orEmpty()
+    val activeToken = choice.token.ifBlank { info?.optString("token_address").orEmpty() }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
         SectionHeader("Deposit", venue.uppercase())
         ErrorNote(error)
         Spacer(Modifier.height(10.dp))
 
-        if (info == null || !info.optBoolean("supported")) {
-            val reason = info?.optString("reason").orEmpty()
-            UnsupportedCard(
-                title = "No deposit API",
-                reason = reason.ifBlank { "This venue does not accept deposits through the API." },
-            )
-        } else {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    ValueRow("Network", info.optString("network"))
-                    ValueRow("Asset", info.optString("asset"), emphasise = true)
-                    ValueRow("Minimum", Format.money(info.optString("min_amount")))
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "Send to",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        Format.groupAddress(info.optString("address")),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    ConfirmButton(
-                        "Copy address",
-                        enabled = true,
-                        onClick = { onCopy(info.optString("address")) },
+        if (chains.isNotEmpty()) {
+            Text("Network", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(6.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(chains, key = { it.optString("chain_id") }) { chain ->
+                    val id = chain.optString("chain_id")
+                    ChoiceChip(
+                        label = chain.optString("chain_name"),
+                        selected = id == activeChainId,
+                        onClick = {
+                            // A new network starts on its first token (USDC where the chain has it).
+                            val first = chain.optJSONArray("tokens")?.objects()?.firstOrNull()
+                            onChoose(DepositChoice(id, first?.optString("address").orEmpty()))
+                        },
                     )
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            val warnings = info.optJSONArray("warnings")
-            if (warnings != null && warnings.length() > 0) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Before you send", style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(6.dp))
-                        for (index in 0 until warnings.length()) {
-                            Text(
-                                "• ${warnings.optString(index)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Palette.Alert,
-                            )
-                        }
+            if (tokens.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Text("Asset", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(6.dp))
+                val duplicated = tokens.groupingBy { it.optString("symbol") }.eachCount().filterValues { it > 1 }.keys
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(tokens, key = { it.optString("address") + it.optString("symbol") }) { token ->
+                        val symbol = token.optString("symbol")
+                        val address = token.optString("address")
+                        ChoiceChip(
+                            label = if (symbol in duplicated) "$symbol ${shortMiddle(address)}" else symbol,
+                            selected = address.equals(activeToken, ignoreCase = true),
+                            onClick = { onChoose(DepositChoice(activeChainId, address)) },
+                        )
                     }
                 }
             }
+            Spacer(Modifier.height(14.dp))
+        }
+
+        when {
+            loading -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            info == null || !info.optBoolean("supported") -> {
+                val reason = info?.optString("reason").orEmpty()
+                UnsupportedCard(
+                    title = if (chains.isEmpty()) "No deposit API" else "Not available",
+                    reason = reason.ifBlank { "This venue does not accept deposits through the API." },
+                )
+            }
+            else -> DepositDetails(info, onCopy)
         }
         Spacer(Modifier.height(12.dp))
         ConfirmButton("Back", enabled = true, onClick = onBack)
     }
 }
+
+/** The address card, the three steps and the warnings for the pair the server answered for. */
+@Composable
+private fun DepositDetails(info: JSONObject, onCopy: (String) -> Unit) {
+    val address = info.optString("address")
+    val asset = info.optString("asset")
+    val network = info.optString("network")
+    val tokenAddress = info.optString("token_address")
+    var copied by remember(address) { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(2_000)
+            copied = false
+        }
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                "Send $asset on $network",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(10.dp))
+            ValueRow("Minimum", Format.money(info.optString("min_amount")), emphasise = true)
+            val kind = info.optString("address_type")
+            if (kind.isNotBlank()) ValueRow("Address type", kind.uppercase())
+            if (tokenAddress.isNotBlank()) ValueRow("Token contract", shortMiddle(tokenAddress))
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Send to",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                Format.groupAddress(address),
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+            )
+            Spacer(Modifier.height(12.dp))
+            ConfirmButton(
+                if (copied) "Copied" else "Copy address",
+                enabled = address.isNotBlank(),
+                onClick = {
+                    onCopy(address)
+                    copied = true
+                },
+            )
+        }
+    }
+
+    Spacer(Modifier.height(12.dp))
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("How it works", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            listOf(
+                "1  Send $asset from $network to the address above.",
+                "2  The bridge converts it to pUSD on Polygon.",
+                "3  The balance shows in Wallet after it lands, usually within minutes.",
+            ).forEach { step ->
+                Text(step, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(2.dp))
+            }
+        }
+    }
+
+    val warnings = info.optJSONArray("warnings")
+    if (warnings != null && warnings.length() > 0) {
+        Spacer(Modifier.height(12.dp))
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Before you send", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(6.dp))
+                for (index in 0 until warnings.length()) {
+                    Text(
+                        "• ${warnings.optString(index)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Palette.Alert,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                }
+            }
+        }
+    }
+}
+
+/** "0xA0b8…eB48": enough to tell two contracts apart without filling the row. */
+private fun shortMiddle(value: String): String =
+    if (value.length <= 14) value else value.take(6) + "…" + value.takeLast(4)
 
 @Composable
 private fun WalletCard(

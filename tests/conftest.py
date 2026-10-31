@@ -104,6 +104,7 @@ def researched(harness: Harness) -> str:
 
 
 BRIDGE_ADDRESS = "0x9999888877776666555544443333222211110000"
+BRIDGE_SVM_ADDRESS = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"
 
 
 class _BridgeStub:
@@ -148,7 +149,9 @@ class _BridgeStub:
             return httpx.Response(201, json=body, request=httpx.Request("POST", str(url)))
         if str(url).endswith("/deposit"):
             return httpx.Response(
-                201, json={"address": {"evm": BRIDGE_ADDRESS}}, request=httpx.Request("POST", str(url))
+                201,
+                json={"address": {"evm": BRIDGE_ADDRESS, "svm": BRIDGE_SVM_ADDRESS}},
+                request=httpx.Request("POST", str(url)),
             )
         return httpx.Response(200, json={}, request=httpx.Request("POST", str(url)))
 

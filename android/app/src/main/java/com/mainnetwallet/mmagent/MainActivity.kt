@@ -33,6 +33,7 @@ import com.mainnetwallet.mmagent.ui.AllowlistAddScreen
 import com.mainnetwallet.mmagent.ui.AppScaffold
 import com.mainnetwallet.mmagent.ui.BROWSABLE_VENUES
 import com.mainnetwallet.mmagent.ui.ChatScreen
+import com.mainnetwallet.mmagent.ui.DepositChoice
 import com.mainnetwallet.mmagent.ui.DepositScreen
 import com.mainnetwallet.mmagent.ui.HomeScreen
 import com.mainnetwallet.mmagent.ui.LockedScreen
@@ -119,6 +120,9 @@ class MainActivity : FragmentActivity() {
                 var showVenues by remember { mutableStateOf(false) }
                 var selectedVenue by remember { mutableStateOf("") }
                 var depositInfo by remember { mutableStateOf<org.json.JSONObject?>(null) }
+                var depositOptions by remember { mutableStateOf<org.json.JSONObject?>(null) }
+                var depositChoice by remember { mutableStateOf(DepositChoice()) }
+                var depositLoading by remember { mutableStateOf(false) }
                 var depositError by remember { mutableStateOf<String?>(null) }
                 var locked by remember { mutableStateOf(appLock.isLocked()) }
                 val snackbar = remember { SnackbarHostState() }
@@ -217,8 +221,25 @@ class MainActivity : FragmentActivity() {
 
                             "deposit" -> DepositScreen(
                                 venue = selectedVenue,
+                                options = depositOptions,
                                 info = depositInfo,
+                                loading = depositLoading,
                                 error = depositError,
+                                choice = depositChoice,
+                                onChoose = { picked ->
+                                    depositChoice = picked
+                                    depositLoading = true
+                                    depositError = null
+                                    loadDeposit(api, selectedVenue, picked, withOptions = false) { _, info, error ->
+                                        // A slower answer for an earlier tap must not replace the pair on screen now.
+                                        if (depositChoice == picked) {
+                                            // Keep the last good card on screen if the new pair could not be read.
+                                            if (info != null) depositInfo = info
+                                            depositError = error
+                                            depositLoading = false
+                                        }
+                                    }
+                                },
                                 onCopy = { address -> clipboard.setText(AnnotatedString(address)) },
                                 onBack = { overlay = null },
                             )
@@ -356,11 +377,16 @@ class MainActivity : FragmentActivity() {
                                     onDeposit = { venue ->
                                         selectedVenue = venue
                                         depositInfo = null
+                                        depositOptions = null
+                                        depositChoice = DepositChoice()
                                         depositError = null
+                                        depositLoading = true
                                         overlay = "deposit"
-                                        loadDepositInfo(api, venue) { info, error ->
+                                        loadDeposit(api, venue, DepositChoice(), withOptions = true) { options, info, error ->
+                                            depositOptions = options
                                             depositInfo = info
                                             depositError = error
+                                            depositLoading = false
                                         }
                                     },
                                     onWithdraw = { venue ->
@@ -428,20 +454,37 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    /** Read the venue's own deposit information: chain, asset, address and minimum. */
-    private fun loadDepositInfo(
+    /**
+     * Read the venue's own deposit information: for Polymarket the bridge's full chain and token list
+     * (once, [withOptions]) and the address for the chain and token picked. With nothing picked the server
+     * chooses its default (Polygon USDC), never just the first asset the bridge happens to list.
+     */
+    private fun loadDeposit(
         api: ApiClient,
         venue: String,
-        onLoaded: (org.json.JSONObject?, String?) -> Unit,
+        choice: DepositChoice,
+        withOptions: Boolean,
+        onLoaded: (org.json.JSONObject?, org.json.JSONObject?, String?) -> Unit,
     ) {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            val enc = { value: String -> java.net.URLEncoder.encode(value, "UTF-8") }
+            val options = if (withOptions) {
+                runCatching { api.get("/v1/funds/${enc(venue)}/deposit/options") }.getOrNull()
+            } else {
+                null
+            }
+            // First load: start on the chain and token the server marks as its default.
+            val chain = choice.chainId.ifBlank { options?.optJSONObject("default")?.optString("chain_id").orEmpty() }
+            val token = choice.token.ifBlank { options?.optJSONObject("default")?.optString("token").orEmpty() }
+            val query = buildList {
+                if (chain.isNotBlank()) add("network=" + enc(chain))
+                if (token.isNotBlank()) add("token=" + enc(token))
+            }.joinToString("&").let { if (it.isEmpty()) "" else "?$it" }
             try {
-                val response = api.get("/v1/funds/$venue/deposit")
-                onLoaded(response, null)
-            } catch (e: ApiClient.ApiException) {
-                onLoaded(null, e.message)
+                val info = api.get("/v1/funds/${enc(venue)}/deposit$query")
+                onLoaded(options, info, null)
             } catch (e: Exception) {
-                onLoaded(null, e.message)
+                onLoaded(options, null, e.message)
             }
         }
     }

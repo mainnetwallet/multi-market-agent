@@ -55,6 +55,10 @@ class DepositInfo:
     warnings: tuple[str, ...] = ()
     official_url: str = ""
     reason: str | None = None
+    chain_id: str | None = None
+    address_type: str | None = None
+    token_name: str | None = None
+    token_address: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +71,10 @@ class DepositInfo:
             "warnings": list(self.warnings),
             "official_url": self.official_url,
             "reason": self.reason,
+            "chain_id": self.chain_id,
+            "address_type": self.address_type,
+            "token_name": self.token_name,
+            "token_address": self.token_address,
         }
 
 
@@ -90,7 +98,7 @@ class FundsService:
         self.settings = settings
         self.store = store
         self._client: httpx.AsyncClient | None = None
-        self._bridge_addresses: dict[str, str] = {}
+        self._bridge_addresses: dict[str, dict[str, str]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -121,12 +129,13 @@ class FundsService:
         *,
         network: str | None = None,
         asset: str | None = None,
+        token: str | None = None,
     ) -> DepositInfo:
         """Where to send money to fund this venue. Never hardcodes an asset name."""
 
         self.require_enabled()
         if venue is VenueId.POLYMARKET:
-            return await self._polymarket_deposit(network=network, asset=asset)
+            return await self._polymarket_deposit(network=network, asset=asset, token=token)
         if venue is VenueId.LIMITLESS:
             return self._limitless_deposit()
         if venue is VenueId.KALSHI:
@@ -141,11 +150,11 @@ class FundsService:
             reason="This venue has no deposit API.",
         )
 
-    async def _bridge_address(self, wallet: str) -> str | None:
-        """The wallet's bridge address, asked for once and remembered.
+    async def _bridge_addresses_for(self, wallet: str) -> dict[str, str]:
+        """The wallet's bridge addresses by type (evm, svm, btc, tron), asked for once and remembered.
 
-        The bridge creates an address per request, so asking on every refresh
-        would leave a trail of unused addresses behind.
+        `POST /deposit` returns one address per address type. The bridge creates them per
+        request, so asking on every refresh would leave a trail of unused addresses behind.
         """
         if wallet in self._bridge_addresses:
             return self._bridge_addresses[wallet]
@@ -153,14 +162,122 @@ class FundsService:
         client = await self.client()
         response = await client.post(f"{base}/deposit", json={"address": wallet})
         response.raise_for_status()
-        addresses = response.json().get("address") or {}
-        bridge_address = addresses.get("evm")
-        if bridge_address:
-            self._bridge_addresses[wallet] = str(bridge_address)
-        return bridge_address
+        raw = response.json().get("address") or {}
+        addresses = {str(kind): str(value) for kind, value in raw.items() if value}
+        if addresses:
+            self._bridge_addresses[wallet] = addresses
+        return addresses
 
-    async def _polymarket_deposit(self, *, network: str | None, asset: str | None) -> DepositInfo:
+    @staticmethod
+    def _address_type(chain_id: str, chain_name: str) -> str:
+        """Which bridge address a chain's deposits go to: evm, svm, btc or tron."""
+        name = chain_name.lower()
+        if "solana" in name or chain_id == "1151111081099710":
+            return "svm"
+        if "bitcoin" in name or chain_id == "8253038319370":
+            return "btc"
+        if "tron" in name or chain_id == "728126428":
+            return "tron"
+        return "evm"
+
+    _CHAIN_ORDER = (
+        "polygon",
+        "ethereum",
+        "base",
+        "arbitrum",
+        "optimism",
+        "bnb smart chain",
+        "solana",
+        "bitcoin",
+        "tron",
+    )
+    _TOKEN_ORDER = ("USDC", "USDC.E", "USDT")
+
+    async def _polymarket_assets(self) -> list[dict[str, Any]]:
         base = self.settings.funds_polymarket_bridge_url.rstrip("/")
+        client = await self.client()
+        response = await client.get(f"{base}/supported-assets")
+        response.raise_for_status()
+        return list(response.json().get("supportedAssets") or [])
+
+    @classmethod
+    def _group_assets(cls, assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The bridge's flat asset list as chains with their tokens, in a stable, useful order."""
+        chains: dict[str, dict[str, Any]] = {}
+        for entry in assets:
+            chain_id = str(entry.get("chainId") or "")
+            chain_name = str(entry.get("chainName") or chain_id)
+            token = entry.get("token") or {}
+            symbol = str(token.get("symbol") or "")
+            if not chain_id or not symbol:
+                continue
+            chain = chains.setdefault(
+                chain_id,
+                {
+                    "chain_id": chain_id,
+                    "chain_name": chain_name,
+                    "address_type": cls._address_type(chain_id, chain_name),
+                    "min_usd": None,
+                    "tokens": [],
+                },
+            )
+            min_usd = entry.get("minCheckoutUsd")
+            chain["tokens"].append(
+                {
+                    "symbol": symbol,
+                    "name": str(token.get("name") or symbol),
+                    "address": str(token.get("address") or ""),
+                    "decimals": token.get("decimals"),
+                    "min_usd": None if min_usd is None else str(min_usd),
+                }
+            )
+            if min_usd is not None and (chain["min_usd"] is None or float(min_usd) < float(chain["min_usd"])):
+                chain["min_usd"] = str(min_usd)
+
+        def chain_rank(chain: dict[str, Any]) -> tuple[int, str]:
+            name = str(chain["chain_name"]).lower()
+            rank = cls._CHAIN_ORDER.index(name) if name in cls._CHAIN_ORDER else len(cls._CHAIN_ORDER)
+            return rank, name
+
+        def token_rank(token: dict[str, Any]) -> tuple[int, str]:
+            symbol = str(token["symbol"]).upper()
+            rank = cls._TOKEN_ORDER.index(symbol) if symbol in cls._TOKEN_ORDER else len(cls._TOKEN_ORDER)
+            return rank, symbol
+
+        ordered = sorted(chains.values(), key=chain_rank)
+        for chain in ordered:
+            chain["tokens"].sort(key=token_rank)
+        return ordered
+
+    async def deposit_options(self, venue: VenueId) -> dict[str, Any]:
+        """Every chain and token the venue accepts, as the venue's own list says. Polymarket only."""
+        self.require_enabled()
+        if venue is not VenueId.POLYMARKET:
+            return {"supported": False, "chains": [], "reason": "This venue has a single deposit route."}
+        try:
+            assets = await self._polymarket_assets()
+        except Exception as exc:
+            return {
+                "supported": False,
+                "chains": [],
+                "official_url": "https://docs.polymarket.com/trading/bridge/supported-assets",
+                "reason": f"Could not read the bridge's supported assets: {type(exc).__name__}",
+            }
+        chains = self._group_assets(assets)
+        default = None
+        if chains:
+            default = {"chain_id": chains[0]["chain_id"], "token": chains[0]["tokens"][0]["address"]}
+        return {
+            "supported": bool(chains),
+            "default": default,
+            "chains": chains,
+            "official_url": "https://docs.polymarket.com/trading/bridge/supported-assets",
+            "reason": None if chains else "The bridge reports no supported assets.",
+        }
+
+    async def _polymarket_deposit(
+        self, *, network: str | None, asset: str | None, token: str | None = None
+    ) -> DepositInfo:
         wallet = self._polymarket_wallet()
         if not wallet:
             return DepositInfo(
@@ -169,68 +286,79 @@ class FundsService:
                 reason="The Polymarket wallet address is not configured.",
             )
         try:
-            client = await self.client()
-            response = await client.get(f"{base}/supported-assets")
-            response.raise_for_status()
-            assets = response.json().get("supportedAssets") or []
+            chains = self._group_assets(await self._polymarket_assets())
         except Exception as exc:
             return DepositInfo(
                 supported=False,
                 official_url="https://docs.polymarket.com/trading/bridge/supported-assets",
                 reason=f"Could not read the bridge's supported assets: {type(exc).__name__}",
             )
-        if not assets:
+        if not chains:
             return DepositInfo(
                 supported=False,
                 official_url="https://docs.polymarket.com/trading/bridge/supported-assets",
                 reason="The bridge reports no supported assets.",
             )
-        chosen = None
-        for entry in assets:
-            if network and str(entry.get("chainId")) != str(network) and str(entry.get("chainName")) != network:
-                continue
-            token = entry.get("token") or {}
-            if asset and str(token.get("symbol")).upper() != asset.upper():
-                continue
-            chosen = entry
-            break
-        if chosen is None:
+        chain: dict[str, Any] | None = chains[0]
+        if network:
+            wanted = str(network).strip().lower()
+            chain = next(
+                (c for c in chains if str(c["chain_id"]) == wanted or str(c["chain_name"]).lower() == wanted),
+                None,
+            )
+        picked = None
+        if chain is not None:
+            tokens = chain["tokens"]
+            if token:
+                picked = next((t for t in tokens if t["address"].lower() == str(token).strip().lower()), None)
+            elif asset:
+                picked = next((t for t in tokens if t["symbol"].upper() == str(asset).strip().upper()), None)
+            else:
+                picked = tokens[0]
+        if chain is None or picked is None:
             return DepositInfo(
                 supported=False,
                 official_url="https://docs.polymarket.com/trading/bridge/supported-assets",
                 reason="That chain or asset is not on the bridge's supported list.",
             )
-        token = chosen.get("token") or {}
+        kind = str(chain["address_type"])
         try:
-            bridge_address = await self._bridge_address(wallet)
+            addresses = await self._bridge_addresses_for(wallet)
         except Exception as exc:
             return DepositInfo(
                 supported=False,
                 official_url="https://docs.polymarket.com/trading/bridge/deposit",
                 reason=f"Could not create a bridge address: {type(exc).__name__}",
             )
-        chain_id = str(chosen.get("chainId"))
+        bridge_address = addresses.get(kind)
         if not bridge_address:
             return DepositInfo(
                 supported=False,
                 official_url="https://docs.polymarket.com/trading/bridge/deposit",
-                reason="The bridge returned no address for this wallet.",
+                reason=f"The bridge returned no {kind} address for this wallet.",
             )
+        family = {"evm": "EVM", "svm": "Solana", "btc": "Bitcoin", "tron": "Tron"}.get(kind, kind)
         warnings = [
+            f"This is a {family} address. Send {picked['symbol']} from {chain['chain_name']} only.",
             "Send only the asset and chain shown here; anything else can be lost.",
             "Deposits below the minimum are not processed by the bridge.",
+            "Whatever you send is converted to pUSD on Polygon and credited to your Polymarket wallet.",
             "Wrong-token recovery: https://recovery.polymarket.com",
             "Polymarket funds sit in the funder/proxy wallet, which can differ from the "
             "signing wallet. Confirm you are sending to the funder wallet.",
         ]
         return DepositInfo(
             supported=True,
-            network=str(chosen.get("chainName") or chain_id),
-            asset=str(token.get("symbol") or ""),
+            network=str(chain["chain_name"]),
+            asset=str(picked["symbol"]),
             address=bridge_address,
-            min_amount=str(chosen.get("minCheckoutUsd") or ""),
+            min_amount=str(picked["min_usd"] or chain["min_usd"] or ""),
             warnings=tuple(warnings),
             official_url="https://docs.polymarket.com/trading/bridge/deposit",
+            chain_id=str(chain["chain_id"]),
+            address_type=kind,
+            token_name=str(picked["name"]),
+            token_address=str(picked["address"]),
         )
 
     def _limitless_deposit(self) -> DepositInfo:
@@ -713,39 +841,57 @@ class FundsService:
                 return "FAILED", "the bridge reported the withdrawal as failed"
         return "PENDING", ""
 
+    _USD_STABLES = frozenset({"USDC", "USDC.E", "USDT", "DAI", "USDE", "USDS", "TUSD", "AUSD", "BUSD", "PUSD"})
+
     async def _polymarket_funds_history(self, wallet: str) -> list[dict[str, Any]]:
-        """Deposits and withdrawals the bridge saw for the wallet."""
+        """Deposits and withdrawals the bridge saw for the wallet, on every bridge address (evm, svm, btc, tron)."""
 
         base = self.settings.funds_polymarket_bridge_url.rstrip("/")
+        rows: list[Any] = []
+        known: dict[tuple[str, str], tuple[str, int]] = {}
         try:
             client = await self.client()
-            bridge_address = await self._bridge_address(wallet)
-            if not bridge_address:
-                return []
-            response = await client.get(f"{base}/status/{bridge_address}")
-            response.raise_for_status()
-            rows = response.json().get("transactions") or []
+            addresses = await self._bridge_addresses_for(wallet)
+            try:
+                for entry in await self._polymarket_assets():
+                    token = entry.get("token") or {}
+                    key = (str(entry.get("chainId")), str(token.get("address") or "").lower())
+                    known[key] = (str(token.get("symbol") or ""), int(token.get("decimals") or 6))
+            except Exception:
+                known = {}
+            for bridge_address in dict.fromkeys(addresses.values()):
+                response = await client.get(f"{base}/status/{bridge_address}")
+                response.raise_for_status()
+                rows.extend(response.json().get("transactions") or [])
         except Exception as exc:
             logger.warning("bridge history failed", error=str(exc)[:120])
-            return []
+            if not rows:
+                return []
         out: list[dict[str, Any]] = []
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            amount = Decimal(str(row.get("fromAmountBaseUnit") or 0)) / Decimal("1000000")
+            chain_id = str(row.get("fromChainId"))
+            symbol, decimals = known.get((chain_id, str(row.get("fromTokenAddress") or "").lower()), ("", 6))
+            amount = Decimal(str(row.get("fromAmountBaseUnit") or 0)) / (Decimal(10) ** decimals)
+            # Only a USD stablecoin's amount is a dollar amount; anything else shows in its own units.
+            is_usd = (not symbol and decimals == 6) or symbol.upper() in self._USD_STABLES
             out.append(
                 {
                     # Money leaving Polymarket starts on chain 137; money arriving
                     # ends there.
-                    "kind": "withdrawal" if str(row.get("fromChainId")) == "137" else "deposit",
+                    "kind": "withdrawal" if chain_id == "137" else "deposit",
                     "id": str(row.get("txHash") or row.get("createdTimeMs") or ""),
                     "status": str(row.get("status") or ""),
                     "type": "crypto",
-                    "amount_usd": str(amount),
+                    "amount_usd": str(amount) if is_usd else "",
+                    "amount": str(amount),
+                    "asset": symbol,
                     "fee_usd": "0",
                     "at": row.get("createdTimeMs"),
                 }
             )
+        out.sort(key=lambda item: item.get("at") or 0, reverse=True)
         return out
 
 

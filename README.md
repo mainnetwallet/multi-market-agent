@@ -502,6 +502,13 @@ FUNDS_WITHDRAWAL_HOLD_MINUTES=10
 FUNDS_ALLOWLIST_COOLING_HOURS=24
 ```
 
+**Deposits.** `GET /v1/funds/{venue}/deposit/options` lists every chain and token the venue accepts (for
+Polymarket, the bridge's own `/supported-assets`, grouped by chain with each chain's address type and minimum).
+`GET /v1/funds/{venue}/deposit?network=<chain id or name>&token=<contract>` (or `asset=<symbol>`) returns the address
+for that pair: `POST /deposit` gives one bridge address per type (`evm`, `svm`, `btc`, `tron`) and the chain decides
+which one is shown. With nothing chosen the default is Polygon USDC. The app's Deposit sheet switches chain and token
+from that list; history reads the status of every bridge address.
+
 A withdrawal goes `PENDING_HOLD` → `SUBMITTED` → `CONFIRMED`, or `FAILED` /
 `CANCELLED` / `UNKNOWN`. It is submitted exactly once and never auto-retried;
 UNKNOWN keeps the transaction hash and asks the operator to look. The bridge

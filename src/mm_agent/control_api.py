@@ -860,12 +860,25 @@ def create_app(
 
     # ── full control: funds ────────────────────────────────────────
 
+    @app.get("/v1/funds/{venue}/deposit/options")
+    async def deposit_options(venue: VenueId, _: str = Depends(require_auth)) -> Any:
+        """Every chain and token the venue accepts for a deposit (Polymarket: the bridge's own list)."""
+        try:
+            options = await funds.deposit_options(venue)
+        except FundsError as exc:
+            return _fail(exc)
+        return {"ok": True, **options}
+
     @app.get("/v1/funds/{venue}/deposit")
     async def deposit_info(
-        venue: VenueId, network: str | None = None, asset: str | None = None, _: str = Depends(require_auth)
+        venue: VenueId,
+        network: str | None = None,
+        asset: str | None = None,
+        token: str | None = None,
+        _: str = Depends(require_auth),
     ) -> Any:
         try:
-            info = await funds.deposit_info(venue, network=network, asset=asset)
+            info = await funds.deposit_info(venue, network=network, asset=asset, token=token)
         except FundsError as exc:
             return _fail(exc)
         return {"ok": True, **info.as_dict()}
