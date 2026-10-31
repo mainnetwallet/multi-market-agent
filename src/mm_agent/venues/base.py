@@ -159,7 +159,7 @@ class HttpVenue(Venue):
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(20.0, connect=10.0),
-                headers={"User-Agent": "multi-market-agent/0.1 (+paper-first)"},
+                headers={"User-Agent": "multi-market-agent/0.1"},
                 follow_redirects=True,
             )
 

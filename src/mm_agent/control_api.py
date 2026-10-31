@@ -1187,7 +1187,7 @@ def create_app(
     def _badge() -> str:
         active = registry.active_or_none
         if active is None:
-            return "NO VENUE | PAPER"
+            return "NO VENUE READY"
         return f"{active.value.upper()} | {registry.mode(active).value}"
 
     return app

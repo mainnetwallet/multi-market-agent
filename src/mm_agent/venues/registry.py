@@ -27,7 +27,6 @@ class VenueStatus:
     enabled: bool
     ready: bool
     reason: str
-    live: bool
     mode: Mode
     credentialed: bool = False
     doctor: DoctorReport | None = None
@@ -83,19 +82,19 @@ class VenueRegistry:
         return bool(self._ready.get(venue))
 
     def mode(self, venue: VenueId) -> Mode:
-        return Mode.LIVE if self.settings.live_for(venue) else Mode.PAPER
+        return Mode.LIVE
 
     def reason(self, venue: VenueId) -> str:
         if not self._ready.get(venue):
             return self._reasons.get(venue, "doctor not run")
-        if not self.settings.live_for(venue) and not self.settings.credentials_present(venue):
-            return "public PAPER only; credentials absent"
-        if self.settings.live_for(venue):
-            doctor = self.doctors.get(venue)
-            if doctor and doctor.status is DoctorStatus.OK:
-                return ""
-            return "LIVE requested but authenticated doctor checks failed"
-        return ""
+        if venue is VenueId.FAKE:
+            return ""
+        if not self.settings.credentials_present(venue):
+            return "credentials absent"
+        doctor = self.doctors.get(venue)
+        if doctor and doctor.status is DoctorStatus.OK:
+            return ""
+        return "authenticated doctor checks failed"
 
     def statuses(self) -> list[VenueStatus]:
         return [
@@ -105,7 +104,6 @@ class VenueRegistry:
                 enabled=True,
                 ready=self.is_ready(venue),
                 reason=self.reason(venue),
-                live=self.settings.live_for(venue),
                 mode=self.mode(venue),
                 credentialed=self.settings.credentials_present(venue),
                 doctor=self.doctors.get(venue),
@@ -144,9 +142,7 @@ class VenueRegistry:
                 )
         await self.bus.publish(
             "venues.refreshed",
-            venues=[
-                {"venue": s.venue.value, "ready": s.ready, "live": s.live, "reason": s.reason} for s in self.statuses()
-            ],
+            venues=[{"venue": s.venue.value, "ready": s.ready, "reason": s.reason} for s in self.statuses()],
             active=self._active.value if self._active else None,
         )
         return dict(self.doctors)
@@ -160,9 +156,9 @@ class VenueRegistry:
         auth_ok = any(c.status is DoctorStatus.OK for c in auth_checks)
         ready = public_ok
         reason = report.reason
-        if self.settings.live_for(venue) and not auth_ok:
+        if venue is not VenueId.FAKE and not auth_ok:
             ready = False
-            reason = "LIVE requires passing authenticated doctor checks"
+            reason = "authenticated doctor checks must pass before trading"
         if report.status is DoctorStatus.UNAVAILABLE:
             ready = False
             reason = report.reason or "doctor unavailable"
@@ -172,7 +168,7 @@ class VenueRegistry:
             venue,
             ready=ready,
             reason=reason,
-            live=self.settings.live_for(venue),
+            live=True,
             doctor_status=report.status.value,
             doctor_json=report.model_dump(mode="json"),
             checked_at=report.checked_at,
@@ -242,7 +238,6 @@ class VenueRegistry:
                     "enabled": s.enabled,
                     "ready": s.ready,
                     "reason": s.reason,
-                    "live": s.live,
                     "mode": s.mode.value,
                     "credentialed": s.credentialed,
                     "doctor_status": s.doctor.status.value if s.doctor else "NOT_RUN",

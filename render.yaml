@@ -31,12 +31,6 @@ services:
         value: "50"
       - key: MAX_TRADE_USD
         value: "1"
-      - key: LIVE_POLYMARKET
-        value: "false"
-      - key: LIVE_KALSHI
-        value: "false"
-      - key: LIVE_LIMITLESS
-        value: "false"
       - key: CHAT_AUTOPILOT
         value: "false"
       - key: ADMIN_USERNAME

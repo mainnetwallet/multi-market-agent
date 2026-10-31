@@ -905,7 +905,7 @@ class Store:
                     "price": str(r.price),
                     "shares": str(r.size),
                     "fee_usd": str(r.fee_usd),
-                    "mode": getattr(orders.get(r.order_id), "mode", "PAPER"),
+                    "mode": getattr(orders.get(r.order_id), "mode", "LIVE"),
                     "at": r.created_at.isoformat(),
                 }
                 for r in rows

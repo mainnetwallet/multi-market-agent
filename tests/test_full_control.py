@@ -42,12 +42,12 @@ def test_status_carries_capabilities(harness: Harness) -> None:
     assert body["limits"]["hard_ceilings"]["max_trade_usd"] == "2"
 
 
-def test_balance_is_labeled_paper_in_paper_mode(harness: Harness) -> None:
+def test_balance_is_read_from_the_venue(harness: Harness) -> None:
     client = make_client(harness)
     body = client.get("/v1/balance?venue=fake").json()
     assert body["venue"] == "fake"
-    assert body["mode"] == "PAPER"
-    assert "Paper mode" in (body["reason"] or "")
+    assert body["mode"] == "LIVE"
+    assert body["reason"] is None
     assert Decimal(body["available"]) > 0
 
 
@@ -269,18 +269,18 @@ def test_funds_routes_are_off_by_default(harness: Harness) -> None:
     assert response.json()["error"]["code"] == "funds_disabled"
 
 
-def test_paper_mode_refuses_funds(harness: Harness, tmp_path) -> None:
+def test_a_withdrawal_to_an_unknown_address_is_refused(harness: Harness, bridge: object) -> None:
+    del bridge
     harness.settings.__dict__["funds_enabled"] = True
     client = make_client(harness)
     response = client.get("/v1/funds/polymarket/deposit")
     assert response.status_code == 200
-    # Paper mode still allows a deposit address (it is a read), but a withdrawal is refused.
     preview = client.post(
         "/v1/funds/withdraw/preview",
         json={"venue": "polymarket", "amount": "1", "address_id": "whatever"},
     )
     assert preview.status_code == 400
-    assert preview.json()["error"]["code"] == "paper_mode"
+    assert preview.json()["error"]["code"] == "not_allowlisted"
 
 
 def test_allowlist_rejects_a_bad_address(harness: Harness) -> None:
@@ -320,7 +320,8 @@ def test_allowlist_add_and_cooling(harness: Harness) -> None:
     assert len(entries) == 1
 
 
-def test_a_withdrawal_records_a_decimal_amount(harness: Harness) -> None:
+def test_a_withdrawal_records_a_decimal_amount(harness: Harness, bridge: object) -> None:
+    del bridge
     # The amount is a Decimal and the id is derived from it: it must not reach
     # json.dumps as a Decimal.
     harness.settings.__dict__["funds_enabled"] = True
@@ -347,8 +348,7 @@ def test_a_withdrawal_records_a_decimal_amount(harness: Harness) -> None:
         json={"venue": "polymarket", "amount": "1.00", "address_id": entry_id},
         headers={"Idempotency-Key": "wd-1", "X-Stepup-Token": withdraw_token},
     )
-    # In PAPER mode the withdrawal is refused, but it must be refused cleanly:
-    # the request must never crash on the Decimal amount.
+    # Whatever the outcome, the request must never crash on the Decimal amount.
     assert response.status_code in (200, 400), response.text
 
 
@@ -367,7 +367,7 @@ def test_trades_listing_returns_fills(harness: Harness) -> None:
     row = body["trades"][0]
     assert row["venue"] == "fake"
     assert row["outcome"] == "YES"
-    assert row["mode"] == "PAPER"
+    assert row["mode"] == "LIVE"
 
 
 def test_pnl_daily_series(harness: Harness) -> None:

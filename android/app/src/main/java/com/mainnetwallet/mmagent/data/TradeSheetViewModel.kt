@@ -29,7 +29,7 @@ data class TradeDraft(
     val tick: BigDecimal = BigDecimal("0.01"),
     val availableOrderTypes: List<String> = listOf("GTC"),
     val postOnlySupported: Boolean = false,
-    val mode: String = "PAPER",
+    val mode: String = "LIVE",
     val collateralAsset: String = "USD",
 ) {
     /** The chips the trade sheet offers, driven by the venue's capabilities. */

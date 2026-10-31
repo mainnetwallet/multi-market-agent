@@ -61,7 +61,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Build image
         run: docker build -t mm-agent:ci .
-      - name: Run PAPER smoke container
+      - name: Run smoke container
         run: |
           docker run -d --name mm-agent-ci \
             -p 127.0.0.1:8080:8080 \

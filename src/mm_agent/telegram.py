@@ -21,7 +21,7 @@ from telegram.ext import (
 from .agent import AgentService
 from .chat import ChatService
 from .config import Settings
-from .domain import Mode, Proposal
+from .domain import Proposal
 from .events import Event, EventBus
 from .store import Store
 from .util import fmt_dhaka, get_logger
@@ -109,7 +109,7 @@ class TelegramBot:
             return
         await update.effective_message.reply_text(
             "Multi-Market Agent\nSend /help for commands. All replies name the venue. "
-            "LIVE chat orders require CHAT_AUTOPILOT=true.",
+            "Chat orders require CHAT_AUTOPILOT=true.",
         )
 
     async def _on_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -180,7 +180,7 @@ class TelegramBot:
     async def _maybe_alert(self, event: Event) -> None:
         if event.topic == "proposal.created":
             proposal = Proposal.model_validate(event.payload["proposal"])
-            if (proposal.mode is Mode.LIVE and not self.settings.chat_autopilot) or proposal.mode is Mode.PAPER:
+            if not self.settings.chat_autopilot:
                 await self._send_proposal(proposal)
         elif event.topic == "rule.blocked":
             await self._send(f"⚠ Exit rule blocked: {event.payload.get('reason')} on {event.payload.get('venue')}")

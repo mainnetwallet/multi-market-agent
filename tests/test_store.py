@@ -38,7 +38,7 @@ def test_fill_updates_position_and_is_idempotent(tmp_path) -> None:
     store.create_all()
     order_id = store.create_order(
         venue=VenueId.FAKE,
-        mode=Mode.PAPER,
+        mode=Mode.LIVE,
         market_id="m",
         outcome=Outcome.YES,
         side=Side.BUY,
@@ -51,7 +51,7 @@ def test_fill_updates_position_and_is_idempotent(tmp_path) -> None:
     assert store.apply_fill(
         order_id=order_id,
         venue=VenueId.FAKE,
-        mode=Mode.PAPER,
+        mode=Mode.LIVE,
         market_id="m",
         outcome=Outcome.YES,
         side=Side.BUY,
@@ -63,7 +63,7 @@ def test_fill_updates_position_and_is_idempotent(tmp_path) -> None:
     assert not store.apply_fill(
         order_id=order_id,
         venue=VenueId.FAKE,
-        mode=Mode.PAPER,
+        mode=Mode.LIVE,
         market_id="m",
         outcome=Outcome.YES,
         side=Side.BUY,
@@ -72,7 +72,7 @@ def test_fill_updates_position_and_is_idempotent(tmp_path) -> None:
         fee_usd=Decimal("0.10"),
         venue_fill_id="f1",
     )
-    positions = store.list_positions(mode=Mode.PAPER)
+    positions = store.list_positions(mode=Mode.LIVE)
     assert len(positions) == 1
     assert positions[0].shares == Decimal("10")
     assert store.get_order(order_id)["filled"] == Decimal("10")

@@ -29,7 +29,6 @@ from .domain import (
     Market,
     MarketRef,
     MarketStatus,
-    Mode,
     OrderRequest,
     OrderType,
     Outcome,
@@ -130,11 +129,7 @@ class FullControlService:
                         if caps.withdraw
                         else ""
                     ),
-                    "reason": (
-                        "Paper mode has no real funds."
-                        if mode == Mode.PAPER.value
-                        else "Funds are disabled; set FUNDS_ENABLED=true to enable them."
-                    ),
+                    "reason": "Funds are disabled; set FUNDS_ENABLED=true to enable them.",
                 },
                 "official_url": VENUE_DOCS.get(venue.value, ""),
                 "unsupported": dict(caps.unsupported_reason),
@@ -159,7 +154,7 @@ class FullControlService:
 
     # ---------------------------------------------------------------- balance
     async def balance(self, venue: VenueId | None = None) -> dict[str, Any]:
-        """Per-venue balance. Paper mode returns the paper balance and says so."""
+        """Per-venue balance, read from the venue."""
 
         targets = [venue] if venue else list(self.registry.enabled())
         out: list[dict[str, Any]] = []
@@ -202,8 +197,6 @@ class FullControlService:
             entry["positions_value"] = str(positions_value)
             entry["total"] = str(balance.total_usd if balance.total_usd is not None else balance.available_usd)
             entry["as_of"] = balance.fetched_at.isoformat()
-            if mode is Mode.PAPER:
-                entry["reason"] = "Paper mode: this is the simulated balance."
             out.append(entry)
         if venue:
             return out[0] if out else {"venue": venue.value, "available": None, "reason": "venue not enabled"}
@@ -737,8 +730,6 @@ class FullControlService:
                 code="unsupported_redeem",
                 status=400,
             )
-        if self.registry.mode(target) is Mode.PAPER:
-            raise FullControlError("Paper mode has no real positions to redeem", code="paper_mode", status=400)
         result = await adapter.redeem_positions(market_id=market_id, outcome=outcome)
         self.store.audit(actor, "position.redeem", {"venue": target.value, "market_id": market_id})
         return {"venue": target.value, "market_id": market_id, "result": result}
@@ -754,8 +745,6 @@ class FullControlService:
                 code="unsupported_action",
                 status=400,
             )
-        if self.registry.mode(target) is Mode.PAPER:
-            raise FullControlError("Paper mode has no real positions to split or merge", code="paper_mode", status=400)
         result = await self.registry.get(target).split_merge(market_id=market_id, action=action)
         self.store.audit(actor, f"position.{action}", {"venue": target.value, "market_id": market_id})
         return {"venue": target.value, "market_id": market_id, "action": action, "result": result}

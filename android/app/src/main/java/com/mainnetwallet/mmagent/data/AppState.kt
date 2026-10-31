@@ -25,7 +25,7 @@ import java.math.BigDecimal
 data class AgentStatus(
     val badge: String = "",
     val venue: String = "",
-    val mode: String = "PAPER",
+    val mode: String = "LIVE",
     val paused: Boolean = false,
     val todayPnlUsd: String = "0",
     val availableUsd: String? = null,
@@ -37,7 +37,7 @@ data class AgentStatus(
     val counts: Map<String, Int> = emptyMap(),
     val capabilities: JSONObject? = null,
     val heartbeat: String = "",
-    /** Every venue the server knows: venue, display_name, enabled, ready, reason, live, mode. */
+    /** Every venue the server knows: venue, display_name, enabled, ready, reason, mode. */
     val venues: List<JSONObject> = emptyList(),
 )
 
@@ -426,7 +426,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                     status = AgentStatus(
                         badge = status.optString("badge"),
                         venue = status.optString("active_venue"),
-                        mode = status.optString("badge").substringAfter('|', "PAPER").trim(),
+                        mode = status.optString("badge").substringAfter('|', "LIVE").trim(),
                         paused = status.optBoolean("paused"),
                         todayPnlUsd = status.optString("today_pnl_usd", "0"),
                         availableUsd = firstBalance?.optString("available"),

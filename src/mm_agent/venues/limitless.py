@@ -688,7 +688,7 @@ class LimitlessVenue(HttpVenue):
                 DoctorCheck(
                     name="authenticated_read",
                     status=DoctorStatus.SKIPPED,
-                    detail="HMAC token or wallet key absent; PAPER works",
+                    detail="HMAC token or wallet key absent; public reads only",
                 )
             )
         else:
@@ -741,7 +741,7 @@ class LimitlessVenue(HttpVenue):
             venue=self.id,
             status=status,
             checks=tuple(checks),
-            reason="" if auth_ok else "credentials absent or auth failed; PAPER only",
+            reason="" if auth_ok else "credentials absent or auth failed; trading disabled",
         )
 
     async def _doctor_order(self) -> DoctorCheck:

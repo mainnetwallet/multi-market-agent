@@ -128,7 +128,6 @@ def build_runtime(settings: Settings, *, bind_database: bool = True) -> Runtime:
             badge=status["badge"],
             unit_guard=guard.ok,
             venues=status["venues"],
-            paper_default=True,
         )
         if not guard.ok:
             logger.error("unit_guard_halted_trading", reason=guard.reason)
@@ -185,7 +184,7 @@ def run() -> None:
         print("Refusing to start: ADMIN_PASSWORD is still the example value", file=sys.stderr)
         raise SystemExit(2)
     print(f"Starting multi-market-agent on http://{settings.host}:{settings.port}")
-    print("PAPER is the default. LIVE requires LIVE_<VENUE>=true set by hand in the environment.")
+    print("Every order is real money. Use a burner wallet and a small balance.")
     try:
         asyncio.run(serve(settings))
     except KeyboardInterrupt:

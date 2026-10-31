@@ -21,7 +21,7 @@ async def setup_tight_market(harness: Harness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_proposal_is_sourced_and_approved_into_paper_fill(harness: Harness, researched: str) -> None:
+async def test_proposal_is_sourced_and_approved_into_fill(harness: Harness, researched: str) -> None:
     del researched
     await setup_tight_market(harness)
     result = await harness.agent.analyze_market(
@@ -29,13 +29,13 @@ async def test_proposal_is_sourced_and_approved_into_paper_fill(harness: Harness
     )
     assert result["ok"], result.get("reasons")
     proposal = result["proposal"]
-    assert proposal["mode"] == "PAPER"
+    assert proposal["mode"] == "LIVE"
     assert Decimal(proposal["edge"]) >= Decimal("0.03")
     approved = await harness.agent.approve(proposal["id"], actor="web:test", via="ui")
     assert approved["ok"], approved
     assert approved["status"] in {"FILLED", "PARTIAL"}
     assert approved["venue"] == "fake"
-    positions = harness.store.list_positions(mode=Mode.PAPER)
+    positions = harness.store.list_positions(mode=Mode.LIVE)
     assert positions
     assert positions[0].shares > 0
 
@@ -54,7 +54,6 @@ async def test_no_research_means_no_proposal(harness: Harness) -> None:
 async def test_unknown_order_is_never_resent(harness: Harness, researched: str) -> None:
     del researched
     await setup_tight_market(harness)
-    object.__setattr__(harness.settings, "live_fake", True)
     harness.fake.timeout_next = 1
     harness.fake.fill_ratio = Decimal("0.5")
     result = await harness.agent.analyze_market(
@@ -92,7 +91,7 @@ async def test_rule_fires_once_and_stale_book_blocks(harness: Harness, researche
     assert result["ok"], result.get("reasons")
     approved = await harness.agent.approve(result["proposal"]["id"], actor="web:test", via="ui")
     assert approved["ok"], approved
-    position = harness.store.list_positions(mode=Mode.PAPER)[0]
+    position = harness.store.list_positions(mode=Mode.LIVE)[0]
     created = harness.agent.create_exit_rule(
         market_id=position.market_id,
         outcome=position.outcome,
@@ -145,7 +144,6 @@ async def test_unknown_order_blocks_approval(harness: Harness, researched: str) 
     from mm_agent.domain import Proposal, ProposalStatus, Side, utcnow
 
     await setup_tight_market(harness)
-    object.__setattr__(harness.settings, "live_fake", True)
     harness.fake.timeout_next = 1
     result = await harness.agent.analyze_market(
         harness.store.get_market(VenueId.FAKE, "fed-cut"), only_outcome=Outcome.YES
@@ -180,7 +178,6 @@ async def test_unknown_order_blocks_approval(harness: Harness, researched: str) 
 async def test_unknown_reconciles_from_trade_history(harness: Harness, researched: str) -> None:
     del researched
     await setup_tight_market(harness)
-    object.__setattr__(harness.settings, "live_fake", True)
     harness.fake.timeout_next = 1
     # Full fill with a timeout leaves no resting order; only trade history can resolve it.
     result = await harness.agent.analyze_market(
@@ -245,7 +242,7 @@ async def test_daily_loss_cap_pauses_entries(harness: Harness) -> None:
         s.add(
             PnlRow(
                 venue="fake",
-                mode="PAPER",
+                mode="LIVE",
                 kind="realized",
                 amount_usd=Decimal("-6"),
                 ref="test",

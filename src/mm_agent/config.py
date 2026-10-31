@@ -1,7 +1,8 @@
 """Environment configuration and non-negotiable hard ceilings.
 
-Only an operator editing the environment and restarting can switch a venue to
-LIVE. No API, chat message, tool call or UI control can do so.
+Every order is real money. A venue trades only when its credentials pass the
+authenticated doctor checks; the risk caps below can never be raised by an API,
+chat message, tool call or UI control.
 """
 
 from __future__ import annotations
@@ -10,7 +11,6 @@ import os
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
@@ -91,11 +91,6 @@ class Settings(BaseSettings):
     max_open_positions: int = HARD_MAX_OPEN_POSITIONS
     advisory_mode: bool = False
 
-    live_polymarket: bool = False
-    live_kalshi: bool = False
-    live_limitless: bool = False
-    # Test-only venue. It has no real money and is never enabled by default.
-    live_fake: bool = False
     chat_autopilot: bool = False
 
     polymarket_wallet_address: str = ""
@@ -244,20 +239,8 @@ class Settings(BaseSettings):
     def allowed_origins(self) -> list[str]:
         return [x.strip() for x in self.allowed_origins_raw.split(",") if x.strip()]
 
-    @property
-    def live_venues(self) -> tuple[VenueId, ...]:
-        return tuple(v for v in self.enabled_venues if self.live_for(v))
-
-    def live_for(self, venue: VenueId) -> bool:
-        return {
-            VenueId.POLYMARKET: self.live_polymarket,
-            VenueId.KALSHI: self.live_kalshi,
-            VenueId.LIMITLESS: self.live_limitless,
-            VenueId.FAKE: self.live_fake,
-        }[venue]
-
     def limit_bankroll(self, venue: VenueId) -> Decimal:
-        """Per-venue paper/live sizing bankroll, falling back to the global one."""
+        """Per-venue sizing bankroll, falling back to the global one."""
 
         return {
             VenueId.POLYMARKET: self.bankroll_polymarket,
@@ -309,7 +292,3 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
-
-
-def mode_for(settings: Settings, venue: VenueId) -> Literal["PAPER", "LIVE"]:
-    return "LIVE" if settings.live_for(venue) else "PAPER"

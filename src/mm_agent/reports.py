@@ -102,7 +102,6 @@ def daily_report(store: Store, agent: AgentService, day: datetime | None = None)
         "realized_pnl_usd": str(store.today_pnl()),
         "open_positions": len(positions),
         "open_exposure_usd_by_mode": {
-            "PAPER": str(store.total_exposure(Mode.PAPER)),
             "LIVE": str(store.total_exposure(Mode.LIVE)),
         },
         "rules": dict(Counter(r.status.value for r in store.list_rules())),

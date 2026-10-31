@@ -18,7 +18,7 @@ directly — no WebView.
   capabilities (Limit GTC, Limit with expiry GTD, Market FOK/FAK, Post-only where
   supported). Shows the order book depth and the price history, both drawn with
   Compose Canvas, plus price, size, cost, fee, max loss and payout *before* the
-  confirmation. Paper: one tap. Live: press and hold.
+  confirmation. Placing an order is always press and hold.
 - **Portfolio** — tabs for Positions, Orders, Rules and History. Positions offer
   Sell 25/50/100%, Redeem (when the venue supports it) and Split/Merge on
   Polymarket. Open orders can be cancelled one at a time or all at once; the
@@ -93,12 +93,12 @@ CI: `.github/workflows/android.yml`.
    to forget the session. This needs the server to be redeployed with the refresh
    endpoint; against an older server the app still works, but the session ends
    after the old 72 hours.
-4. The header always shows `VENUE | PAPER` or a red `VENUE | LIVE`.
+4. The header always shows a red `VENUE | LIVE` badge.
 
 ## Safety rules the app enforces
 
 - Every confirmation shows venue, market, outcome, side, order type, price, size,
-  cost, fee and Paper/Live before anything is sent.
+  cost and fee before anything is sent.
 - A withdrawal confirmation shows the full final recipient address in
   4-character groups, the network, the token, the amount, the fee and the hold
   time.

@@ -402,7 +402,7 @@ class MainActivity : FragmentActivity() {
             orderTypes = orderTypes,
             postOnly = venueCaps.optBoolean("post_only"),
             tick = java.math.BigDecimal(venueCaps.optString("tick", "0.01")),
-            mode = venueCaps.optString("mode", "PAPER"),
+            mode = venueCaps.optString("mode", "LIVE"),
             asset = venueCaps.optString("collateral_asset", "USD"),
         )
     }

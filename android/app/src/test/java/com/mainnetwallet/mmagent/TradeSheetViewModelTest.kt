@@ -38,7 +38,7 @@ class TradeSheetViewModelTest {
             orderTypes = listOf("GTC", "FAK", "FOK"),
             postOnly = true,
             tick = BigDecimal("0.01"),
-            mode = "PAPER",
+            mode = "LIVE",
             asset = "USD",
         )
         assertEquals(listOf("GTC", "FAK", "FOK"), vm.state.value.draft.orderTypeChips)
@@ -47,14 +47,14 @@ class TradeSheetViewModelTest {
 
     @Test
     fun anUnsupportedOrderTypeIsNotAccepted() {
-        vm.setCapabilities("limitless", listOf("GTC", "FAK", "FOK"), false, BigDecimal("0.001"), "PAPER", "USDC")
+        vm.setCapabilities("limitless", listOf("GTC", "FAK", "FOK"), false, BigDecimal("0.001"), "LIVE", "USDC")
         vm.setOrderType("GTD")
         assertEquals("GTC", vm.state.value.draft.orderType)
     }
 
     @Test
     fun postOnlyIsTurnedOffForKillOrderTypes() {
-        vm.setCapabilities("kalshi", listOf("GTC", "FAK", "FOK"), true, BigDecimal("0.01"), "PAPER", "USD")
+        vm.setCapabilities("kalshi", listOf("GTC", "FAK", "FOK"), true, BigDecimal("0.01"), "LIVE", "USD")
         vm.setPostOnly(true)
         assertTrue(vm.state.value.draft.postOnly)
         vm.setOrderType("FOK")
@@ -63,7 +63,7 @@ class TradeSheetViewModelTest {
 
     @Test
     fun estimateShowsCostFeeMaxLossAndPayout() {
-        vm.setCapabilities("kalshi", listOf("GTC"), true, BigDecimal("0.01"), "PAPER", "USD")
+        vm.setCapabilities("kalshi", listOf("GTC"), true, BigDecimal("0.01"), "LIVE", "USD")
         vm.setPrice("0.57")
         vm.setShares("10")
         val estimate = vm.state.value.estimate
@@ -75,7 +75,7 @@ class TradeSheetViewModelTest {
 
     @Test
     fun anAmountIsConvertedToShares() {
-        vm.setCapabilities("kalshi", listOf("GTC"), true, BigDecimal("0.01"), "PAPER", "USD")
+        vm.setCapabilities("kalshi", listOf("GTC"), true, BigDecimal("0.01"), "LIVE", "USD")
         vm.setPrice("0.50")
         vm.setAmount("5")
         assertEquals("10", vm.state.value.estimate.shares)
@@ -84,7 +84,7 @@ class TradeSheetViewModelTest {
 
     @Test
     fun anInvalidPriceIsRefusedWithAReason() {
-        vm.setCapabilities("kalshi", listOf("GTC"), true, BigDecimal("0.01"), "PAPER", "USD")
+        vm.setCapabilities("kalshi", listOf("GTC"), true, BigDecimal("0.01"), "LIVE", "USD")
         vm.setPrice("1.5")
         assertFalse(vm.state.value.estimate.valid)
         assertTrue(vm.state.value.estimate.problem!!.contains("between 0 and 1"))
