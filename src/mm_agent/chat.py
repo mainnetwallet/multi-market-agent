@@ -25,7 +25,7 @@ from .domain import (
     display_cents,
     utcnow,
 )
-from .llm import LLMClient, LLMUnavailable, estimate_tokens, message_tokens, messages_tokens
+from .llm import LLMClient, LLMContextOverflow, LLMUnavailable, estimate_tokens, message_tokens, messages_tokens
 from .store import ConversationNotFound
 from .util import fmt_dhaka, get_logger, redact
 
@@ -53,6 +53,8 @@ MAX_PINS = 20
 PIN_CHARS = 240
 RETRIEVED_MESSAGES = 4  # folded messages that match the current message and are fetched back
 RETRIEVED_CHARS = 600
+OVERFLOW_RETRIES = 2  # times a request the provider refused as too long is asked again, smaller
+OVERFLOW_SHRINK = 0.6  # a retry asks for this fraction of the request that was refused
 MIN_BLOCK_TOKENS = 30  # an optional DATA block smaller than this is left out rather than shown cut to nothing
 # Execution checkpoint: what a run did with money/control tools, kept so an interrupted job resumes safely.
 MAX_CHECKPOINT_CALLS = 40
@@ -1240,6 +1242,7 @@ class ChatService:
             "history_dropped": len(history) - len(kept),
             "user_clipped": user_text != text,
             "tool_results_trimmed": 0,
+            "overflow_retries": 0,
             "total_cost": messages_tokens(messages) + tools_tokens,
             "over_budget": messages_tokens(messages) > usable,
             "tools_available": [t.name for t in view.available],
@@ -1494,6 +1497,8 @@ class ChatService:
             scope.status = "running"
             self._save_checkpoint(scope)
         task_seen = dict(scope.task) if scope is not None else {}
+        cap: int | None = None  # set once the provider refuses a request as too long: the ceiling for this answer
+        retries = 0
         last_data: dict[str, Any] = {}
         steps = steps if steps is not None else []
 
@@ -1522,19 +1527,28 @@ class ChatService:
             # and no new tool (trade, cancel, pause) starts once the operator pressed Stop.
             if should_stop is not None and should_stop():
                 return finish({"reply": "Stopped.", "data": {**last_data, "stopped": True}})
-            self._fit(messages, usable, ctx)
-            try:
-                if on_event is not None:
-                    reply = await self.llm.chat(messages, tools=tools, on_delta=delta)
-                else:
-                    reply = await self.llm.chat(messages, tools=tools)
-            except LLMUnavailable as exc:
-                return finish(
-                    {
-                        "reply": f"Assistant unavailable: {exc}. Slash commands still work.",
-                        "data": {"error": True},
-                    }
-                )
+            while True:
+                self._fit(messages, usable, ctx)
+                try:
+                    if on_event is not None:
+                        reply = await self.llm.chat(messages, tools=tools, on_delta=delta)
+                    else:
+                        reply = await self.llm.chat(messages, tools=tools)
+                    break
+                except LLMUnavailable as exc:
+                    if isinstance(exc, LLMContextOverflow) and retries < OVERFLOW_RETRIES:
+                        # The provider refused the request before generating anything, so no tool or
+                        # trade has run because of it: ask again with less history and shorter results.
+                        retries += 1
+                        cap = usable = int(min(usable, messages_tokens(messages)) * OVERFLOW_SHRINK)
+                        ctx["overflow_retries"] = retries
+                        continue
+                    return finish(
+                        {
+                            "reply": f"Assistant unavailable: {exc}. Slash commands still work.",
+                            "data": {"error": True},
+                        }
+                    )
             if reply.tool_calls:
                 calls = [
                     {
@@ -1582,6 +1596,8 @@ class ChatService:
                 tools = view.specs()
                 tools_tokens = estimate_tokens(json.dumps(tools))
                 usable = self._budget() - tools_tokens
+                if cap is not None:
+                    usable = min(usable, cap)
                 if scope is not None and scope.task != task_seen:  # the plan changed during this answer
                     task_seen = dict(scope.task)
                     data_suffix = self._swap_task_block(data_suffix, scope.task, int(usable * DATA_SHARE * 0.4))

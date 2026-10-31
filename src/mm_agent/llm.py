@@ -7,6 +7,7 @@ never receives API keys, auth headers, or raw venue responses.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -30,11 +31,35 @@ class LLMUnavailable(RuntimeError):
     pass
 
 
+class LLMContextOverflow(LLMUnavailable):
+    """The provider refused the request because it is longer than the model's window.
+
+    The request was rejected before anything was generated, so asking again with a smaller one is safe."""
+
+
+_OVERFLOW_RE = re.compile(
+    r"context[_ ]length|context window|maximum context|too many tokens|token limit|"
+    r"prompt is too long|input is too long|reduce the length",
+    re.IGNORECASE,
+)
+
+
+def http_error(status: int, body: str) -> LLMUnavailable:
+    """The error for a failed LLM call; a 'too long' refusal gets its own type so callers can shrink and retry."""
+
+    message = f"LLM HTTP {status}: {body[:200]}"
+    if status == 413 or (status == 400 and _OVERFLOW_RE.search(body)):
+        return LLMContextOverflow(message)
+    return LLMUnavailable(message)
+
+
 def estimate_tokens(text: str) -> int:
-    """Provider-neutral, deliberately pessimistic token count (no tokenizer dependency).
+    """Provider-neutral token estimate (no tokenizer dependency).
 
     ASCII costs about one token per four characters; anything else (Bengali, emoji, CJK) is
-    counted at one token per character, which over-counts a little and so never under-budgets.
+    counted at one token per character, which over-counts a little. Dense ASCII such as JSON with
+    many digits and symbols costs more than four characters per token, so this can under-count it;
+    the chat service covers that by retrying smaller when the provider refuses a request as too long.
     """
 
     if not text:
@@ -98,7 +123,7 @@ class LLMClient:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(url, json=payload, headers=headers)
         if response.status_code >= 400:
-            raise LLMUnavailable(f"LLM HTTP {response.status_code}: {response.text[:200]}")
+            raise http_error(response.status_code, response.text)
         data = response.json()
         try:
             choice = data["choices"][0]["message"]
@@ -134,7 +159,7 @@ class LLMClient:
                 return None
             if response.status_code >= 400:
                 body = (await response.aread()).decode("utf-8", "replace")
-                raise LLMUnavailable(f"LLM HTTP {response.status_code}: {body[:200]}")
+                raise http_error(response.status_code, body)
             async for line in response.aiter_lines():
                 if not line.startswith("data:"):
                     continue
