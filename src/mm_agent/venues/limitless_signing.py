@@ -36,6 +36,21 @@ def wallet_address() -> str:
     return str(Account.from_key(private_key).address)
 
 
+def wallet_address_or_empty() -> str:
+    """The trading wallet's public address, or "" when no usable key is set. Never returns the key.
+
+    Needs only `LIMITLESS_PRIVATE_KEY`, not the API token, so the deposit address can be shown before the
+    token is configured.
+    """
+    private_key = os.environ.get("LIMITLESS_PRIVATE_KEY", "").strip()
+    if not private_key:
+        return ""
+    try:
+        return str(Account.from_key(private_key).address)
+    except ValueError:
+        return ""
+
+
 def auth_headers(method: str, path_with_query: str, body: str = "") -> dict[str, str]:
     token_id, secret, _ = _config()
     timestamp = datetime.now(UTC).isoformat()

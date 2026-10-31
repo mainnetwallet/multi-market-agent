@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from mm_agent.control_api import create_app
@@ -460,6 +461,33 @@ def test_deposit_options_leave_out_chains_that_would_be_refused(harness: Harness
     bridge.assets = _live_shaped_assets()  # type: ignore[attr-defined]
     body = client.get("/v1/funds/polymarket/deposit/options").json()
     assert sorted(c["chain_id"] for c in body["chains"]) == ["c1", "c2", "c3"]
+
+
+def test_limitless_deposit_address_comes_from_the_trading_key(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from eth_account import Account
+
+    key = "0x" + "11" * 32
+    monkeypatch.setenv("LIMITLESS_PRIVATE_KEY", key)
+    harness.settings.__dict__["funds_enabled"] = True
+    # The old setting names another wallet. It must not be what is shown.
+    harness.settings.__dict__["funds_signer_address"] = "0x" + "99" * 20
+    body = make_client(harness).get("/v1/funds/limitless/deposit").json()
+    assert body["supported"] is True
+    assert body["address"] == Account.from_key(key).address
+    assert (body["network"], body["asset"]) == ("Base", "USDC")
+    assert key not in str(body) and key[2:] not in str(body)
+
+
+def test_limitless_deposit_shows_no_address_without_a_trading_key(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("LIMITLESS_PRIVATE_KEY", raising=False)
+    harness.settings.__dict__["funds_enabled"] = True
+    harness.settings.__dict__["funds_signer_address"] = "0x" + "99" * 20
+    body = make_client(harness).get("/v1/funds/limitless/deposit").json()
+    assert body["supported"] is False and body["address"] is None
 
 
 def test_deposit_rejects_a_token_that_is_not_on_that_chain(harness: Harness, bridge: object) -> None:

@@ -22,6 +22,7 @@ from ..config import Settings
 from ..domain import VenueId, utcnow
 from ..store import Store
 from ..util import get_logger
+from ..venues import limitless_signing
 from .signer import (
     POLYGON_CHAIN_ID,
     SignerError,
@@ -459,12 +460,15 @@ class FundsService:
         )
 
     def _limitless_deposit(self) -> DepositInfo:
-        address = self.settings.funds_signer_address or ""
+        # Limitless has no deposit API, so a deposit is a transfer to the wallet the agent trades from. That
+        # address comes from the trading key itself (only the public address leaves limitless_signing), not
+        # from a separate setting that could name a different wallet.
+        address = limitless_signing.wallet_address_or_empty()
         if not address:
             return DepositInfo(
                 supported=False,
                 official_url="https://docs.limitless.exchange/user-guide/what-is-limitless",
-                reason="No Limitless wallet address is configured.",
+                reason="No Limitless wallet key is configured (LIMITLESS_PRIVATE_KEY), so there is no address to show.",
             )
         return DepositInfo(
             supported=True,
