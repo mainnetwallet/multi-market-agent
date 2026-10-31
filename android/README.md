@@ -13,11 +13,14 @@ directly — no WebView.
   event cards with the live Yes/No price, chance, 24h move, volume and close time.
   Tap a Yes or No price to open the trade sheet on that side. Other venues keep the plain list.
   Data comes from `GET /v1/discover` (public Gamma data, read-only).
-- **Trade sheet** — Buy/Sell, Yes/No, then order-type chips driven by the venue's
-  capabilities (Limit GTC, Limit with expiry GTD, Market FOK/FAK, Post-only where
-  supported). Shows the order book depth and the price history, both drawn with
-  Compose Canvas, plus price, size, cost, fee, max loss and payout *before* the
-  confirmation. Placing an order is always press and hold.
+- **Trade ticket** — laid out like Polymarket's. Tap Yes or No on a market card and the ticket opens on that
+  side: Buy / Sell tabs, a **Market | Limit** switch (only where the venue has both), and two big **Yes 62¢ /
+  No 39¢** buttons that show each side's live price from the order book. A market buy is one number, in
+  dollars, with +$1 / +$5 / +$10 / +$100 / Max chips; a sell is shares with 25% / 50% / 75% / Max of what you
+  hold; a limit order has a − / + price stepper in cents (one tick per tap) and a shares field. A summary card
+  shows **To win**, the average price, shares and cost, walked through the real book, before anything is sent.
+  Order book, price history, slippage and post-only sit under **Advanced**. Placing an order is still a slide,
+  never a single tap.
 - **Portfolio** — tabs for Positions, Orders, Rules and History. Positions offer
   Sell 25/50/100%, Redeem (when the venue supports it) and Split/Merge on
   Polymarket. Open orders can be cancelled one at a time or all at once; the

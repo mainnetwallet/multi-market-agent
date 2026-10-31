@@ -29,6 +29,7 @@ import com.mainnetwallet.mmagent.data.AppLock
 import com.mainnetwallet.mmagent.data.AppViewModel
 import com.mainnetwallet.mmagent.data.LiveSocket
 import com.mainnetwallet.mmagent.data.TradeSheetViewModel
+import com.mainnetwallet.mmagent.data.heldShares
 import com.mainnetwallet.mmagent.data.WithdrawViewModel
 import com.mainnetwallet.mmagent.ui.AllowlistAddScreen
 import com.mainnetwallet.mmagent.ui.AppScaffold
@@ -221,20 +222,30 @@ class MainActivity : FragmentActivity() {
                             "trade" -> TradeSheetScreen(
                                 draft = tradeState.draft,
                                 estimate = tradeState.estimate,
+                                books = tradeState.books,
                                 bids = tradeState.bids,
                                 asks = tradeState.asks,
                                 history = tradeState.history,
+                                held = tradeState.held,
+                                available = state.balances
+                                    .firstOrNull { it.optString("venue") == tradeState.draft.venue }
+                                    ?.optString("available")
+                                    .orEmpty(),
                                 online = state.online,
                                 submitting = tradeState.submitting,
                                 error = tradeState.error,
                                 result = tradeState.result,
                                 onSide = { tradeVm.setSide(it) },
-                                onOutcome = { tradeVm.setOutcome(it) },
-                                onOrderType = { tradeVm.setOrderType(it) },
+                                onOutcome = { tradeVm.switchOutcome(it) },
+                                onMarketMode = { tradeVm.setMarketMode(it) },
                                 onPostOnly = { tradeVm.setPostOnly(it) },
                                 onPrice = { tradeVm.setPrice(it) },
+                                onStepPrice = { tradeVm.stepPrice(it) },
                                 onShares = { tradeVm.setShares(it) },
                                 onAmount = { tradeVm.setAmount(it) },
+                                onAddAmount = { tradeVm.addAmount(it) },
+                                onPercent = { tradeVm.setPercentOfHeld(it) },
+                                onSlippage = { tradeVm.setMaxSlippage(it) },
                                 onSubmit = { tradeVm.submit() },
                                 onCancel = { overlay = null },
                             )
@@ -361,8 +372,14 @@ class MainActivity : FragmentActivity() {
                                         tradeVm.newIntent()
                                         tradeVm.setMarket(marketId, title)
                                         applyCapabilities(tradeVm, state, marketId)
-                                        tradeVm.setOutcome(outcome)
-                                        tradeVm.loadMarketData(marketId, tradeVm.state.value.draft.venue, outcome)
+                                        // A fresh one-tap ticket: Buy, market order if the venue has one, nothing typed.
+                                        tradeVm.startTicket(outcome)
+                                        val ticketVenue = tradeVm.state.value.draft.venue
+                                        tradeVm.setHeld(
+                                            yes = heldShares(state.positions, ticketVenue, marketId, "YES"),
+                                            no = heldShares(state.positions, ticketVenue, marketId, "NO"),
+                                        )
+                                        tradeVm.loadMarketData(marketId, ticketVenue, outcome)
                                         overlay = "trade"
                                     },
                                 )
