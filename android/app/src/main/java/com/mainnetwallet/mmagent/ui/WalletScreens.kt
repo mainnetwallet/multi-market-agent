@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -42,12 +43,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.mainnetwallet.mmagent.data.AllowlistEntry
 import com.mainnetwallet.mmagent.data.Format
 import com.mainnetwallet.mmagent.data.WithdrawPreview
 import com.mainnetwallet.mmagent.data.WithdrawStep
+import com.mainnetwallet.mmagent.data.WithdrawUiState
+import com.mainnetwallet.mmagent.data.WithdrawViewModel
 import com.mainnetwallet.mmagent.data.objects
 import kotlinx.coroutines.delay
 import org.json.JSONObject
@@ -477,59 +479,35 @@ private fun WalletCard(
 }
 
 /**
- * The withdraw flow, three steps: amount and recipient, review with the password, then hold to confirm.
+ * The withdraw page: amount, receiver address, chain and token on one form. The fee is quoted live for the chain
+ * and token picked, so changing either shows what that route costs before anything is confirmed.
  *
  * Nothing leaves the account when it is confirmed: the server creates the withdrawal in a hold window
  * that can still be cancelled, and sends it only when the window ends.
  */
 @Composable
-fun WithdrawReviewScreen(
-    venue: String,
-    amount: String,
+fun WithdrawScreen(
+    state: WithdrawUiState,
     available: String,
-    selectedId: String,
-    entries: List<AllowlistEntry>,
-    preview: WithdrawPreview,
-    step: WithdrawStep,
-    error: String?,
     online: Boolean,
-    submitting: Boolean,
-    status: String?,
-    withdrawalId: String?,
     onAmountChange: (String) -> Unit,
     onMax: () -> Unit,
-    onSelectAddress: (AllowlistEntry) -> Unit,
-    onPreview: () -> Unit,
-    onStepUp: (String) -> Unit,
-    onConfirm: () -> Unit,
-    onBack: () -> Unit,
+    onRecipientChange: (String) -> Unit,
+    onSelectChain: (String) -> Unit,
+    onSelectToken: (String) -> Unit,
+    onUseSaved: (AllowlistEntry) -> Unit,
+    onSubmit: (String) -> Unit,
     onCancelWithdrawal: () -> Unit,
     onClose: () -> Unit,
 ) {
-    var password by remember { mutableStateOf("") }
-    // The password lives only in this field. It is cleared once the step-up has been asked for.
-    LaunchedEffect(step) {
-        if (step != WithdrawStep.PREVIEW) password = ""
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        SectionHeader("Withdraw", venue.uppercase())
-        if (step != WithdrawStep.DONE) {
-            WithdrawProgress(
-                when (step) {
-                    WithdrawStep.AMOUNT -> 0
-                    WithdrawStep.PREVIEW -> 1
-                    else -> 2
-                },
-            )
-            Spacer(Modifier.height(10.dp))
-        }
-        ErrorNote(error)
+        SectionHeader("Withdraw", state.venue.uppercase())
+        ErrorNote(state.error)
         if (!online) {
             Spacer(Modifier.height(6.dp))
             ErrorNote("The server is unreachable. Withdrawing is off until it answers again.")
@@ -543,75 +521,28 @@ fun WithdrawReviewScreen(
                 .verticalScroll(rememberScrollState()),
         ) {
             Spacer(Modifier.height(8.dp))
-            when (step) {
-                WithdrawStep.AMOUNT -> WithdrawAmountStep(
-                    amount = amount,
-                    available = available,
-                    selectedId = selectedId,
-                    entries = entries,
-                    online = online,
-                    submitting = submitting,
-                    onAmountChange = onAmountChange,
-                    onMax = onMax,
-                    onSelectAddress = onSelectAddress,
-                    onPreview = onPreview,
+            if (state.step == WithdrawStep.DONE) {
+                WithdrawDone(
+                    amount = state.amount,
+                    preview = state.preview,
+                    status = state.status,
+                    withdrawalId = state.withdrawalId,
+                    submitting = state.submitting,
+                    onCancelWithdrawal = onCancelWithdrawal,
                     onClose = onClose,
                 )
-
-                WithdrawStep.PREVIEW -> {
-                    WithdrawSummary(venue, amount, preview, full = true)
-                    Spacer(Modifier.height(14.dp))
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text("Your password") },
-                        supportingText = { Text("Asked again for every withdrawal. Never stored.") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    ConfirmButton(
-                        label = "Continue",
-                        enabled = password.isNotBlank() && online,
-                        busy = submitting,
-                        onClick = { onStepUp(password) },
-                    )
-                    TextButton(onClick = onBack, enabled = !submitting, modifier = Modifier.fillMaxWidth()) {
-                        Text("Back")
-                    }
-                }
-
-                WithdrawStep.STEP_UP, WithdrawStep.CONFIRMING -> {
-                    WithdrawSummary(venue, amount, preview, full = false)
-                    Spacer(Modifier.height(16.dp))
-                    HoldToConfirmButton(
-                        label = "Hold to withdraw",
-                        enabled = !submitting && online,
-                        busy = submitting,
-                        danger = true,
-                        onConfirmed = onConfirm,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "This creates the withdrawal. It waits ${preview.holdMinutes} min before it is sent, " +
-                            "and you can cancel it until then.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    TextButton(onClick = onBack, enabled = !submitting, modifier = Modifier.fillMaxWidth()) {
-                        Text("Back")
-                    }
-                }
-
-                WithdrawStep.DONE -> WithdrawDone(
-                    amount = amount,
-                    preview = preview,
-                    status = status,
-                    withdrawalId = withdrawalId,
-                    submitting = submitting,
-                    onCancelWithdrawal = onCancelWithdrawal,
+            } else {
+                WithdrawForm(
+                    state = state,
+                    available = available,
+                    online = online,
+                    onAmountChange = onAmountChange,
+                    onMax = onMax,
+                    onRecipientChange = onRecipientChange,
+                    onSelectChain = onSelectChain,
+                    onSelectToken = onSelectToken,
+                    onUseSaved = onUseSaved,
+                    onSubmit = onSubmit,
                     onClose = onClose,
                 )
             }
@@ -620,53 +551,33 @@ fun WithdrawReviewScreen(
     }
 }
 
-/** Three labelled stages; the ones reached so far are tinted. */
 @Composable
-private fun WithdrawProgress(current: Int) {
-    val labels = listOf("1  Amount", "2  Review", "3  Confirm")
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-        labels.forEachIndexed { index, label ->
-            val reached = index <= current
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                textAlign = TextAlign.Center,
-                color = if (reached) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(
-                        if (reached) {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                        } else {
-                            MaterialTheme.colorScheme.surface
-                        },
-                    )
-                    .padding(vertical = 8.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun WithdrawAmountStep(
-    amount: String,
+private fun WithdrawForm(
+    state: WithdrawUiState,
     available: String,
-    selectedId: String,
-    entries: List<AllowlistEntry>,
     online: Boolean,
-    submitting: Boolean,
     onAmountChange: (String) -> Unit,
     onMax: () -> Unit,
-    onSelectAddress: (AllowlistEntry) -> Unit,
-    onPreview: () -> Unit,
+    onRecipientChange: (String) -> Unit,
+    onSelectChain: (String) -> Unit,
+    onSelectToken: (String) -> Unit,
+    onUseSaved: (AllowlistEntry) -> Unit,
+    onSubmit: (String) -> Unit,
     onClose: () -> Unit,
 ) {
-    val parsed = amount.toBigDecimalOrNull()
+    // The password lives only in this field. It is cleared as soon as it has been sent.
+    var password by remember { mutableStateOf("") }
+
+    val parsed = state.amount.toBigDecimalOrNull()
     val balance = available.toBigDecimalOrNull()
     val tooMuch = parsed != null && balance != null && parsed > balance
-    val selected = entries.firstOrNull { it.id == selectedId }
+    val minimum = state.selectedToken?.minUsd?.toBigDecimalOrNull()
+    val belowMinimum = parsed != null && minimum != null && parsed < minimum
+    val addressInvalid = state.recipient.isNotEmpty() && state.savedId.isBlank() &&
+        !WithdrawViewModel.isEvmAddress(state.recipient)
+    val preview = state.preview
 
+    // 1. Amount
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier.fillMaxWidth(),
@@ -685,14 +596,21 @@ private fun WithdrawAmountStep(
             }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
-                value = amount,
+                value = state.amount,
                 onValueChange = onAmountChange,
                 label = { Text("Amount (USD)") },
                 singleLine = true,
-                isError = tooMuch,
-                supportingText = { if (tooMuch) Text("More than the available balance.") },
+                enabled = !state.submitting,
+                isError = tooMuch || belowMinimum,
+                supportingText = {
+                    if (tooMuch) {
+                        Text("More than the available balance.")
+                    } else if (belowMinimum) {
+                        Text("The minimum for ${state.token} on ${state.selectedChain?.name.orEmpty()} is ${Format.money(state.selectedToken?.minUsd.orEmpty())}.")
+                    }
+                },
                 trailingIcon = {
-                    TextButton(onClick = onMax, enabled = balance != null && balance.signum() > 0) { Text("Max") }
+                    TextButton(onClick = onMax, enabled = !state.submitting && balance != null && balance.signum() > 0) { Text("Max") }
                 },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
@@ -700,103 +618,184 @@ private fun WithdrawAmountStep(
         }
     }
 
-    Spacer(Modifier.height(12.dp))
-    SectionHeader("Send to", "Allowlisted addresses only")
-    if (entries.isEmpty()) {
-        UnsupportedCard(
-            title = "No recipient yet",
-            reason = "Add an address under Wallet first. A new address waits out a cooling period before it can be used.",
-        )
-    } else {
-        entries.forEach { entry ->
-            val usable = entry.isUsable()
-            val isSelected = entry.id == selectedId
-            RowCard(
-                title = entry.label,
-                subtitle = "${entry.network} · ${entry.asset}",
-                detail = Format.groupAddress(entry.address),
-                accent = if (isSelected) MaterialTheme.colorScheme.primary else null,
-                onClick = if (usable) ({ onSelectAddress(entry) }) else null,
-                trailing = {
-                    when {
-                        isSelected -> Text(
-                            "Selected",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-
-                        !usable -> Text(
-                            "Ready in ${Format.countdown(entry.usableAt)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Palette.Alert,
-                        )
-
-                        else -> Unit
-                    }
+    // 2. Receiver address
+    Spacer(Modifier.height(14.dp))
+    OutlinedTextField(
+        value = state.recipient,
+        onValueChange = onRecipientChange,
+        label = { Text("Receiver address") },
+        placeholder = { Text("0x…") },
+        singleLine = true,
+        enabled = !state.submitting,
+        isError = addressInvalid,
+        supportingText = {
+            Text(
+                if (addressInvalid) {
+                    "Not a valid EVM address: 0x followed by 40 hex characters."
+                } else {
+                    "The address that receives the money, on the chain picked below."
                 },
             )
+        },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    if (state.entries.isNotEmpty()) {
+        Spacer(Modifier.height(6.dp))
+        Text("Saved addresses", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.entries, key = { it.id }) { entry ->
+                ChoiceChip(
+                    label = if (entry.isUsable()) entry.label else "${entry.label} · waiting",
+                    selected = entry.id == state.savedId,
+                    enabled = entry.isUsable() && !state.submitting,
+                    onClick = { onUseSaved(entry) },
+                )
+            }
+        }
+    }
+    if (state.requireAllowlist) {
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "This server only sends to saved addresses. Pick one above.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+    // 3. Chain and 4. token, from the bridge's own list
+    Spacer(Modifier.height(14.dp))
+    when {
+        state.optionsLoading -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+
+        state.chains.isEmpty() -> UnsupportedCard(
+            title = "No chains available",
+            reason = state.optionsReason ?: "The bridge lists no chain this app can withdraw to.",
+        )
+
+        else -> {
+            Text("Chain", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(6.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(state.chains, key = { it.id }) { chain ->
+                    ChoiceChip(
+                        label = chain.name,
+                        selected = chain.id == state.chainId,
+                        enabled = !state.submitting,
+                        onClick = { onSelectChain(chain.id) },
+                    )
+                }
+            }
+            val tokens = state.selectedChain?.tokens.orEmpty()
+            if (tokens.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Text("Token", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(tokens, key = { it.address + it.symbol }) { token ->
+                        ChoiceChip(
+                            label = token.symbol,
+                            selected = token.symbol.equals(state.token, ignoreCase = true),
+                            enabled = !state.submitting,
+                            onClick = { onSelectToken(token.symbol) },
+                        )
+                    }
+                }
+            }
         }
     }
 
-    Spacer(Modifier.height(12.dp))
-    ConfirmButton(
-        label = "Review withdrawal",
-        enabled = parsed != null && parsed.signum() > 0 && !tooMuch && selected != null && selected.isUsable() && online,
-        busy = submitting,
-        onClick = onPreview,
-    )
-    TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
-}
-
-/** The amount, the recipient and what the server said about fee and timing. [full] adds the limits. */
-@Composable
-private fun WithdrawSummary(venue: String, amount: String, preview: WithdrawPreview, full: Boolean) {
+    // The fee for exactly this chain and token, quoted again whenever any input changes.
+    Spacer(Modifier.height(14.dp))
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(16.dp)) {
-            Text(
-                Format.money(amount),
-                style = MaterialTheme.typography.headlineMedium,
-            )
-            Text(
-                "from ${venue.uppercase()}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "To ${preview.label}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                Format.groupAddress(preview.recipient),
-                style = MaterialTheme.typography.bodyMedium,
-                fontFamily = FontFamily.Monospace,
-            )
-            Spacer(Modifier.height(10.dp))
-            ValueRow("Network", preview.network)
-            ValueRow("Token", preview.asset)
-            ValueRow("Fee", Format.money(preview.feeUsd))
-            if (preview.etaSeconds > 0) {
-                ValueRow("Arrives in about", "${maxOf(1, preview.etaSeconds / 60)} min")
-            }
-            ValueRow("Hold before sending", "${preview.holdMinutes} min")
-            if (full) {
-                ValueRow("Daily limit left", Format.money(preview.dailyRemainingUsd))
+            when {
+                state.quoting -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Getting the fee…", style = MaterialTheme.typography.bodyMedium)
+                }
+
+                state.quoteError != null -> Text(
+                    state.quoteError.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Palette.Alert,
+                )
+
+                state.quoteReady -> {
+                    ValueRow("Route", "${preview.asset} on ${preview.network}")
+                    ValueRow("Fee", Format.money(preview.feeUsd), emphasise = true)
+                    if ((preview.receiveUsd.toBigDecimalOrNull()?.signum() ?: 0) > 0) {
+                        ValueRow("You receive about", Format.money(preview.receiveUsd))
+                    }
+                    if (preview.etaSeconds > 0) {
+                        ValueRow("Arrives in about", "${maxOf(1, preview.etaSeconds / 60)} min")
+                    }
+                    ValueRow("Hold before sending", "${preview.holdMinutes} min")
+                    ValueRow("Daily limit left", Format.money(preview.dailyRemainingUsd))
+                }
+
+                else -> Text(
+                    "Enter the amount, the receiver address, the chain and the token to see the fee.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
-    if (full) {
+    if (state.quoteReady) {
         Spacer(Modifier.height(8.dp))
         Text(
             "Check the address against your own record. A transfer to a wrong address cannot be undone.",
             style = MaterialTheme.typography.bodySmall,
             color = Palette.Alert,
         )
+    }
+
+    // Password, then hold to withdraw
+    Spacer(Modifier.height(14.dp))
+    OutlinedTextField(
+        value = password,
+        onValueChange = { password = it },
+        label = { Text("Your password") },
+        supportingText = { Text("Asked again for every withdrawal. Never stored.") },
+        singleLine = true,
+        enabled = !state.submitting,
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(12.dp))
+    HoldToConfirmButton(
+        label = "Hold to withdraw",
+        enabled = online && !state.submitting && state.quoteReady && !tooMuch && !belowMinimum &&
+            (password.isNotBlank() || !state.stepUpToken.isNullOrBlank()),
+        busy = state.submitting,
+        danger = true,
+        onConfirmed = {
+            onSubmit(password)
+            password = ""
+        },
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        if (preview.holdMinutes > 0) {
+            "This creates the withdrawal. It waits ${preview.holdMinutes} min before it is sent, and you can cancel it until then."
+        } else {
+            "This creates the withdrawal. It waits before it is sent, and you can cancel it until then."
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    TextButton(onClick = onClose, enabled = !state.submitting, modifier = Modifier.fillMaxWidth()) {
+        Text("Cancel")
     }
 }
 

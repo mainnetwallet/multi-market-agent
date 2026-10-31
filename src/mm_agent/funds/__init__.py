@@ -568,14 +568,30 @@ class FundsService:
         *,
         venue: VenueId,
         amount: Decimal,
-        address_id: str,
+        address_id: str | None = None,
+        recipient: str | None = None,
+        network: str | None = None,
+        asset: str | None = None,
     ) -> dict[str, Any]:
-        """Fee, network, ETA, hold window and the daily limit left. Sends nothing."""
+        """Fee, network, ETA, hold window and the daily limit left. Sends nothing.
+
+        The receiver is either an allowlisted address (`address_id`) or, unless `FUNDS_REQUIRE_ALLOWLIST` is
+        on, an address typed in with its chain and token (`recipient`, `network`, `asset`).
+        """
 
         self.require_enabled()
         if amount <= 0:
             raise FundsError("amount must be positive", code="bad_amount", status=400)
-        entry = self._usable_allowlist_entry(address_id)
+        entry = await self._resolve_destination(
+            venue=venue, address_id=address_id, recipient=recipient, network=network, asset=asset
+        )
+        minimum = entry.get("min_usd")
+        if minimum is not None and amount < Decimal(str(minimum)):
+            raise FundsError(
+                f"the minimum for {entry['asset']} on {entry['network']} is {minimum} USD",
+                code="below_minimum",
+                status=400,
+            )
         daily_limit = self.settings.funds_withdrawal_daily_limit_usd
         used = self.store.withdrawn_today(venue)
         remaining = daily_limit - used
@@ -586,18 +602,23 @@ class FundsService:
             )
         fee = ZERO
         eta = 0
+        receive = ZERO
         if venue is VenueId.POLYMARKET:
             quote = await self._polymarket_quote(amount, entry)
             fee = Decimal(str(quote.get("fee_usd") or "0"))
             eta = int(quote.get("eta_seconds") or 0)
+            receive = Decimal(str(quote.get("est_output_usd") or "0"))
         return {
             "venue": venue.value,
             "amount_usd": str(amount),
             "fee_usd": str(fee),
+            "est_output_usd": str(receive),
             "network": entry["network"],
             "asset": entry["asset"],
             "recipient": entry["address"],
             "label": entry["label"],
+            "address_id": entry.get("address_id") or "",
+            "direct": bool(entry.get("direct")),
             "eta_seconds": eta,
             "hold_minutes": self.settings.funds_withdrawal_hold_minutes,
             "daily_limit_usd": str(daily_limit),
@@ -605,12 +626,108 @@ class FundsService:
             "daily_remaining_usd": str(remaining),
         }
 
+    async def withdraw_options(self, venue: VenueId) -> dict[str, Any]:
+        """Chains and tokens a withdrawal can be sent to, from the bridge's own list. Polymarket only.
+
+        Only chains with an EVM address are offered: the receiver address is checked against the EVM address
+        format (and its checksum), and no other address type is validated here.
+        """
+
+        self.require_enabled()
+        official = "https://docs.polymarket.com/trading/bridge/supported-assets"
+        if venue is not VenueId.POLYMARKET:
+            return {"supported": False, "chains": [], "reason": "This venue has no withdrawal API."}
+        try:
+            assets = await self._polymarket_assets()
+        except Exception as exc:
+            return {
+                "supported": False,
+                "chains": [],
+                "official_url": official,
+                "reason": f"Could not read the bridge's supported assets: {type(exc).__name__}",
+            }
+        chains = self._group_assets(assets)
+        placed = self._resolve_address_types(chains, {"evm", "svm", "btc", "tron"})
+        chains = [chain for chain in chains if placed.get(str(chain["chain_id"])) == "evm"]
+        # A symbol listed twice on one chain cannot be told apart by the symbol the withdrawal records, so
+        # neither is offered: a withdrawal must never be quoted for one token and sent as another.
+        for chain in chains:
+            symbols = [str(token["symbol"]).upper() for token in chain["tokens"]]
+            chain["tokens"] = [t for t in chain["tokens"] if symbols.count(str(t["symbol"]).upper()) == 1]
+        chains = [chain for chain in chains if chain["tokens"]]
+        return {
+            "supported": bool(chains),
+            "chains": chains,
+            "official_url": official,
+            "reason": None if chains else "The bridge lists no chain this app can validate an address for.",
+        }
+
+    async def _resolve_destination(
+        self,
+        *,
+        venue: VenueId,
+        address_id: str | None,
+        recipient: str | None,
+        network: str | None,
+        asset: str | None,
+    ) -> dict[str, Any]:
+        """The receiver of a withdrawal: an allowlist entry, or a typed-in address with chain and token."""
+
+        if address_id:
+            entry = self._usable_allowlist_entry(address_id)
+            return {**entry, "address_id": address_id, "direct": False}
+        if self.settings.funds_require_allowlist:
+            raise FundsError(
+                "withdrawals may only go to an allowlisted address",
+                code="allowlist_required",
+                status=400,
+            )
+        address = (recipient or "").strip()
+        wanted_chain = (network or "").strip().lower()
+        wanted_asset = (asset or "").strip().lower()
+        if not address or not wanted_chain or not wanted_asset:
+            raise FundsError("enter the receiver address, the chain and the token", code="missing_field", status=400)
+        if venue is not VenueId.POLYMARKET:
+            raise FundsError(
+                f"{venue.value} has no withdrawal API; the venue's own app must be used",
+                code="unsupported_withdraw",
+                status=400,
+            )
+        if not _valid_address(address):
+            raise FundsError(
+                "that address is not a valid EVM address (or its checksum is wrong)",
+                code="bad_address",
+                status=400,
+            )
+        options = await self.withdraw_options(venue)
+        for chain in options["chains"]:
+            if wanted_chain not in (str(chain["chain_id"]).lower(), str(chain["chain_name"]).lower()):
+                continue
+            for token in chain["tokens"]:
+                if wanted_asset in (str(token["symbol"]).lower(), str(token["address"]).lower()):
+                    return {
+                        "address": address,
+                        "network": str(chain["chain_name"]),
+                        "asset": str(token["symbol"]),
+                        "label": "Typed-in address",
+                        "address_id": "",
+                        "direct": True,
+                        "min_usd": token.get("min_usd"),
+                    }
+        raise FundsError(
+            f"the bridge does not offer {network}/{asset} for a withdrawal to an EVM address",
+            code="unsupported_destination",
+            status=400,
+        )
+
     async def _bridge_asset(self, network: str, asset: str) -> dict[str, str]:
         """Resolve a chain id and token address from the bridge's own list.
 
         The bridge is the only authority on which chain and token are valid, so
         the operator's choice is looked up there instead of being trusted.
         """
+        if not network.strip() or not asset.strip():
+            raise FundsError("a chain and a token are both required", code="unsupported_destination", status=400)
         base = self.settings.funds_polymarket_bridge_url.rstrip("/")
         try:
             client = await self.client()
@@ -682,13 +799,18 @@ class FundsService:
         *,
         venue: VenueId,
         amount: Decimal,
-        address_id: str,
+        address_id: str | None = None,
+        recipient: str | None = None,
+        network: str | None = None,
+        asset: str | None = None,
         actor: str,
     ) -> dict[str, Any]:
         """Create a withdrawal in the hold window. Nothing is sent yet."""
 
         self.require_enabled()
-        preview = await self.preview_withdraw(venue=venue, amount=amount, address_id=address_id)
+        preview = await self.preview_withdraw(
+            venue=venue, amount=amount, address_id=address_id, recipient=recipient, network=network, asset=asset
+        )
         from datetime import timedelta
 
         hold_minutes = self.settings.funds_withdrawal_hold_minutes
@@ -696,7 +818,7 @@ class FundsService:
         withdrawal_id = self.store.create_withdrawal(
             venue=venue.value,
             amount_usd=amount,
-            address_id=address_id,
+            address_id=preview["address_id"],
             recipient=preview["recipient"],
             network=preview["network"],
             asset=preview["asset"],
@@ -708,7 +830,15 @@ class FundsService:
         self.store.audit(
             actor,
             "funds.withdraw.create",
-            {"id": withdrawal_id, "venue": venue.value, "amount_usd": str(amount)},
+            {
+                "id": withdrawal_id,
+                "venue": venue.value,
+                "amount_usd": str(amount),
+                "recipient": preview["recipient"],
+                "network": preview["network"],
+                "asset": preview["asset"],
+                "direct": preview["direct"],
+            },
         )
         return {**preview, "id": withdrawal_id, "status": "PENDING_HOLD", "hold_until": hold_until.isoformat()}
 
@@ -833,6 +963,15 @@ class FundsService:
             "tx_hash": receipt.tx_hash,
         }
 
+    def _record_destination(self, record: dict[str, Any]) -> tuple[str, str]:
+        """Chain and token of a withdrawal: its allowlist entry if it has one, else what the record itself holds."""
+
+        entry = (self.store.allowlist_get(record["address_id"]) if record.get("address_id") else None) or {}
+        return (
+            str(entry.get("network") or record.get("network") or ""),
+            str(entry.get("asset") or record.get("asset") or ""),
+        )
+
     async def _polymarket_withdraw_address(self, record: dict[str, Any]) -> str:
         """Ask the bridge for the address tied to this exact destination.
 
@@ -842,8 +981,7 @@ class FundsService:
         """
 
         base = self.settings.funds_polymarket_bridge_url.rstrip("/")
-        entry = self.store.allowlist_get(record["address_id"]) or {}
-        destination = await self._bridge_asset(entry.get("network") or "", entry.get("asset") or "")
+        destination = await self._bridge_asset(*self._record_destination(record))
         body = {
             "address": await self._polymarket_wallet(),
             "toChainId": destination["chain_id"],
@@ -924,8 +1062,7 @@ class FundsService:
         response.raise_for_status()
         body = response.json()
         rows = body.get("transactions") or []
-        entry = self.store.allowlist_get(record["address_id"]) or {}
-        destination = await self._bridge_asset(entry.get("network") or "", entry.get("asset") or "")
+        destination = await self._bridge_asset(*self._record_destination(record))
         wanted_amount = int(Decimal(str(record["amount_usd"])) * Decimal("1000000"))
         for row in rows:
             if not isinstance(row, dict):

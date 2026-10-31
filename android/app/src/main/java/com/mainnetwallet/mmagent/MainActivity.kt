@@ -44,7 +44,7 @@ import com.mainnetwallet.mmagent.ui.Tab
 import com.mainnetwallet.mmagent.ui.TradeSheetScreen
 import com.mainnetwallet.mmagent.ui.VenueSwitcherDialog
 import com.mainnetwallet.mmagent.ui.WalletScreen
-import com.mainnetwallet.mmagent.ui.WithdrawReviewScreen
+import com.mainnetwallet.mmagent.ui.WithdrawScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -257,39 +257,28 @@ class MainActivity : FragmentActivity() {
                                 onBack = { overlay = null },
                             )
 
-                            "withdraw" -> WithdrawReviewScreen(
-                                venue = withdrawState.venue,
-                                amount = withdrawState.amount,
-                                available = state.balances
+                            "withdraw" -> {
+                                val availableToWithdraw = state.balances
                                     .firstOrNull { it.optString("venue") == withdrawState.venue }
                                     ?.optString("available")
-                                    .orEmpty(),
-                                selectedId = withdrawState.addressId,
-                                entries = withdrawState.entries,
-                                preview = withdrawState.preview,
-                                step = withdrawState.step,
-                                error = withdrawState.error,
-                                online = state.online,
-                                submitting = withdrawState.submitting,
-                                status = withdrawState.status,
-                                withdrawalId = withdrawState.withdrawalId,
-                                onAmountChange = { withdrawVm.setAmount(it) },
-                                onMax = {
-                                    withdrawVm.setMax(
-                                        state.balances
-                                            .firstOrNull { it.optString("venue") == withdrawState.venue }
-                                            ?.optString("available")
-                                            .orEmpty(),
-                                    )
-                                },
-                                onSelectAddress = { withdrawVm.setAddress(it) },
-                                onPreview = { withdrawVm.preview() },
-                                onStepUp = { withdrawVm.stepUp(it) },
-                                onConfirm = { withdrawVm.confirm { ok -> if (ok) appViewModel.refresh() } },
-                                onBack = { withdrawVm.back() },
-                                onCancelWithdrawal = { withdrawVm.cancelCreated { appViewModel.refresh() } },
-                                onClose = { overlay = null; withdrawVm.reset() },
-                            )
+                                    .orEmpty()
+                                WithdrawScreen(
+                                    state = withdrawState,
+                                    available = availableToWithdraw,
+                                    online = state.online,
+                                    onAmountChange = { withdrawVm.setAmount(it) },
+                                    onMax = { withdrawVm.setMax(availableToWithdraw) },
+                                    onRecipientChange = { withdrawVm.setRecipient(it) },
+                                    onSelectChain = { withdrawVm.selectChain(it) },
+                                    onSelectToken = { withdrawVm.selectToken(it) },
+                                    onUseSaved = { withdrawVm.useSaved(it) },
+                                    onSubmit = { password ->
+                                        withdrawVm.submit(password) { ok -> if (ok) appViewModel.refresh() }
+                                    },
+                                    onCancelWithdrawal = { withdrawVm.cancelCreated { appViewModel.refresh() } },
+                                    onClose = { overlay = null; withdrawVm.reset() },
+                                )
+                            }
 
                             "settings" -> com.mainnetwallet.mmagent.ui.SettingsScreen(
                                 state = state,
@@ -409,6 +398,7 @@ class MainActivity : FragmentActivity() {
                                     onWithdraw = { venue ->
                                         withdrawVm.reset()
                                         withdrawVm.setVenue(venue)
+                                        withdrawVm.loadOptions()
                                         withdrawVm.loadAllowlist()
                                         overlay = "withdraw"
                                     },

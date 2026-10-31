@@ -2,6 +2,9 @@ package com.mainnetwallet.mmagent.data
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,8 +15,8 @@ import java.math.RoundingMode
 import java.time.Instant
 import java.util.UUID
 
-/** Where the withdrawal flow currently is. */
-enum class WithdrawStep { AMOUNT, PREVIEW, STEP_UP, CONFIRMING, DONE }
+/** The withdraw page is one form; [DONE] replaces it once the withdrawal has been created. */
+enum class WithdrawStep { FORM, DONE }
 
 data class AllowlistEntry(
     val id: String,
@@ -30,8 +33,15 @@ data class AllowlistEntry(
     }
 }
 
+/** A token the bridge can deliver on a chain. [minUsd] is the smallest withdrawal it accepts, when it says so. */
+data class WithdrawToken(val symbol: String, val address: String, val minUsd: String?)
+
+/** A chain the bridge can deliver to, with its tokens, exactly as the server read them from the bridge. */
+data class WithdrawChain(val id: String, val name: String, val tokens: List<WithdrawToken>)
+
 data class WithdrawPreview(
     val feeUsd: String = "0",
+    val receiveUsd: String = "0",
     val network: String = "",
     val asset: String = "",
     val recipient: String = "",
@@ -43,30 +53,61 @@ data class WithdrawPreview(
 )
 
 data class WithdrawUiState(
-    val step: WithdrawStep = WithdrawStep.AMOUNT,
+    val step: WithdrawStep = WithdrawStep.FORM,
     val venue: String = "",
     val amount: String = "",
-    val addressId: String = "",
+    /** The receiver address as typed or pasted (spaces removed). */
+    val recipient: String = "",
+    val chainId: String = "",
+    /** The token symbol on [chainId]. */
+    val token: String = "",
+    /** The saved (allowlisted) address the receiver was taken from; blank for a typed-in address. */
+    val savedId: String = "",
+    val chains: List<WithdrawChain> = emptyList(),
+    val optionsLoading: Boolean = false,
+    val optionsReason: String? = null,
+    val requireAllowlist: Boolean = false,
     val entries: List<AllowlistEntry> = emptyList(),
     val preview: WithdrawPreview = WithdrawPreview(),
+    /** The [inputKey] the [preview] was fetched for; the page only trusts a fee that matches what is on screen. */
+    val quoteKey: String = "",
+    val quoting: Boolean = false,
+    val quoteError: String? = null,
     val stepUpToken: String? = null,
     val submitting: Boolean = false,
     val error: String? = null,
     val withdrawalId: String? = null,
     val status: String? = null,
     val idempotencyKey: String = UUID.randomUUID().toString(),
-)
+) {
+    /** Everything the fee depends on. A change in any of it makes the shown fee stale. */
+    val inputKey: String
+        get() = listOf(venue, amount, recipient.lowercase(), chainId, token.lowercase(), savedId).joinToString("|")
+
+    /** True when the fee on screen was quoted for exactly the inputs on screen. */
+    val quoteReady: Boolean
+        get() = !quoting && quoteError == null && quoteKey.isNotEmpty() && quoteKey == inputKey
+
+    val selectedChain: WithdrawChain?
+        get() = chains.firstOrNull { it.id == chainId }
+
+    val selectedToken: WithdrawToken?
+        get() = selectedChain?.tokens?.firstOrNull { it.symbol.equals(token, ignoreCase = true) }
+}
 
 /**
- * The withdraw flow: amount → preview → step-up → hold-to-confirm → status.
+ * The withdraw page: amount, receiver address, chain and token on one form, with the fee quoted live for the
+ * chain and token picked, then the password and a hold-to-confirm.
  *
- * The idempotency key is generated once per intent and reused if the operator taps
- * again after a timeout, so a retry can never create a second withdrawal.
+ * The idempotency key is generated once per intent (it changes whenever an input changes) and reused if the
+ * operator taps again after a timeout, so a retry can never create a second withdrawal.
  */
 class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
 
     private val _state = MutableStateFlow(WithdrawUiState())
     val state: StateFlow<WithdrawUiState> = _state.asStateFlow()
+
+    private var quoteJob: Job? = null
 
     fun setVenue(venue: String) {
         _state.value = _state.value.copy(venue = venue)
@@ -77,18 +118,99 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
         val cleaned = amount.filter { it.isDigit() || it == '.' }
         val dot = cleaned.indexOf('.')
         val single = if (dot < 0) cleaned else cleaned.substring(0, dot + 1) + cleaned.substring(dot + 1).replace(".", "")
-        _state.value = _state.value.copy(amount = single.take(18))
+        changeInputs { copy(amount = single.take(18)) }
     }
 
     /** The whole available balance, rounded down to cents. */
     fun setMax(available: String) {
         val value = available.toBigDecimalOrNull() ?: return
         if (value.signum() <= 0) return
-        _state.value = _state.value.copy(amount = value.setScale(2, RoundingMode.DOWN).toPlainString())
+        changeInputs { copy(amount = value.setScale(2, RoundingMode.DOWN).toPlainString()) }
     }
 
-    fun setAddress(entry: AllowlistEntry) {
-        _state.value = _state.value.copy(addressId = entry.id)
+    /** The receiver address as typed or pasted. Whitespace is dropped; the server checks the format and checksum. */
+    fun setRecipient(value: String) {
+        changeInputs { copy(recipient = value.filter { !it.isWhitespace() }.take(66), savedId = "") }
+    }
+
+    /** A new chain keeps the token if the chain offers it, otherwise starts on its first token. */
+    fun selectChain(chainId: String) {
+        val chain = _state.value.chains.firstOrNull { it.id == chainId } ?: return
+        changeInputs {
+            val keep = chain.tokens.firstOrNull { it.symbol.equals(token, ignoreCase = true) } ?: chain.tokens.firstOrNull()
+            copy(chainId = chain.id, token = keep?.symbol.orEmpty(), savedId = "")
+        }
+    }
+
+    fun selectToken(symbol: String) {
+        changeInputs { copy(token = symbol, savedId = "") }
+    }
+
+    /** Fill the receiver from a saved address; its chain and token are picked too when the bridge lists them. */
+    fun useSaved(entry: AllowlistEntry) {
+        if (!entry.isUsable()) return
+        changeInputs {
+            val chain = chains.firstOrNull {
+                it.id.equals(entry.network, ignoreCase = true) || it.name.equals(entry.network, ignoreCase = true)
+            }
+            val matched = chain?.tokens?.firstOrNull { it.symbol.equals(entry.asset, ignoreCase = true) }
+            copy(
+                recipient = entry.address,
+                savedId = entry.id,
+                chainId = if (chain != null && matched != null) chain.id else chainId,
+                token = if (chain != null && matched != null) matched.symbol else token,
+            )
+        }
+    }
+
+    /** Any change to what is on the form: a new intent, a new idempotency key, a fresh fee. */
+    private fun changeInputs(transform: WithdrawUiState.() -> WithdrawUiState) {
+        val next = _state.value.transform()
+        // A step-up token is bound to one confirmation, so it does not outlive a changed form.
+        _state.value = next.copy(idempotencyKey = UUID.randomUUID().toString(), stepUpToken = null, error = null)
+        refreshQuote()
+    }
+
+    /** The chains and tokens the bridge delivers to. The first chain and token are picked until the person picks. */
+    fun loadOptions() {
+        val venue = _state.value.venue
+        if (venue.isBlank()) return
+        _state.value = _state.value.copy(optionsLoading = true, optionsReason = null)
+        viewModelScope.launch {
+            try {
+                val response = api.get("/v1/funds/$venue/withdraw/options")
+                val chains = ApiClient.arrayOf(response, "chains").objects().map { chain ->
+                    WithdrawChain(
+                        id = chain.optString("chain_id"),
+                        name = chain.optString("chain_name"),
+                        tokens = ApiClient.arrayOf(chain, "tokens").objects().map { token ->
+                            WithdrawToken(
+                                symbol = token.optString("symbol"),
+                                address = token.optString("address"),
+                                minUsd = token.optString("min_usd").takeIf { it.isNotBlank() && it != "null" },
+                            )
+                        },
+                    )
+                }
+                val current = _state.value
+                val chain = chains.firstOrNull { it.id == current.chainId } ?: chains.firstOrNull()
+                val token = chain?.tokens?.firstOrNull { it.symbol.equals(current.token, ignoreCase = true) }
+                    ?: chain?.tokens?.firstOrNull()
+                _state.value = current.copy(
+                    chains = chains,
+                    chainId = chain?.id.orEmpty(),
+                    token = token?.symbol.orEmpty(),
+                    optionsLoading = false,
+                    optionsReason = response.optString("reason").takeIf { chains.isEmpty() && it.isNotBlank() && it != "null" },
+                    requireAllowlist = response.optBoolean("require_allowlist"),
+                )
+                refreshQuote()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(optionsLoading = false, optionsReason = e.message ?: "Could not load the chains.")
+            }
+        }
     }
 
     fun loadAllowlist() {
@@ -106,10 +228,9 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
                     )
                 }
                 val current = _state.value
-                // Keep the pick if it is still usable; otherwise the only usable address is picked for the operator.
-                val chosen = entries.firstOrNull { it.id == current.addressId && it.isUsable() }
-                    ?: entries.singleOrNull { it.isUsable() }
-                _state.value = current.copy(entries = entries, addressId = chosen?.id.orEmpty())
+                // A saved address that has since been removed can no longer be the receiver.
+                val stillSaved = current.savedId.isBlank() || entries.any { it.id == current.savedId }
+                _state.value = current.copy(entries = entries, savedId = if (stillSaved) current.savedId else "")
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message)
             }
@@ -174,38 +295,45 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
-    fun preview(onReady: () -> Unit = {}) {
-        val current = _state.value
-        if (current.submitting || current.addressId.isBlank()) return
-        val amount = current.amount.trim()
-        val parsed = amount.toBigDecimalOrNull()
-        if (parsed == null || parsed.signum() <= 0) {
-            _state.value = current.copy(error = "Enter an amount greater than zero.")
+    /** The request body the server previews and creates a withdrawal from. */
+    private fun requestBody(s: WithdrawUiState): JSONObject =
+        if (s.savedId.isNotBlank()) {
+            ApiClient.jsonOf("venue" to s.venue, "amount" to s.amount, "address_id" to s.savedId)
+        } else {
+            ApiClient.jsonOf(
+                "venue" to s.venue,
+                "amount" to s.amount,
+                "recipient" to s.recipient,
+                "network" to s.chainId,
+                "asset" to s.token,
+            )
+        }
+
+    /** Ask the server for the fee once the form is complete. A short pause lets typing finish first. */
+    private fun refreshQuote() {
+        quoteJob?.cancel()
+        val s = _state.value
+        val amount = s.amount.toBigDecimalOrNull()
+        val complete = amount != null && amount.signum() > 0 && s.venue.isNotBlank() &&
+            (s.savedId.isNotBlank() || (isEvmAddress(s.recipient) && s.chainId.isNotBlank() && s.token.isNotBlank()))
+        if (!complete) {
+            _state.value = s.copy(quoting = false, quoteKey = "", quoteError = null, preview = WithdrawPreview())
             return
         }
-        // A preview starts a new intent, so it gets a new idempotency key: a changed amount or recipient
-        // must never be answered with the stored result of an earlier attempt.
-        _state.value = current.copy(
-            submitting = true,
-            error = null,
-            amount = amount,
-            idempotencyKey = UUID.randomUUID().toString(),
-        )
-        viewModelScope.launch {
+        val key = s.inputKey
+        _state.value = s.copy(quoting = true, quoteError = null)
+        quoteJob = viewModelScope.launch {
+            delay(QUOTE_DELAY_MS)
             try {
-                val response = api.post(
-                    "/v1/funds/withdraw/preview",
-                    ApiClient.jsonOf(
-                        "venue" to current.venue,
-                        "amount" to amount,
-                        "address_id" to current.addressId,
-                    )
-                )
+                val response = api.post("/v1/funds/withdraw/preview", requestBody(s))
+                if (_state.value.inputKey != key) return@launch
                 _state.value = _state.value.copy(
-                    submitting = false,
-                    step = WithdrawStep.PREVIEW,
+                    quoting = false,
+                    quoteError = null,
+                    quoteKey = key,
                     preview = WithdrawPreview(
                         feeUsd = response.optString("fee_usd", "0"),
+                        receiveUsd = response.optString("est_output_usd", "0"),
                         network = response.optString("network"),
                         asset = response.optString("asset"),
                         recipient = response.optString("recipient"),
@@ -216,74 +344,57 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
                         dailyRemainingUsd = response.optString("daily_remaining_usd", "0"),
                     ),
                 )
-                onReady()
-            } catch (e: ApiClient.ApiException) {
-                _state.value = _state.value.copy(submitting = false, error = e.message)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _state.value = _state.value.copy(submitting = false, error = e.message)
+                if (_state.value.inputKey != key) return@launch
+                _state.value = _state.value.copy(quoting = false, quoteKey = "", quoteError = e.message ?: "Could not get the fee.")
             }
-        }
-    }
-
-    /** Password re-entry. The password is never stored; only the token is kept. */
-    fun stepUp(password: String, onReady: () -> Unit = {}) {
-        val current = _state.value
-        if (current.submitting) return
-        _state.value = current.copy(submitting = true, error = null)
-        viewModelScope.launch {
-            try {
-                val response = api.post(
-                    "/v1/auth/stepup",
-                    ApiClient.jsonOf("password" to password, "action" to "withdraw"),
-                )
-                _state.value = _state.value.copy(
-                    submitting = false,
-                    step = WithdrawStep.STEP_UP,
-                    stepUpToken = response.optString("stepup_token"),
-                )
-                onReady()
-            } catch (e: ApiClient.ApiException) {
-                _state.value = _state.value.copy(submitting = false, error = e.message)
-            } catch (e: Exception) {
-                _state.value = _state.value.copy(submitting = false, error = e.message)
-            }
-        }
-    }
-
-    /** Back one step. A step-up token is dropped on the way: it is bound to one confirmation. */
-    fun back() {
-        val current = _state.value
-        if (current.submitting) return
-        _state.value = when (current.step) {
-            WithdrawStep.PREVIEW -> current.copy(step = WithdrawStep.AMOUNT, error = null)
-            WithdrawStep.STEP_UP, WithdrawStep.CONFIRMING ->
-                current.copy(step = WithdrawStep.PREVIEW, stepUpToken = null, error = null)
-            else -> current
         }
     }
 
     /**
-     * Hold-to-confirm creates the withdrawal. The step-up token is single-use and goes out in the
-     * `X-Stepup-Token` header; without it the server refuses every withdrawal.
+     * Withdraw: the password is exchanged for a single-use step-up token, then the withdrawal is created with it
+     * in the `X-Stepup-Token` header. Nothing is sent yet: the server holds the withdrawal for a window in which
+     * it can still be cancelled.
      *
-     * A definite answer from the server (a 4xx) may have spent the token, so the flow returns to the review
-     * step and asks for the password again. A timeout or a 5xx is uncertain: the token and the idempotency
-     * key are kept, and pressing again replays the same request, so it can never create a second withdrawal.
+     * Only a fee quoted for the exact inputs on screen is accepted. A definite answer from the server (a 4xx) may
+     * have spent the token, so it is dropped and the password is asked for again. A timeout or a 5xx is uncertain:
+     * the token and the idempotency key are kept, and pressing again replays the same request, so it can never
+     * create a second withdrawal.
      */
-    fun confirm(onDone: (Boolean) -> Unit = {}) {
+    fun submit(password: String, onDone: (Boolean) -> Unit = {}) {
         val current = _state.value
-        val token = current.stepUpToken
-        if (current.submitting || token.isNullOrBlank()) return
-        _state.value = current.copy(submitting = true, error = null, step = WithdrawStep.CONFIRMING)
+        if (current.submitting) return
+        if (!current.quoteReady) {
+            _state.value = current.copy(error = "Wait for the fee to load before withdrawing.")
+            onDone(false)
+            return
+        }
+        if (password.isBlank() && current.stepUpToken.isNullOrBlank()) return
+        _state.value = current.copy(submitting = true, error = null)
         viewModelScope.launch {
+            var token = current.stepUpToken
+            if (token.isNullOrBlank()) {
+                try {
+                    val response = api.post(
+                        "/v1/auth/stepup",
+                        ApiClient.jsonOf("password" to password, "action" to "withdraw"),
+                    )
+                    token = response.optString("stepup_token")
+                    _state.value = _state.value.copy(stepUpToken = token)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _state.value = _state.value.copy(submitting = false, error = e.message)
+                    onDone(false)
+                    return@launch
+                }
+            }
             try {
                 val response = api.post(
                     "/v1/funds/withdraw",
-                    ApiClient.jsonOf(
-                        "venue" to current.venue,
-                        "amount" to current.amount,
-                        "address_id" to current.addressId,
-                    ),
+                    requestBody(current),
                     idempotencyKey = current.idempotencyKey,
                     stepupToken = token,
                 )
@@ -295,33 +406,28 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
                     status = response.optString("status", "PENDING_HOLD"),
                 )
                 onDone(true)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: ApiClient.ApiException) {
                 if (e.status >= 500) {
                     _state.value = _state.value.copy(
                         submitting = false,
-                        step = WithdrawStep.STEP_UP,
                         error = (e.message ?: "Server error.") + " Check Withdrawals before pressing again; " +
                             "pressing again cannot create a second one.",
                     )
                 } else {
-                    _state.value = _state.value.copy(
-                        submitting = false,
-                        step = WithdrawStep.PREVIEW,
-                        stepUpToken = null,
-                        error = e.message,
-                    )
+                    _state.value = _state.value.copy(submitting = false, stepUpToken = null, error = e.message)
                 }
                 onDone(false)
             } catch (e: IOException) {
                 _state.value = _state.value.copy(
                     submitting = false,
-                    step = WithdrawStep.STEP_UP,
                     error = "Could not reach the server, so it is not known whether the withdrawal was created. " +
                         "Check Withdrawals, or press again: the same request cannot create a second one.",
                 )
                 onDone(false)
             } catch (e: Exception) {
-                _state.value = _state.value.copy(submitting = false, step = WithdrawStep.STEP_UP, error = e.message)
+                _state.value = _state.value.copy(submitting = false, error = e.message)
                 onDone(false)
             }
         }
@@ -345,8 +451,17 @@ class WithdrawViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
-    /** A fresh withdrawal needs a fresh idempotency key. */
+    /** A fresh withdrawal needs a fresh idempotency key and an empty form; only the venue is kept. */
     fun reset() {
+        quoteJob?.cancel()
         _state.value = WithdrawUiState(venue = _state.value.venue)
+    }
+
+    companion object {
+        private const val QUOTE_DELAY_MS = 600L
+        private val EVM_ADDRESS = Regex("^0x[0-9a-fA-F]{40}$")
+
+        /** The shape of an EVM address. The server also checks the checksum of a mixed-case one. */
+        fun isEvmAddress(value: String): Boolean = EVM_ADDRESS.matches(value)
     }
 }

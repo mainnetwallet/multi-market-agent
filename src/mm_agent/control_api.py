@@ -179,13 +179,19 @@ class AllowlistBody(BaseModel):
 class WithdrawPreviewBody(BaseModel):
     venue: VenueId
     amount: Decimal
-    address_id: str
+    address_id: str | None = None
+    recipient: str | None = None
+    network: str | None = None
+    asset: str | None = None
 
 
 class WithdrawBody(BaseModel):
     venue: VenueId
     amount: Decimal
-    address_id: str
+    address_id: str | None = None
+    recipient: str | None = None
+    network: str | None = None
+    asset: str | None = None
 
 
 class ApprovalBody(BaseModel):
@@ -870,6 +876,15 @@ def create_app(
             return _fail(exc)
         return {"ok": True, **options}
 
+    @app.get("/v1/funds/{venue}/withdraw/options")
+    async def withdraw_options(venue: VenueId, _: str = Depends(require_auth)) -> Any:
+        """Chains and tokens a withdrawal can go to (Polymarket: the bridge's own list, EVM chains only)."""
+        try:
+            options = await funds.withdraw_options(venue)
+        except FundsError as exc:
+            return _fail(exc)
+        return {"ok": True, "require_allowlist": bool(settings.funds_require_allowlist), **options}
+
     @app.get("/v1/funds/{venue}/deposit")
     async def deposit_info(
         venue: VenueId,
@@ -922,7 +937,14 @@ def create_app(
         try:
             return {
                 "ok": True,
-                **await funds.preview_withdraw(venue=body.venue, amount=body.amount, address_id=body.address_id),
+                **await funds.preview_withdraw(
+                    venue=body.venue,
+                    amount=body.amount,
+                    address_id=body.address_id,
+                    recipient=body.recipient,
+                    network=body.network,
+                    asset=body.asset,
+                ),
             }
         except FundsError as exc:
             return _fail(exc)
@@ -941,7 +963,13 @@ def create_app(
                 return {"ok": True, "replayed": True, **stored}
             full.require_stepup(x_stepup, _session_id(request, user), "withdraw")
             result = await funds.create_withdrawal(
-                venue=body.venue, amount=body.amount, address_id=body.address_id, actor=actor(request)
+                venue=body.venue,
+                amount=body.amount,
+                address_id=body.address_id,
+                recipient=body.recipient,
+                network=body.network,
+                asset=body.asset,
+                actor=actor(request),
             )
         except (FundsError, FullControlError) as exc:
             return _fail(exc)

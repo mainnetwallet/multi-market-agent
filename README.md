@@ -501,6 +501,7 @@ FUNDS_SIGNER_PRIVATE_KEY=0x...
 FUNDS_WITHDRAWAL_DAILY_LIMIT_USD=25
 FUNDS_WITHDRAWAL_HOLD_MINUTES=10
 FUNDS_ALLOWLIST_COOLING_HOURS=24
+FUNDS_REQUIRE_ALLOWLIST=false   # true = only allowlisted addresses can receive
 ```
 
 **Deposits.** Nothing in the deposit flow names a chain or a token; it all comes from the bridge.
@@ -529,6 +530,22 @@ it to the recipient, and the bridge's status endpoint moves the withdrawal to
 need the wallet owner's signature, so if you point the funds signer at your
 trading key, that key becomes a withdrawal key. The code makes the choice
 visible rather than making it for you.
+
+---
+
+## Withdraw page
+
+The app's Withdraw page is one form: **amount, receiver address, chain, token**, then the password and
+hold-to-withdraw. The chains and tokens come from the bridge's own list (`GET /v1/funds/{venue}/withdraw/options`,
+EVM chains only, a symbol listed twice on one chain is left out), and the fee is quoted live for the chain and
+token picked, so changing either shows what that route costs before anything is confirmed. Saved (allowlisted)
+addresses appear as chips that fill the form.
+
+The API takes the same fields: `POST /v1/funds/withdraw/preview` and `POST /v1/funds/withdraw` accept either
+`address_id` (a saved address) or `recipient` + `network` (chain id or name) + `asset` (token symbol).
+A typed-in receiver is refused when `FUNDS_REQUIRE_ALLOWLIST=true`, when the address is not a valid EVM address,
+when the chain/token is not on the bridge's list, or when the amount is below the token's minimum. The password
+step-up, idempotency key, hold window, daily limit and audit trail apply either way.
 
 ---
 

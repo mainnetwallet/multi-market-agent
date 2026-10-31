@@ -140,6 +140,151 @@ async def test_a_matching_bridge_row_confirms(harness: Harness, bridge: _BridgeS
     assert status == "COMPLETED", detail
 
 
+# ── typed-in receiver, chain and token ──────────────────────────────────────
+
+RECEIVER = "0x1234567890abcdef1234567890abcdef12345678"
+
+
+def _funds_on(harness: Harness, *, require_allowlist: bool = False) -> FundsService:
+    harness.settings.__dict__["funds_enabled"] = True
+    harness.settings.__dict__["funds_require_allowlist"] = require_allowlist
+    return FundsService(harness.settings, harness.store)
+
+
+async def test_withdraw_options_list_the_bridge_evm_chains(harness: Harness, bridge: _BridgeStub) -> None:
+    funds = _funds_on(harness)
+    options = await funds.withdraw_options(VenueId.POLYMARKET)
+    names = {chain["chain_name"] for chain in options["chains"]}
+    assert {"Base", "Ethereum"} <= names
+    assert all(chain["tokens"] for chain in options["chains"])
+
+
+async def test_a_symbol_listed_twice_on_a_chain_is_not_offered(harness: Harness, bridge: _BridgeStub) -> None:
+    bridge.assets = [
+        *bridge.assets,
+        {
+            "chainId": "8453",
+            "chainName": "Base",
+            "token": {"symbol": "USDC", "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"},
+            "minCheckoutUsd": 2,
+        },
+        {
+            "chainId": "8453",
+            "chainName": "Base",
+            "token": {"symbol": "WETH", "address": "0x4200000000000000000000000000000000000006"},
+            "minCheckoutUsd": 2,
+        },
+    ]
+    funds = _funds_on(harness)
+    options = await funds.withdraw_options(VenueId.POLYMARKET)
+    base = next(chain for chain in options["chains"] if chain["chain_name"] == "Base")
+    assert [token["symbol"] for token in base["tokens"]] == ["WETH"]
+    with pytest.raises(FundsError) as exc:
+        await funds.preview_withdraw(
+            venue=VenueId.POLYMARKET, amount=Decimal("10"), recipient=RECEIVER, network="Base", asset="USDC"
+        )
+    assert exc.value.code == "unsupported_destination"
+
+
+async def test_a_typed_in_receiver_gets_a_quote_for_that_chain(harness: Harness, bridge: _BridgeStub) -> None:
+    funds = _funds_on(harness)
+    preview = await funds.preview_withdraw(
+        venue=VenueId.POLYMARKET, amount=Decimal("10"), recipient=RECEIVER, network="Ethereum", asset="usdc"
+    )
+    assert preview["direct"] is True
+    assert preview["network"] == "Ethereum" and preview["asset"] == "USDC"
+    assert preview["fee_usd"] == "0.35"
+    assert bridge.quotes[-1]["toChainId"] == "1"
+    assert bridge.quotes[-1]["recipientAddress"] == RECEIVER
+
+
+async def test_a_typed_in_withdrawal_is_created_in_the_hold_window(harness: Harness, bridge: _BridgeStub) -> None:
+    funds = _funds_on(harness)
+    result = await funds.create_withdrawal(
+        venue=VenueId.POLYMARKET,
+        amount=Decimal("10"),
+        recipient=RECEIVER,
+        network="8453",
+        asset="USDC",
+        actor="test",
+    )
+    assert result["status"] == "PENDING_HOLD"
+    record = harness.store.get_withdrawal(result["id"])
+    assert record is not None
+    assert record["recipient"] == RECEIVER and record["network"] == "Base" and not record["address_id"]
+
+
+async def test_a_typed_in_withdrawal_is_confirmed_against_its_own_chain(harness: Harness, bridge: _BridgeStub) -> None:
+    """With no allowlist entry the record's own chain and token are used, never 'the first asset'."""
+
+    bridge.status_rows = [
+        {
+            "fromChainId": "137",
+            "fromTokenAddress": "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB",
+            "fromAmountBaseUnit": "1000000",
+            "toChainId": "1",
+            "toTokenAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "status": "COMPLETED",
+        }
+    ]
+    funds = _funds_on(harness)
+    record = {
+        "id": "w-direct",
+        "venue": "polymarket",
+        "amount_usd": Decimal("1"),
+        "address_id": "",
+        "recipient": RECEIVER,
+        "network": "Ethereum",
+        "asset": "USDC",
+    }
+    status, detail = await funds._bridge_status(BRIDGE_ADDRESS, record)
+    assert status == "COMPLETED", detail
+    other = {**record, "network": "Base"}
+    status, _ = await funds._bridge_status(BRIDGE_ADDRESS, other)
+    assert status == "MISMATCH"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "code"),
+    [
+        ({"recipient": "0x123", "network": "Base", "asset": "USDC"}, "bad_address"),
+        ({"recipient": RECEIVER, "network": "Solana", "asset": "USDC"}, "unsupported_destination"),
+        ({"recipient": RECEIVER, "network": "Base", "asset": "DOGE"}, "unsupported_destination"),
+        ({"recipient": RECEIVER, "network": "", "asset": "USDC"}, "missing_field"),
+        ({"network": "Base", "asset": "USDC"}, "missing_field"),
+        ({"recipient": RECEIVER, "network": "Base", "asset": "USDC", "amount": Decimal("1")}, "below_minimum"),
+    ],
+)
+async def test_a_bad_typed_in_receiver_is_refused(
+    harness: Harness, bridge: _BridgeStub, kwargs: dict, code: str
+) -> None:
+    funds = _funds_on(harness)
+    kwargs = {"amount": Decimal("10"), **kwargs}
+    with pytest.raises(FundsError) as exc:
+        await funds.preview_withdraw(venue=VenueId.POLYMARKET, **kwargs)
+    assert exc.value.code == code
+
+
+async def test_the_allowlist_can_be_made_mandatory(harness: Harness, bridge: _BridgeStub) -> None:
+    funds = _funds_on(harness, require_allowlist=True)
+    with pytest.raises(FundsError) as exc:
+        await funds.preview_withdraw(
+            venue=VenueId.POLYMARKET, amount=Decimal("10"), recipient=RECEIVER, network="Base", asset="USDC"
+        )
+    assert exc.value.code == "allowlist_required"
+
+
+async def test_a_venue_without_a_withdrawal_api_refuses_a_typed_in_receiver(
+    harness: Harness, bridge: _BridgeStub
+) -> None:
+    funds = _funds_on(harness)
+    with pytest.raises(FundsError) as exc:
+        await funds.preview_withdraw(
+            venue=VenueId.KALSHI, amount=Decimal("10"), recipient=RECEIVER, network="Base", asset="USDC"
+        )
+    assert exc.value.code == "unsupported_withdraw"
+
+
 # ── daily limit ─────────────────────────────────────────────────────────────
 
 
