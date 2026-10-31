@@ -60,7 +60,7 @@ private fun JSONObject.text(key: String): String = if (isNull(key)) "" else optS
  * old list at once instead of a spinner. A page older than [FRESH_MS] is shown and then refreshed
  * quietly. Held in memory only; nothing here is private or money data.
  */
-private object DiscoverCache {
+internal object DiscoverCache {
     class Entry(val items: List<JSONObject>, val nextOffset: Int?, val note: String, val at: Long)
 
     const val FRESH_MS = 60_000L
@@ -83,6 +83,43 @@ private object DiscoverCache {
     fun drop(key: String) {
         map.remove(key)
     }
+
+    /** Keep a page the server just answered, so the screen can show it the moment it opens. */
+    fun store(venue: String, tab: String, query: String, body: JSONObject) {
+        val next = if (body.isNull("next_offset")) null else body.optInt("next_offset")
+        put(
+            key(venue, tab, query),
+            Entry(ApiClient.arrayOf(body, "items").objects(), next, body.optString("note"), System.currentTimeMillis()),
+        )
+    }
+}
+
+/**
+ * The tab list each venue's server last returned, fetched in the background as soon as the app knows the
+ * active venue, so the Markets page opens with its tabs already there. Memory only, and only ever what the
+ * server sent: an empty or failed answer is never stored.
+ */
+internal object DiscoverTabsCache {
+    class Entry(val tabs: List<Pair<String, String>>, val note: String, val at: Long)
+
+    const val FRESH_MS = 5 * 60_000L
+    private val map = HashMap<String, Entry>()
+
+    @Synchronized
+    fun get(venue: String): Entry? = map[venue]
+
+    fun parse(body: JSONObject): List<Pair<String, String>> =
+        ApiClient.arrayOf(body, "tabs").objects()
+            .map { it.optString("id") to it.optString("label") }
+            .filter { it.first.isNotBlank() && it.second.isNotBlank() }
+
+    /** Store a server answer; returns the tabs, or an empty list (and stores nothing) when it had none. */
+    @Synchronized
+    fun store(venue: String, body: JSONObject): List<Pair<String, String>> {
+        val tabs = parse(body)
+        if (tabs.isNotEmpty()) map[venue] = Entry(tabs, body.text("note"), System.currentTimeMillis())
+        return tabs
+    }
 }
 
 /** A card shows at most this many outcomes of a multi-market event. */
@@ -101,11 +138,13 @@ fun DiscoverScreen(
     onTrade: (marketId: String, title: String, outcome: String) -> Unit,
 ) {
     // No tab is built into the app: every tab (sort modes and categories) is whatever the server returns.
-    var tabs by remember(venue) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
-    var tabsNote by remember(venue) { mutableStateOf("") }
-    var tabsLoading by remember(venue) { mutableStateOf(true) }
+    // When the background prefetch already got them, the page opens with its tabs and does not wait.
+    val seeded = remember(venue) { DiscoverTabsCache.get(venue) }
+    var tabs by remember(venue) { mutableStateOf(seeded?.tabs ?: emptyList()) }
+    var tabsNote by remember(venue) { mutableStateOf(seeded?.note ?: "") }
+    var tabsLoading by remember(venue) { mutableStateOf(seeded == null) }
     var tabsReloadKey by remember { mutableIntStateOf(0) }
-    var tab by rememberSaveable(venue) { mutableStateOf("") }
+    var tab by rememberSaveable(venue) { mutableStateOf(seeded?.tabs?.firstOrNull()?.first ?: "") }
     var query by rememberSaveable { mutableStateOf("") }
     var items by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -118,12 +157,18 @@ fun DiscoverScreen(
 
     // The tab list comes from the server (for Polymarket, from the tags of live Gamma events).
     LaunchedEffect(venue, tabsReloadKey) {
+        val cached = DiscoverTabsCache.get(venue)
+        if (cached != null && tabsReloadKey == 0 && System.currentTimeMillis() - cached.at < DiscoverTabsCache.FRESH_MS) {
+            tabs = cached.tabs
+            tabsNote = cached.note
+            if (tabs.none { it.first == tab }) tab = tabs.first().first
+            tabsLoading = false
+            return@LaunchedEffect
+        }
         tabsLoading = true
         try {
             val body = fetchTabs(venue)
-            val loaded = ApiClient.arrayOf(body, "tabs").objects()
-                .map { it.optString("id") to it.optString("label") }
-                .filter { it.first.isNotBlank() && it.second.isNotBlank() }
+            val loaded = DiscoverTabsCache.store(venue, body)
             tabsNote = body.text("note")
             if (loaded.isEmpty()) {
                 if (tabsNote.isBlank()) tabsNote = "The server returned no categories."

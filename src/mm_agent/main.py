@@ -92,7 +92,22 @@ def build_runtime(
         finally:
             await shutdown()
 
+    warm_task: asyncio.Task[None] | None = None
+
+    async def warm_discover_tabs() -> None:
+        """Read each venue's browse tabs once so the app's first request is answered from the cache."""
+
+        for venue in registry.enabled():
+            adapter = registry.adapters.get(venue)
+            if adapter is None or not hasattr(adapter, "discover_tabs"):
+                continue
+            try:
+                await adapter.discover_tabs()
+            except Exception as exc:
+                logger.warning("discover_tabs_warmup_failed", venue=venue.value, error=str(exc)[:120])
+
     async def startup() -> None:
+        nonlocal warm_task
         logger.info(
             "startup",
             env=settings.app_env,
@@ -133,6 +148,7 @@ def build_runtime(
         await agent.start()
         rules.start()
         await telegram.start()
+        warm_task = asyncio.create_task(warm_discover_tabs())  # best effort; never delays startup
         status = agent.status()
         logger.info(
             "agent_ready",
@@ -145,6 +161,8 @@ def build_runtime(
 
     async def shutdown() -> None:
         logger.info("shutdown_begin")
+        if warm_task is not None and not warm_task.done():
+            warm_task.cancel()
         await telegram.stop()
         await rules.stop()
         await agent.stop()

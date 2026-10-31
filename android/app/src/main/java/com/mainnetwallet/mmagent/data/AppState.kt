@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mainnetwallet.mmagent.ui.BROWSABLE_VENUES
+import com.mainnetwallet.mmagent.ui.DiscoverCache
+import com.mainnetwallet.mmagent.ui.DiscoverTabsCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -353,6 +356,33 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         return api.get("/v1/discover?venue=" + enc(venue) + "&tab=" + enc(tab) + q + "&limit=30&offset=" + offset)
     }
 
+    private val prefetching = HashSet<String>()
+
+    /**
+     * Fetch the active venue's browse tabs (and the first page of its first tab) in the background, so the
+     * Markets page opens with them already there. Best effort and public data only: a failure leaves the
+     * page to fetch for itself, and nothing is kept unless the server answered with tabs.
+     */
+    private fun prefetchDiscover(venue: String) {
+        if (venue !in BROWSABLE_VENUES) return
+        val cached = DiscoverTabsCache.get(venue)
+        if (cached != null && System.currentTimeMillis() - cached.at < DiscoverTabsCache.FRESH_MS) return
+        if (!synchronized(prefetching) { prefetching.add(venue) }) return
+        viewModelScope.launch {
+            try {
+                val tabs = DiscoverTabsCache.store(venue, discoverTabs(venue))
+                val first = tabs.firstOrNull()?.first ?: return@launch
+                DiscoverCache.store(venue, first, "", discover(venue, first, "", 0))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The Markets page will ask again when it opens.
+            } finally {
+                synchronized(prefetching) { prefetching.remove(venue) }
+            }
+        }
+    }
+
     /** The browse tabs a venue offers. Polymarket's categories are read from Gamma's own tag list. */
     suspend fun discoverTabs(venue: String): JSONObject =
         api.get("/v1/discover/tabs?venue=" + java.net.URLEncoder.encode(venue, "UTF-8"))
@@ -381,6 +411,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             if (!silent) _state.value = _state.value.copy(loading = true, error = null)
             try {
                 val status = api.get("/v1/status")
+                prefetchDiscover(status.optString("active_venue"))
                 val previous = _state.value
                 // Everything except /status goes out at once. One request after another meant
                 // twelve round trips to a remote server before Home had its data.
