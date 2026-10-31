@@ -15,14 +15,20 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same PR makes the older run pointless; main runs are never cancelled.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ANDROID_BASE_URL: ${{ vars.ANDROID_BASE_URL || 'https://multi-market-agent.onrender.com' }}
+  VERSION_NAME: 2.0.${{ github.run_number }}
+
 jobs:
-  apk:
+  # Job 1: unit tests + debug APK. Runs at the same time as the release build and the deploy wait.
+  debug:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      ANDROID_BASE_URL: ${{ vars.ANDROID_BASE_URL || 'https://multi-market-agent.onrender.com' }}
-      VERSION_NAME: 2.0.${{ github.run_number }}
-      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -33,13 +39,11 @@ jobs:
 
       - name: Install SDK packages
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -1)"
           if [ -z "$SDKMANAGER" ]; then
             echo "sdkmanager not found" >&2
             exit 1
           fi
-          "$SDKMANAGER" --version
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 
@@ -48,8 +52,7 @@ jobs:
           gradle-version: "8.9"
 
       - name: Unit tests and debug APK
-        run: |
-          gradle -p android --no-daemon -PmmBaseUrl="$ANDROID_BASE_URL" testDebugUnitTest assembleDebug
+        run: gradle -p android --parallel -PmmBaseUrl="$ANDROID_BASE_URL" testDebugUnitTest assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v6
@@ -59,8 +62,34 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Job 2: signed release APK, only for main. Runs in parallel with `debug`.
+  release-apk:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install SDK packages
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found" >&2
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: "8.9"
+
       - name: Build signed release APK
-        if: env.PUBLISH == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           MM_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -76,7 +105,7 @@ jobs:
           VERSION_CODE=$((GITHUB_RUN_NUMBER + 100))
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           export MM_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
-          gradle -p android --no-daemon \
+          gradle -p android --parallel \
             -PmmBaseUrl="$ANDROID_BASE_URL" \
             -PmmVersionCode="$VERSION_CODE" \
             -PmmVersionName="$VERSION_NAME" \
@@ -88,7 +117,6 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "dist/mm-agent-$VERSION_NAME.apk" | grep -E "Signer #1 certificate SHA-256|Verifies"
 
       - name: Upload release APK
-        if: env.PUBLISH == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: mm-agent-release-apk
@@ -96,16 +124,13 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  release:
-    needs: apk
+  # Job 3: waits for Render to serve this commit. Needs no APK, so it polls while the builds run.
+  wait-deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    concurrency:
-      group: android-release
-      cancel-in-progress: false
+    timeout-minutes: 25
+    outputs:
+      ready: ${{ steps.deploy.outputs.ready }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -138,20 +163,31 @@ jobs:
           echo "::error::Server did not report commit $GITHUB_SHA within 20 minutes; APK not published."
           exit 1
 
+  # Job 4: publish once the three jobs above are done.
+  release:
+    needs: [debug, release-apk, wait-deploy]
+    if: needs.wait-deploy.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: android-release
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
       - uses: actions/download-artifact@v7
-        if: steps.deploy.outputs.ready == 'true'
         with:
           name: mm-agent-release-apk
           path: dist
 
       - uses: actions/download-artifact@v7
-        if: steps.deploy.outputs.ready == 'true'
         with:
           name: mm-agent-debug-apk
           path: dist-debug
 
       - name: Publish to GitHub Releases
-        if: steps.deploy.outputs.ready == 'true'
         run: |
           APK="$(ls dist/*.apk | head -1)"
           VERSION="$(basename "$APK" .apk | sed 's/^mm-agent-//')"
