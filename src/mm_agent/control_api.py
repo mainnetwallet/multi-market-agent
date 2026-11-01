@@ -478,8 +478,64 @@ def create_app(
             "market": market.model_dump(mode="json"),
             "books": {k.value: _book_json(v) for k, v in books.items()},
             "research": research,
+            "event": await _live_event(market.venue, market.event_id or "", ""),
             "badge": _badge(),
         }
+
+    async def _live_event(venue: VenueId, event_id: str, slug: str) -> dict[str, Any] | None:
+        """The Polymarket event behind a market as a card (sports score, crypto window). None when it
+        has none or Gamma is slow: the sheet then draws the plain market view."""
+
+        adapter = registry.adapters.get(venue)
+        if venue != VenueId.POLYMARKET or adapter is None or not hasattr(adapter, "event_live"):
+            return None
+        if not event_id and not slug:
+            return None
+        try:
+            item: dict[str, Any] | None = await asyncio.wait_for(adapter.event_live(event_id, slug=slug), 4.0)
+            return item
+        except Exception:
+            return None
+
+    @app.get("/v1/live/event")
+    async def live_event(
+        event_id: str = "", slug: str = "", venue: VenueId = VenueId.POLYMARKET, _: str = Depends(require_auth)
+    ) -> dict[str, Any]:
+        """One event fresh from the venue: score/period/prices for a game, window and prices for a crypto
+        Up or Down market. The app polls this while a game or window is on screen."""
+
+        if not event_id and not slug:
+            raise HTTPException(status_code=400, detail="event_id or slug is required")
+        adapter = registry.adapters.get(venue)
+        if venue != VenueId.POLYMARKET or adapter is None or not hasattr(adapter, "event_live"):
+            raise HTTPException(status_code=404, detail=f"no live event feed for {venue.value}")
+        try:
+            item = await adapter.event_live(event_id, slug=slug)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)[:120]) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"event lookup failed: {str(exc)[:160]}") from exc
+        if item is None:
+            raise HTTPException(status_code=404, detail="event not found")
+        return {"ok": True, "item": item}
+
+    @app.get("/v1/crypto/spot")
+    async def crypto_spot(
+        symbol: str, window_start: int | None = None, _: str = Depends(require_auth)
+    ) -> dict[str, Any]:
+        """Live coin price (public Coinbase data) with a short history, for the Up or Down windows."""
+
+        adapter = registry.adapters.get(VenueId.POLYMARKET)
+        feed = getattr(adapter, "spot", None)
+        if feed is None:
+            raise HTTPException(status_code=404, detail="the Polymarket venue is not enabled")
+        try:
+            snap: dict[str, Any] = await feed.snapshot(symbol, window_start=window_start)
+            return snap
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)[:120]) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"price feed unavailable: {str(exc)[:120]}") from exc
 
     @app.get("/v1/book")
     async def book_snapshot(
@@ -867,10 +923,11 @@ def create_app(
         market_id: str,
         venue: VenueId | None = None,
         interval: str = "1d",
+        outcome: Outcome = Outcome.YES,
         _: str = Depends(require_auth),
     ) -> Any:
         try:
-            return await full.market_history(market_id, venue=venue, interval=interval)
+            return await full.market_history(market_id, venue=venue, interval=interval, outcome=outcome)
         except FullControlError as exc:
             return _fail(exc)
 

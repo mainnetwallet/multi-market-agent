@@ -216,6 +216,22 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 
 .mkplotsvg .ln{fill:none;stroke:var(--accent);stroke-width:2;vector-effect:non-scaling-stroke;stroke-linejoin:round}.mkplotsvg .ar{fill:var(--accent);opacity:.08}
 .mkplotsvg .cx{stroke:var(--muted);stroke-width:1;vector-effect:non-scaling-stroke}.mkplotsvg .dt{fill:var(--accent);stroke:var(--card);stroke-width:2}
 .mktip{position:absolute;top:0;transform:translateX(-50%);background:var(--text);color:var(--bg);font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px;pointer-events:none;white-space:nowrap}
+/* sports and crypto views */
+.livebadge{display:inline-flex;align-items:center;gap:6px;color:var(--live);font-weight:700;font-size:12px;letter-spacing:.04em}
+.livebadge i{width:7px;height:7px;border-radius:50%;background:var(--live);animation:lvp 1.4s infinite}@keyframes lvp{50%{opacity:.25}}
+.spbody{cursor:pointer}.sprow{display:grid;grid-template-columns:minmax(0,1fr) auto 58px;align-items:center;gap:10px;padding:6px 0}
+.spname{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.spcells{display:flex;gap:6px}
+.spc{min-width:30px;text-align:center;padding:4px 8px;border-radius:8px;background:var(--card2);font-weight:700;font-variant-numeric:tabular-nums;color:var(--muted)}
+.spc.win{color:var(--text)}.spc.now{outline:1px solid var(--line2);color:var(--text)}.sppct{font-size:20px;font-weight:700;text-align:right}
+.evp{margin:14px 0 6px}.cphead{display:flex;gap:12px;align-items:center;margin-bottom:10px}
+.coin{width:44px;height:44px;border-radius:10px;background:#f7931a;color:#fff;display:grid;place-items:center;font-weight:800;font-size:20px;flex:none}
+.cpgrid{display:flex;gap:26px;align-items:flex-end;flex-wrap:wrap;cursor:pointer}.cpgrid.big{cursor:default;margin-bottom:6px}
+.cplab{color:var(--muted);font-size:12px;font-weight:600}.cpval{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}.cpval.sm{font-size:18px}
+.cpval.cur{color:var(--warn)}.cpval.neg{color:var(--danger)}
+.cpwin{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.mklegend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;margin:4px 0}
+.mkplotsvg .mln{fill:none;stroke-width:2;vector-effect:non-scaling-stroke;stroke-linejoin:round}
+.mkplotsvg .tg{stroke:var(--muted);stroke-width:1;stroke-dasharray:5 5;vector-effect:non-scaling-stroke}.mkplotsvg .tgt{font-weight:700}
 @media(min-width:901px){
 .sidebar{overflow-y:auto;z-index:30}
 .sidebar .navsearch{flex:none;min-width:0;margin:0 0 12px}.navsearch input{border-radius:999px;background:var(--card2);border-color:transparent;padding-top:8px;padding-bottom:8px}
@@ -407,11 +423,11 @@ async function approveProposal(id){try{const r=await api("/v1/proposals/"+encode
 async function rejectProposal(id){try{await api("/v1/proposals/"+encodeURIComponent(id)+"/reject",{method:"POST",body:"{}"});toast("Proposal rejected");loadStatus()}catch(e){toast(e.message)}}
 async function loadMarkets(){try{const q=$("#marketSearch").value.trim();const v=$("#marketVenue").value;const d=await api("/v1/markets?limit=80"+ (q?"&q="+encodeURIComponent(q):"")+(v?"&venue="+encodeURIComponent(v):""));$("#marketList").innerHTML=d.markets.length?d.markets.map(m=>`<div class="item" data-market="${esc(m.venue)}:${esc(m.native_id)}" style="cursor:pointer"><div class="split"><div><span class="pill">${esc(m.venue)}</span> <b>${esc(m.title)}</b><div class="tiny muted">${esc(m.category)} · ends ${dhaka(m.end_time)} · ${esc(m.native_id)}</div></div><div class="small">${esc(m.status)}</div></div></div>`).join(""):'<div class="muted">No markets stored yet. Check feed_diag on Home.</div>';$$("[data-market]").forEach(x=>x.addEventListener("click",()=>openMarket(x.dataset.market)))}catch(e){toast(e.message)}}
 async function openMarket(ref){const [venue,id]=ref.split(":");try{const d=await api("/v1/market?venue="+encodeURIComponent(venue)+"&market_id="+encodeURIComponent(id));CURRENT_MARKET=d.market;const m=d.market,b=d.books;const yes=b.YES||{},no=b.NO||{};const research=d.research;const box=$("#marketDetail");box.classList.remove("hidden");box.innerHTML=`<div class="card" style="margin-top:16px"><div class="split"><div><span class="pill">${esc(m.venue)}</span> <span class="pill">${esc(m.status)}</span><h2 style="margin:8px 0">${esc(m.title)}</h2><div class="small muted">Ends ${dhaka(m.end_time)} · tick ${m.tick_size} · event ${esc(m.event_id||"—")} · ${esc(m.url||"")}</div></div><button class="btn small" onclick="document.getElementById('marketDetail').classList.add('hidden')">Close</button></div>
-<div id="mkChart" class="mkchart"></div><div id="ticketBox"></div><div id="bookBox"></div>
+<div id="evPanel"></div><div id="mkChart" class="mkchart"></div><div id="ticketBox"></div><div id="bookBox"></div>
 <h3>Agent proposal</h3><div class="row"><input id="buyAmount" type="number" min="0.1" step="0.1" value="${Math.min(2,Number(STATE?.limits?.max_trade_usd||2))}" style="max-width:150px"><button class="btn buy" id="buyYes">Buy YES → proposal</button><button class="btn buy" id="buyNo">Buy NO → proposal</button></div>
 <h3>Research</h3>${research?`<div class="small"><b>p = ${pct(research.probability)}</b> · ${esc(research.model)} · ${dhaka(research.created_at)}<p>${esc(research.summary)}</p><div class="muted">${(research.sources||[]).map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title||s.url)}</a>`).join("<br>")}</div></div>`:'<div class="small muted">No usable sourced research stored. No proposal will be created. Configure LLM and web search, then analyze.</div>'}
 <h3>Exit rules</h3><div class="row"><input id="ruleTP" type="number" min="0.001" max="0.999" step="0.001" placeholder="TP price e.g. 0.70" style="max-width:180px"><input id="ruleSL" type="number" min="0.001" max="0.999" step="0.001" placeholder="SL price e.g. 0.30" style="max-width:180px"><button class="btn small" id="saveRules">Arm rules on held outcome</button></div><div class="tiny muted" style="margin-top:4px">Rules only apply to positions you already hold. Exits are reduce-only.</div></div>`;
-renderTicket(m,b);mkChart(m.venue,m.native_id,MKC.range);$("#buyYes").onclick=()=>createProposal("YES");$("#buyNo").onclick=()=>createProposal("NO");$("#saveRules").onclick=()=>saveRules(m);box.scrollIntoView({behavior:"smooth"})}catch(e){toast(e.message)}}
+renderTicket(m,b);evPanelInit(d.event,m);$("#buyYes").onclick=()=>createProposal("YES");$("#buyNo").onclick=()=>createProposal("NO");$("#saveRules").onclick=()=>saveRules(m);box.scrollIntoView({behavior:"smooth"})}catch(e){toast(e.message)}}
 async function createProposal(outcome){if(!CURRENT_MARKET)return;try{const amount=Number($("#buyAmount").value);const r=await api("/v1/proposals/analyze",{method:"POST",body:JSON.stringify({venue:CURRENT_MARKET.venue,market_id:CURRENT_MARKET.native_id,outcome,amount_usd:amount})});if(!r.ok){toast("No trade: "+(r.reasons||[]).join(", "));return}toast(`Proposal ${r.proposal.id.slice(0,8)} created. Review and approve on Home.`);loadStatus()}catch(e){toast(e.message)}}
 async function saveRules(market){try{const tp=Number($("#ruleTP").value),sl=Number($("#ruleSL").value);let held=(STATE?.positions||[]).filter(p=>p.market_id===market.native_id);if(!held.length){toast("No local position on this market.");return}const p=held[0];for(const [kind,val] of [["TAKE_PROFIT",tp],["STOP_LOSS",sl]]){if(val>0)await api("/v1/rules",{method:"POST",body:JSON.stringify({market_id:p.market_id,outcome:p.outcome,kind,trigger_price:val})})}toast("Rules armed");loadPositions()}catch(e){toast(e.message)}}
 async function loadPositions(){try{const d=await api("/v1/positions");STATE=STATE||{};STATE.positions=d.positions;$("#positionList").innerHTML=d.positions.length?d.positions.map(p=>`<div class="item"><div class="split"><div><span class="pill">${esc(p.venue)}</span> <b>${esc(p.outcome)} ${esc(p.shares)}</b> @ ${cents(p.avg_price)}<div class="small muted">${esc(p.market_title||p.market_id)}</div><div class="tiny muted">uPnL <b class="${Number(p.unrealized_pnl)>=0?"pos":"neg"}">${money(p.unrealized_pnl)}</b> · current ${cents(p.current_price)}</div></div><div class="row" style="flex-wrap:nowrap"><button class="btn small" data-sell="${esc(p.venue)}:${esc(p.market_id)}|${esc(p.outcome)}">Sell…</button><button class="btn small sell" data-close="${esc(p.market_id)}|${esc(p.outcome)}">Close</button></div></div></div>`).join(""):'<div class="muted">No open positions.</div>';$$("[data-close]").forEach(b=>b.addEventListener("click",()=>closePos(b.dataset.close)));$$("[data-sell]").forEach(b=>b.addEventListener("click",()=>{const [ref,out]=b.dataset.sell.split("|");TPREF={side:"SELL",outcome:out};openMarket(ref)}));const r=await api("/v1/rules");$("#ruleList").innerHTML=r.rules.length?r.rules.map(x=>`<div class="item small"><span class="pill">${esc(x.status)}</span> ${esc(x.venue)} · ${esc(x.kind)} · ${esc(x.market_id)} · trigger ${esc(x.trigger_price||x.trigger_at)} <button class="btn small" data-cancelrule="${esc(x.id)}">Cancel</button></div>`).join(""):'<div class="muted">No rules.</div>';$$("[data-cancelrule]").forEach(b=>b.addEventListener("click",async()=>{try{await api("/v1/rules/"+encodeURIComponent(b.dataset.cancelrule),{method:"DELETE"});toast("Rule cancelled");loadPositions()}catch(e){toast(e.message)}}))}catch(e){}}
@@ -550,6 +566,8 @@ function dvMarketRow(ev,m,single,i){
   const chg=Number.isNaN(ch)||ch===0?"":'<small class="'+(ch>0?"pos":"neg")+'">'+(ch>0?"+":"")+(ch*100).toFixed(1)+' pp today</small>';
   return '<div class="mrow"><div class="mlabel" data-open="'+ref+'">'+(single?"":esc(m.label))+chg+'</div>'+(single?"":'<div class="mpct">'+pct0(m.yes_price)+'</div>')+'<div class="mbtns"><button class="qbtn yes" data-open="'+ref+'" data-out="YES">'+esc(m.yes_label||"Yes")+" "+c0(m.yes_price)+'</button><button class="qbtn no" data-open="'+ref+'" data-out="NO">'+esc(m.no_label||"No")+" "+c0(m.no_price)+'</button></div></div>'}
 function dvCard(ev,i){
+  if(ev.kind==="sport"&&ev.sport&&(ev.sport.teams||[]).length===2)return dvSportCard(ev,i);
+  if(ev.kind==="crypto_updown"&&ev.crypto)return dvCryptoCard(ev,i);
   const ms=ev.markets||[],single=ms.length===1,open=DV.expanded&&DV.expanded[i],shown=(single||open)?ms:ms.slice(0,3);
   const head=single?'<div class="dhead"><b class="dtitle">'+esc(ev.title)+'</b><div class="dgauge"><span>'+pct0(ms[0].yes_price)+'</span><small>chance</small></div></div>':'<div class="dhead"><b class="dtitle">'+esc(ev.title)+'</b></div>';
   return '<div class="item dcard">'+head
@@ -564,6 +582,137 @@ $("#dvList").addEventListener("click",(e)=>{
   const more=e.target.closest("[data-more]");if(more){DV.expanded[more.dataset.more]=true;dvRender();return}
   const o=e.target.closest("[data-open]");if(!o)return;
   TPREF=o.dataset.out?{outcome:o.dataset.out}:null;openMarket(o.dataset.open)});
+
+/* ---------- Sports and crypto views: every number comes from Polymarket or the public price feed ---------- */
+const hhmm=(sec)=>new Date(sec*1000).toLocaleTimeString("en-GB",{timeZone:"Asia/Dhaka",hour:"2-digit",minute:"2-digit"});
+const usd2=(n)=>Number.isFinite(n)?"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—";
+function cdText(end){const s=Math.max(0,Math.floor(end-Date.now()/1000));if(s>=3600){const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h+"h "+String(m).padStart(2,"0")+"m"}return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")}
+function spBadge(sp){
+  if(sp.ended)return '<span class="pill">Final</span>';
+  if(sp.live)return '<span class="livebadge"><i></i>LIVE'+(sp.period?" · "+esc(sp.period):"")+(sp.elapsed?" "+esc(sp.elapsed):"")+'</span>';
+  return '<span class="tiny muted">'+(sp.start_time?"Starts "+esc(dhaka(sp.start_time)):"Upcoming")+'</span>'}
+function spRows(sp){
+  const sets=(sp.score&&sp.score.sets)||[],last=sets.length-1,on=sp.live&&!sp.ended;
+  const raw=(sp.score&&sp.score.raw&&!sets.length)?'<div class="tiny muted">'+esc(sp.score.raw)+'</div>':"";
+  return raw+sp.teams.map((t,i)=>'<div class="sprow"><span class="spname">'+esc(t.name)+'</span><span class="spcells">'
+    +sets.map((s,j)=>'<span class="spc'+(s[i]>s[1-i]?" win":"")+(on&&j===last?" now":"")+'">'+s[i]+'</span>').join("")
+    +'</span><span class="sppct">'+pct0(t.price)+'</span></div>').join("")}
+function dvSportCard(ev,i){
+  const sp=ev.sport,ref=esc(DV.venue+":"+(sp.market_id||(ev.markets[0]||{}).market_id||""));
+  return '<div class="item dcard spcard" data-evi="'+i+'"><div class="split"><span class="pill">'+esc((sp.league||(ev.tags||[])[0]||"Sports").toUpperCase())+'</span>'+spBadge(sp)+'</div>'
+   +'<div class="spbody" data-open="'+ref+'">'+spRows(sp)+'</div>'
+   +'<div class="mbtns" style="width:100%">'+sp.teams.map(t=>'<button class="qbtn '+(t.outcome==="YES"?"yes":"no")+'" style="flex:1" data-open="'+ref+'" data-out="'+t.outcome+'">'+esc(t.name)+" "+c0(t.price)+'</button>').join("")+'</div>'
+   +'<div class="dfoot"><span>'+compact(ev.volume,DV.venue)+' Vol.</span>'+(ev.end_time?'<span>ends '+endShort(ev.end_time)+'</span>':"")+'</div></div>'}
+function dvCryptoCard(ev,i){
+  const c=ev.crypto,mk=(ev.markets||[]).find(m=>String(m.yes_label||"").toLowerCase()==="up")||(ev.markets||[])[0]||{},ref=esc(DV.venue+":"+(mk.market_id||""));
+  return '<div class="item dcard cpcard" data-evi="'+i+'" data-sym="'+esc(c.symbol)+'" data-start="'+c.start_ts+'" data-end="'+c.end_ts+'" data-ptb="'+esc(c.price_to_beat||"")+'">'
+   +'<div class="dhead"><b class="dtitle">'+esc(ev.title)+'</b><div class="dgauge"><span data-cd>'+cdText(c.end_ts)+'</span><small>left</small></div></div>'
+   +'<div class="cpgrid" data-open="'+ref+'"><div><div class="cplab">Price to beat</div><div class="cpval sm" data-p="ptb">—</div></div>'
+   +'<div><div class="cplab">Current '+esc(c.symbol)+'</div><div class="cpval sm cur" data-p="cur">—</div><small data-p="diff"></small></div></div>'
+   +'<div class="mbtns" style="width:100%"><button class="qbtn yes" style="flex:1" data-open="'+ref+'" data-out="YES">Up '+c0(c.up_price)+'</button><button class="qbtn no" style="flex:1" data-open="'+ref+'" data-out="NO">Down '+c0(c.down_price)+'</button></div>'
+   +'<div class="dfoot"><span>'+compact(ev.volume,DV.venue)+' Vol.</span><span>'+esc(c.name)+(c.span_seconds?" · "+Math.round(c.span_seconds/60)+" min":"")+'</span></div></div>'}
+const SPOT={};
+async function dvSpotTick(){
+  const cards=[...$$("#dvList .cpcard")];if(!cards.length)return;
+  const keys=[...new Set(cards.map(c=>c.dataset.sym+"|"+c.dataset.start))].slice(0,8);
+  await Promise.all(keys.map(async k=>{const [sym,st]=k.split("|");try{const d=await api("/v1/crypto/spot?symbol="+enc(sym)+"&window_start="+enc(st));SPOT[k]={price:num(d.price),start:num(d.start_price)}}catch(e){}}));
+  cards.forEach(c=>{const s=SPOT[c.dataset.sym+"|"+c.dataset.start];if(!s||!c.isConnected)return;
+    const own=num(c.dataset.ptb),ptb=Number.isFinite(own)?own:s.start,dd=s.price-ptb,dif=c.querySelector('[data-p="diff"]');
+    c.querySelector('[data-p="cur"]').textContent=usd2(s.price);c.querySelector('[data-p="ptb"]').textContent=usd2(ptb);
+    dif.className=Number.isFinite(dd)?(dd>=0?"pos":"neg"):"";dif.textContent=Number.isFinite(dd)?(dd>=0?"▲ ":"▼ ")+usd2(Math.abs(dd)):""})}
+async function dvSportTick(){
+  const cards=[...$$("#dvList .spcard")].filter(c=>{const e=DV.items[+c.dataset.evi];return e&&e.sport&&e.sport.live&&!e.sport.ended}).slice(0,10);
+  await Promise.all(cards.map(async c=>{const i=+c.dataset.evi,ev=DV.items[i];
+    try{const d=await api("/v1/live/event?venue="+enc(DV.venue)+"&event_id="+enc(ev.event_id));
+      if(d.item&&d.item.sport&&DV.items[i]===ev&&c.isConnected){DV.items[i]={...ev,...d.item,markets:ev.markets};c.outerHTML=dvCard(DV.items[i],i)}}catch(e){}}))}
+let DVL={n:0,last:0};
+function dvLoop(){
+  DVL.n++;
+  if(document.hidden||MK_MODE!=="discover"||!$("#view-markets").classList.contains("active")||!$("#marketDetail").classList.contains("hidden"))return;
+  $$("#dvList [data-cd]").forEach(el=>{const c=el.closest(".cpcard");if(c)el.textContent=cdText(+c.dataset.end)});
+  if(DVL.n%2===0)dvSpotTick();
+  if(DVL.n%8===0)dvSportTick();
+  const cp=[...$$("#dvList .cpcard")],all=$$("#dvList .dcard").length;
+  if(cp.length&&cp.length===all&&cp.some(c=>+c.dataset.end+20<Date.now()/1000)&&Date.now()-DVL.last>20000&&!DV.loading){DVL.last=Date.now();dvPage(true)}}
+setInterval(dvLoop,1000);
+/* generic multi-line chart (sports: one line per team; crypto: price with a Target line) */
+function svgLines(box,series,o){
+  if(!box)return;const S=series.filter(s=>s.pts.length>1);
+  if(!S.length){box.innerHTML='<div class="muted small" style="padding:46px 12px;text-align:center">Not enough history for this range.</div>';return}
+  const W=Math.max(280,Math.round(box.clientWidth||640)),H=o.h||240,L=6,R=o.right||56,T=12,B=22;
+  const all=S.flatMap(s=>s.pts),t0=Math.min(...all.map(p=>p.t)),t1=Math.max(...all.map(p=>p.t));
+  let lo=o.min,hi=o.max;
+  if(lo==null||hi==null){const vs=all.map(p=>p.v).concat(o.target!=null&&Number.isFinite(o.target)?[o.target]:[]),a=Math.min(...vs),b=Math.max(...vs),pad=(b-a)*0.15||Math.abs(a)*0.0005||1;lo=a-pad;hi=b+pad}
+  const X=(t)=>L+(t-t0)/Math.max(1,t1-t0)*(W-L-R),Y=(v)=>T+(hi-v)/Math.max(1e-9,hi-lo)*(H-T-B);
+  const fy=o.y||((v)=>String(Math.round(v))),fl=o.yl||fy,xf=o.x||((t)=>new Date(t).toLocaleString("en-GB",{timeZone:"Asia/Dhaka",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}));
+  let g="";
+  [0,1,2,3].map(i=>lo+(hi-lo)*i/3).forEach(v=>{g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+Y(v).toFixed(1)+'" y2="'+Y(v).toFixed(1)+'" class="gl"/><text x="'+(W-R+6)+'" y="'+(Y(v)+4).toFixed(1)+'" class="gt">'+esc(fy(v,hi-lo))+'</text>'});
+  if(o.target!=null&&Number.isFinite(o.target))g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+Y(o.target).toFixed(1)+'" y2="'+Y(o.target).toFixed(1)+'" class="tg"/><text x="'+(W-R+6)+'" y="'+(Y(o.target)+4).toFixed(1)+'" class="gt tgt">Target</text>';
+  S.forEach(s=>{const line=s.pts.map((p,i)=>(i?"L":"M")+X(p.t).toFixed(1)+" "+Y(p.v).toFixed(1)).join(" "),e=s.pts[s.pts.length-1];
+    g+='<path d="'+line+'" class="mln" style="stroke:'+s.color+'"/><circle cx="'+X(e.t).toFixed(1)+'" cy="'+Y(e.v).toFixed(1)+'" r="4" style="fill:'+s.color+'"/>'});
+  box.innerHTML='<div class="mklegend">'+S.map(s=>'<span style="color:'+s.color+'"><b>'+esc(s.name)+'</b> '+esc(fl(s.pts[s.pts.length-1].v,hi-lo))+'</span>').join("")+'</div>'
+    +'<svg viewBox="0 0 '+W+' '+H+'" class="mkplotsvg">'+g+'<line class="cx svgx" y1="'+T+'" y2="'+(H-B)+'" x1="0" x2="0" style="display:none"/></svg><div class="mktip hidden"></div>';
+  const svg=box.querySelector("svg"),vx=box.querySelector(".svgx"),tip=box.querySelector(".mktip");
+  const near=(s,t)=>{let b=s.pts[0],d=1e18;for(const p of s.pts){const x=Math.abs(p.t-t);if(x<d){d=x;b=p}}return b};
+  svg.addEventListener("pointermove",(ev)=>{const r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)/r.width*W,t=t0+(x-L)/Math.max(1,W-L-R)*(t1-t0),cx=Math.min(Math.max(X(t),L),W-R);
+    vx.setAttribute("x1",cx);vx.setAttribute("x2",cx);vx.style.display="";tip.classList.remove("hidden");
+    tip.textContent=xf(t)+" · "+S.map(s=>s.name+" "+fl(near(s,t).v,hi-lo)).join(" · ");tip.style.left=Math.min(Math.max(cx/W*100,22),70)+"%"});
+  svg.addEventListener("pointerleave",()=>{vx.style.display="none";tip.classList.add("hidden")})}
+/* the detail sheet: a game (teams, score, one line per team) or an Up/Down window (price to beat, live price) */
+let EVP=null;
+function evStop(){if(EVP){EVP.timers.forEach(clearInterval);EVP.timers=[]}}
+function evAlive(){const b=$("#evPanel");return !!(EVP&&b&&String(b.dataset.tok)===String(EVP.tok)&&!$("#marketDetail").classList.contains("hidden"))}
+function evPanelInit(ev,m){
+  evStop();const box=$("#evPanel");
+  if(!ev||!box||(ev.kind!=="sport"&&ev.kind!=="crypto_updown")||(ev.kind==="sport"&&!ev.sport)||(ev.kind==="crypto_updown"&&!ev.crypto)){EVP=null;if(box)box.remove();mkChart(m.venue,m.native_id,MKC.range);return}
+  const mk=$("#mkChart");if(mk)mk.remove();
+  const tok=Date.now();EVP={ev,m,tok,range:"6h",timers:[]};box.dataset.tok=tok;
+  if(ev.kind==="sport")spInit();else cpInit()}
+function spInit(){
+  const box=$("#evPanel");
+  box.innerHTML='<div class="evp"><div class="split"><span class="pill" id="spLeague"></span><span id="spBadge"></span></div><div id="spBoard"></div><div class="tiny muted" id="spMeta"></div>'
+   +'<div class="mkhead"><div></div><div class="seg" id="spRange">'+MKR.map(r=>'<button data-v="'+r[0]+'" class="'+(r[0]===EVP.range?"on":"")+'">'+r[1]+'</button>').join("")+'</div></div><div id="spPlot" class="mkplot"></div></div>';
+  $("#spRange").addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;EVP.range=b.dataset.v;$$("#spRange button").forEach(x=>x.classList.toggle("on",x===b));spChart()});
+  spPaint();spChart();EVP.timers.push(setInterval(spLive,5000),setInterval(spChart,30000))}
+function spPaint(){
+  const ev=EVP.ev,sp=ev.sport;$("#spLeague").textContent=(sp.league||(ev.tags||[])[0]||"sports").toUpperCase();
+  $("#spBadge").innerHTML=spBadge(sp);$("#spBoard").innerHTML=spRows(sp);
+  $("#spMeta").textContent=compact(ev.volume,"polymarket")+" Vol."+(ev.end_time?" · ends "+endShort(ev.end_time):"")}
+async function spLive(){
+  if(!evAlive()){evStop();return}const tok=EVP.tok;
+  try{const d=await api("/v1/live/event?venue=polymarket&event_id="+enc(EVP.ev.event_id));if(!evAlive()||EVP.tok!==tok)return;
+    if(d.item&&d.item.sport){EVP.ev={...EVP.ev,...d.item,markets:EVP.ev.markets};spPaint()}}catch(e){}}
+async function spChart(){
+  if(!evAlive())return;const {ev,range,tok}=EVP,sp=ev.sport,mid=sp.market_id||EVP.m.native_id;
+  const get=(o)=>api("/v1/markets/"+enc(mid)+"/history?venue=polymarket&interval="+enc(range)+"&outcome="+o).then(d=>(d.points||[]).map(p=>({t:new Date(p.at).getTime(),v:num(p.close)*100})).filter(p=>Number.isFinite(p.t)&&Number.isFinite(p.v)));
+  try{const [a,b]=await Promise.all([get("YES"),get("NO")]);if(!evAlive()||EVP.tok!==tok||EVP.range!==range)return;
+    svgLines($("#spPlot"),[{name:sp.teams[0].name,color:"var(--blue)",pts:a},{name:sp.teams[1].name,color:"var(--danger)",pts:b}],{min:0,max:100,y:(v)=>Math.round(v)+"%",yl:(v)=>v.toFixed(1)+"%"})}
+  catch(e){if(evAlive()&&EVP.tok===tok)$("#spPlot").innerHTML='<div class="muted small" style="padding:46px 12px;text-align:center">'+esc(e.message||"Price history is not available.")+'</div>'}}
+function cpInit(){
+  const c=EVP.ev.crypto,box=$("#evPanel");
+  box.innerHTML='<div class="evp"><div class="cphead"><span class="coin">'+esc(c.symbol.slice(0,1))+'</span><div><b>'+esc(EVP.ev.title)+'</b><div class="tiny muted">'+esc(c.name)+" · "+hhmm(c.start_ts)+"–"+hhmm(c.end_ts)+' (Dhaka)</div></div></div>'
+   +'<div class="cpgrid big"><div><div class="cplab">Price to beat</div><div class="cpval" id="cpPtb">—</div><div class="tiny muted" id="cpPtbSrc"></div></div>'
+   +'<div><div class="cplab">Current price</div><div class="cpval cur" id="cpCur">—</div><small id="cpDiff"></small></div>'
+   +'<div><div class="cplab">Time left</div><div class="cpval neg" id="cpCd">'+cdText(c.end_ts)+'</div></div></div>'
+   +'<div id="cpPlot" class="mkplot"></div><div class="cpwin" id="cpWin"></div><div class="tiny muted" id="cpSrc"></div></div>';
+  $("#cpWin").innerHTML=(c.windows||[]).map(x=>'<button class="tab" data-slug="'+esc(x.slug)+'">'+hhmm(x.start_ts)+'</button>').join("");
+  $("#cpWin").addEventListener("click",async(e)=>{const b=e.target.closest("[data-slug]");if(!b)return;
+    try{const d=await api("/v1/live/event?venue=polymarket&slug="+enc(b.dataset.slug)),mk=((d.item&&d.item.markets)||[])[0];if(!mk){toast("That window has no open market yet");return}openMarket("polymarket:"+mk.market_id)}catch(err){toast(err.message)}});
+  cpTick();EVP.timers.push(setInterval(cpTick,2000),setInterval(cpClock,1000))}
+function cpClock(){if(!evAlive())return;const c=EVP.ev.crypto,e=$("#cpCd");if(e)e.textContent=Date.now()/1000>=c.end_ts?"Ended":cdText(c.end_ts)}
+async function cpTick(){
+  if(!evAlive()){evStop();return}const c=EVP.ev.crypto,tok=EVP.tok;
+  try{const d=await api("/v1/crypto/spot?symbol="+enc(c.symbol)+"&window_start="+c.start_ts);if(!evAlive()||EVP.tok!==tok)return;
+    const price=num(d.price),own=num(c.price_to_beat),ptb=Number.isFinite(own)?own:num(d.start_price),now=Date.now();
+    const ticks=(d.ticks||[]).map(t=>({t:t[0]*1000,v:num(t[1])})).filter(p=>p.t>=(c.start_ts-60)*1000),first=ticks.length?ticks[0].t:Infinity;
+    const candles=(d.candles||[]).map(t=>({t:(t[0]+60)*1000,v:num(t[1])})).filter(p=>p.t>=(c.start_ts-60)*1000&&p.t<first&&p.t<=now);
+    const pts=candles.concat(ticks).filter(p=>Number.isFinite(p.v)&&p.t<=c.end_ts*1000+5000),dd=price-ptb;
+    $("#cpCur").textContent=usd2(price);$("#cpPtb").textContent=usd2(ptb);
+    $("#cpPtbSrc").textContent=Number.isFinite(own)?"from Polymarket":(Number.isFinite(ptb)?"Coinbase price at the window start (Polymarket's own value can differ slightly)":"");
+    const df=$("#cpDiff");df.className=Number.isFinite(dd)?(dd>=0?"pos":"neg"):"";df.textContent=Number.isFinite(dd)?(dd>=0?"▲ ":"▼ ")+usd2(Math.abs(dd)):"";
+    $("#cpSrc").textContent="Live price: Coinbase spot, refreshed every 2 s.";
+    svgLines($("#cpPlot"),[{name:c.symbol,color:"var(--warn)",pts}],{target:ptb,right:68,y:(v,sp)=>"$"+v.toLocaleString("en-US",{minimumFractionDigits:sp<5?2:0,maximumFractionDigits:sp<5?2:0}),yl:usd2,x:(t)=>new Date(t).toLocaleTimeString("en-GB",{timeZone:"Asia/Dhaka"})})}
+  catch(e){if(evAlive()&&EVP.tok===tok&&!$("#cpCur").textContent.startsWith("$"))$("#cpPlot").innerHTML='<div class="muted small" style="padding:46px 12px;text-align:center">'+esc(e.message||"Live price unavailable.")+'</div>'}}
 
 /* ---------- Trade ticket (manual orders) ---------- */
 let CAPS=null,TPREF=null,TK=null;

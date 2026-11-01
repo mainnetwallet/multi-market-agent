@@ -136,10 +136,12 @@ class Venue(ABC):
             message="this venue does not support amending orders",
         )
 
-    async def get_price_history(self, market_id: str, *, interval: str = "1d") -> list[dict[str, Any]]:
-        """Venue price history. Venues without one return an empty list."""
+    async def get_price_history(
+        self, market_id: str, *, interval: str = "1d", outcome: Any = None
+    ) -> list[dict[str, Any]]:
+        """Venue price history of one outcome (YES when None). Venues without one return an empty list."""
 
-        del market_id, interval
+        del market_id, interval, outcome
         return []
 
     async def get_funds_history(self) -> list[dict[str, Any]]:

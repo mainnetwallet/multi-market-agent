@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -281,14 +282,17 @@ def _text(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
-def shape_market(raw: dict[str, Any]) -> dict[str, Any] | None:
+def shape_market(raw: dict[str, Any], *, allow_closed: bool = False) -> dict[str, Any] | None:
     """One Gamma market -> a card row. None when it cannot be traded as Yes/No."""
 
     market_id = _text(raw.get("id"))
-    if not market_id or raw.get("closed") or raw.get("archived"):
+    if not market_id:
         return None
-    if raw.get("active") is False or raw.get("acceptingOrders") is False:
-        return None
+    if not allow_closed:
+        if raw.get("closed") or raw.get("archived"):
+            return None
+        if raw.get("active") is False or raw.get("acceptingOrders") is False:
+            return None
     labels = [str(x) for x in json_list(raw.get("outcomes"))]
     prices = json_list(raw.get("outcomePrices"))
     if len(labels) != 2 or len(prices) < 2:
@@ -312,13 +316,181 @@ def shape_market(raw: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def shape_event(raw: dict[str, Any]) -> dict[str, Any] | None:
-    """One Gamma event -> one card. None when it has no open Yes/No market."""
+COIN_NAMES = {
+    "btc": "Bitcoin",
+    "eth": "Ethereum",
+    "sol": "Solana",
+    "xrp": "XRP",
+    "doge": "Dogecoin",
+    "bnb": "BNB",
+    "hype": "Hyperliquid",
+}
+_NAME_TO_COIN = {name.lower(): sym for sym, name in COIN_NAMES.items()}
+# Polymarket's rolling crypto windows: ``btc-updown-5m-1761971100`` = coin, window length, window START (epoch s).
+_CRYPTO_SLUG = re.compile(r"^(?P<coin>[a-z0-9]+)-updown-(?P<span>\d+)(?P<unit>[mhd])-(?P<ts>\d{9,11})$")
+_SPAN_SECONDS = {"m": 60, "h": 3600, "d": 86400}
+_NON_TEAM_OUTCOMES = {"yes", "no", "over", "under", "up", "down"}
 
-    if raw.get("closed") or raw.get("archived"):
+
+def _epoch(value: Any) -> int | None:
+    """Epoch seconds from an ISO string (Z or offset), or None."""
+
+    text = _text(value)
+    if not text:
         return None
-    markets = [m for m in (shape_market(x) for x in raw.get("markets") or [] if isinstance(x, dict)) if m]
-    if not markets:
+    try:
+        return int(datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return None
+
+
+def parse_score(value: Any) -> dict[str, Any] | None:
+    """Gamma's ``score`` string -> ``{"raw", "sets": [[a, b], ...]}``.
+
+    The wire format is not documented, so this is deliberately tolerant: segments separated by , | or ;
+    each ``a-b`` (also ``a:b``). Anything else keeps only ``raw`` and the UI shows it as text.
+    ``a`` belongs to the first outcome (team A), ``b`` to the second, in the order Polymarket lists them.
+    """
+
+    text = _text(value)
+    if not text:
+        return None
+    sets: list[list[int]] = []
+    for part in re.split(r"[,|;]", text):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.fullmatch(r"(\d+)\s*[-:]\s*(\d+)(?:\s*\(.*\))?", part)
+        if m is None:
+            return {"raw": text, "sets": []}
+        sets.append([int(m.group(1)), int(m.group(2))])
+    return {"raw": text, "sets": sets}
+
+
+def shape_sport(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """The live-game part of a sports event: teams with price, score, period, live/ended flags."""
+
+    rows = [m for m in raw.get("markets") or [] if isinstance(m, dict)]
+    is_game = bool(
+        _text(raw.get("score"))
+        or _text(raw.get("period"))
+        or _text(raw.get("gameStatus"))
+        or raw.get("live")
+        or any(m.get("gameId") or m.get("sportsMarketType") for m in rows)
+    )
+    if not is_game:
+        return None
+    pick: dict[str, Any] | None = None
+    for m in rows:  # the moneyline is the market whose two outcomes are the two teams
+        labels = [str(x) for x in json_list(m.get("outcomes"))]
+        if len(labels) != 2 or any(x.strip().lower() in _NON_TEAM_OUTCOMES for x in labels):
+            continue
+        if _text(m.get("sportsMarketType")).lower() == "moneyline":
+            pick = m
+            break
+        pick = pick or m
+    teams: list[dict[str, Any]] = []
+    market_id = None
+    if pick is not None:
+        labels = [str(x) for x in json_list(pick.get("outcomes"))]
+        prices = json_list(pick.get("outcomePrices"))
+        market_id = _text(pick.get("id")) or None
+        for i, label in enumerate(labels):
+            price = dec(prices[i]) if i < len(prices) else None
+            teams.append(
+                {
+                    "name": label,
+                    "price": str(price) if price is not None else None,
+                    "outcome": "YES" if i == 0 else "NO",
+                }
+            )
+    if len(teams) != 2:
+        return None
+    return {
+        "market_id": market_id,
+        "league": _text(raw.get("seriesSlug")) or None,
+        "live": bool(raw.get("live")),
+        "ended": bool(raw.get("ended")),
+        "period": _text(raw.get("period")) or None,
+        "elapsed": _text(raw.get("elapsed")) or None,
+        "status": _text(raw.get("gameStatus")) or None,
+        "score": parse_score(raw.get("score")),
+        "start_time": _text(raw.get("startTime")) or _text(pick.get("gameStartTime") if pick else None) or None,
+        "teams": teams,
+    }
+
+
+def shape_crypto(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """A rolling "<coin> Up or Down" window: coin, window start/end, Up/Down prices, price to beat (if sent)."""
+
+    slug = _text(raw.get("slug"))
+    title = _text(raw.get("title"))
+    coin = None
+    start = end = span = None
+    prefix = None
+    m = _CRYPTO_SLUG.match(slug)
+    if m:
+        coin = m.group("coin")
+        span = int(m.group("span")) * _SPAN_SECONDS[m.group("unit")]
+        start = int(m.group("ts"))
+        end = start + span
+        prefix = f"{coin}-updown-{m.group('span')}{m.group('unit')}"
+    elif "up or down" in title.lower():
+        head = title.lower().split("up or down")[0].strip()
+        coin = _NAME_TO_COIN.get(head) or (head if head in COIN_NAMES else None)
+        start = _epoch(raw.get("startTime")) or _epoch(raw.get("eventStartTime"))
+        end = _epoch(raw.get("endDate"))
+        span = end - start if start is not None and end is not None and end > start else None
+    if coin is None or start is None or end is None:
+        return None
+    up = down = None
+    for mk in raw.get("markets") or []:
+        if not isinstance(mk, dict):
+            continue
+        labels = [str(x).strip().lower() for x in json_list(mk.get("outcomes"))]
+        prices = json_list(mk.get("outcomePrices"))
+        if labels[:2] == ["up", "down"] and len(prices) >= 2:
+            up, down = dec(prices[0]), dec(prices[1])
+            break
+    meta_raw = raw.get("eventMetadata")
+    meta: dict[str, Any] = meta_raw if isinstance(meta_raw, dict) else {}
+    ptb = dec(meta.get("priceToBeat") if meta.get("priceToBeat") is not None else meta.get("price_to_beat"))
+    windows: list[dict[str, Any]] = []
+    if prefix and span:
+        windows = [{"slug": f"{prefix}-{start + span * k}", "start_ts": start + span * k} for k in range(1, 5)]
+    return {
+        "coin": coin,
+        "symbol": coin.upper(),
+        "name": COIN_NAMES.get(coin, coin.upper()),
+        "span_seconds": span,
+        "start_ts": start,
+        "end_ts": end,
+        "up_price": str(up) if up is not None else None,
+        "down_price": str(down) if down is not None else None,
+        "price_to_beat": str(ptb) if ptb is not None else None,
+        "price_to_beat_source": "polymarket" if ptb is not None else None,
+        "windows": windows,
+    }
+
+
+def shape_event(raw: dict[str, Any], *, allow_closed: bool = False) -> dict[str, Any] | None:
+    """One Gamma event -> one card. None when it has no open Yes/No market.
+
+    ``allow_closed`` keeps a finished event (the live endpoint still has to show the final score).
+    ``kind`` tells the app how to draw it: ``sport`` (teams + score), ``crypto_updown`` (price to beat)
+    or plain ``market``.
+    """
+
+    if (raw.get("closed") or raw.get("archived")) and not allow_closed:
+        return None
+    markets = [
+        m
+        for m in (shape_market(x, allow_closed=allow_closed) for x in raw.get("markets") or [] if isinstance(x, dict))
+        if m
+    ]
+    sport = shape_sport(raw)
+    crypto = None if sport else shape_crypto(raw)
+    if not markets and not (sport and allow_closed):
         return None
     markets.sort(key=lambda m: dec(m["yes_price"]) or Decimal(0), reverse=True)
     changes = [abs(c) for c in (dec(m["change_1d"]) for m in markets) if c is not None]
@@ -326,17 +498,20 @@ def shape_event(raw: dict[str, Any]) -> dict[str, Any] | None:
     slug = _text(raw.get("slug"))
     return {
         "event_id": _text(raw.get("id")),
-        "title": _text(raw.get("title")) or markets[0]["question"],
+        "title": _text(raw.get("title")) or (markets[0]["question"] if markets else ""),
         "slug": slug,
         "url": f"https://polymarket.com/event/{slug}" if slug else None,
         "image": _text(raw.get("image")) or _text(raw.get("icon")) or None,
         "volume": str(dec(raw.get("volume")) or Decimal(0)),
         "volume_24h": str(dec(raw.get("volume24hr")) or Decimal(0)),
         "liquidity": str(dec(raw.get("liquidity")) or Decimal(0)),
-        "end_time": _text(raw.get("endDate")) or markets[0]["end_time"],
+        "end_time": _text(raw.get("endDate")) or (markets[0]["end_time"] if markets else None),
         "tags": tags[:5],
         "market_count": len(markets),
         "max_change_1d": str(max(changes)) if changes else None,
+        "kind": "sport" if sport else ("crypto_updown" if crypto else "market"),
+        "sport": sport,
+        "crypto": crypto,
         "markets": markets,
     }
 
