@@ -200,3 +200,47 @@ def test_spot_feed_is_decimal_exact() -> None:
 
     snap = asyncio.run(SpotFeed(fetch).snapshot("ETH"))
     assert Decimal(snap["price"]) == Decimal("0.1") and snap["candles"] == []
+
+
+def test_multi_outcome_event_is_multi_sorted_by_chance() -> None:
+    ev = {
+        "id": "5",
+        "title": "Who wins?",
+        "slug": "who-wins",
+        "markets": [
+            _market("a", '["Yes", "No"]', '["0.2", "0.8"]', groupItemTitle="Ann"),
+            _market("b", '["Yes", "No"]', '["0.7", "0.3"]', groupItemTitle="Bob"),
+        ],
+    }
+    card = discover.shape_event(ev)
+    assert card is not None and card["kind"] == "multi" and card["ordered"] is False
+    assert [m["label"] for m in card["markets"]] == ["Bob", "Ann"]
+
+
+def test_range_markets_keep_their_natural_order() -> None:
+    ev = {
+        "id": "6",
+        "title": "Highest temperature in Dhaka",
+        "slug": "temp",
+        "markets": [
+            _market("hot", '["Yes", "No"]', '["0.6", "0.4"]', groupItemTitle="34C", groupItemThreshold="2"),
+            _market("cold", '["Yes", "No"]', '["0.1", "0.9"]', groupItemTitle="32C", groupItemThreshold="0"),
+            _market("mid", '["Yes", "No"]', '["0.3", "0.7"]', groupItemTitle="33C", groupItemThreshold="1"),
+        ],
+    }
+    card = discover.shape_event(ev)
+    assert card is not None and card["kind"] == "multi" and card["ordered"] is True
+    assert [m["label"] for m in card["markets"]] == ["32C", "33C", "34C"]
+
+
+def test_esports_tag_marks_a_game_even_without_a_score() -> None:
+    ev = {
+        "id": "7",
+        "title": "Team A vs Team B",
+        "slug": "esports-a-b",
+        "tags": [{"label": "Esports"}],
+        "markets": [_market("g", '["Team A", "Team B"]', '["0.55", "0.45"]')],
+    }
+    card = discover.shape_event(ev)
+    assert card is not None and card["kind"] == "sport" and card["sport"]["live"] is False
+    assert [t["name"] for t in card["sport"]["teams"]] == ["Team A", "Team B"]

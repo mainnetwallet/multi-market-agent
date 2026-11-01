@@ -230,6 +230,8 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 
 .cpval.cur{color:var(--warn)}.cpval.neg{color:var(--danger)}
 .cpwin{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .mklegend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;margin:4px 0}
+.mulist{margin-top:12px;display:flex;flex-direction:column;gap:2px;max-height:420px;overflow-y:auto}
+.murow{padding:8px 6px;border-radius:8px;border-top:1px solid var(--line)}.murow.cur{background:var(--accent-soft)}.murow .mlabel{cursor:pointer}
 .mkplotsvg .mln{fill:none;stroke-width:2;vector-effect:non-scaling-stroke;stroke-linejoin:round}
 .mkplotsvg .tg{stroke:var(--muted);stroke-width:1;stroke-dasharray:5 5;vector-effect:non-scaling-stroke}.mkplotsvg .tgt{font-weight:700}
 @media(min-width:901px){
@@ -664,10 +666,38 @@ function evStop(){if(EVP){EVP.timers.forEach(clearInterval);EVP.timers=[]}}
 function evAlive(){const b=$("#evPanel");return !!(EVP&&b&&String(b.dataset.tok)===String(EVP.tok)&&!$("#marketDetail").classList.contains("hidden"))}
 function evPanelInit(ev,m){
   evStop();const box=$("#evPanel");
-  if(!ev||!box||(ev.kind!=="sport"&&ev.kind!=="crypto_updown")||(ev.kind==="sport"&&!ev.sport)||(ev.kind==="crypto_updown"&&!ev.crypto)){EVP=null;if(box)box.remove();mkChart(m.venue,m.native_id,MKC.range);return}
+  const ok=ev&&box&&((ev.kind==="sport"&&ev.sport)||(ev.kind==="crypto_updown"&&ev.crypto)||(ev.kind==="multi"&&(ev.markets||[]).length>1));
+  if(!ok){EVP=null;if(box)box.remove();mkChart(m.venue,m.native_id,MKC.range);return}
   const mk=$("#mkChart");if(mk)mk.remove();
   const tok=Date.now();EVP={ev,m,tok,range:"6h",timers:[]};box.dataset.tok=tok;
-  if(ev.kind==="sport")spInit();else cpInit()}
+  if(ev.kind==="sport")spInit();else if(ev.kind==="multi")muInit();else cpInit()}
+/* any other event (politics, finance, weather, mentions, culture, esports...): several outcomes, top lines, live list */
+const MU_COLORS=["var(--blue)","var(--danger)","var(--accent)","var(--warn)"];
+function muRows(){
+  const ev=EVP.ev,cur=EVP.m.native_id;
+  return ev.markets.map(m=>{const ch=num(m.change_1d),chg=Number.isNaN(ch)||ch===0?"":'<small class="'+(ch>0?"pos":"neg")+'">'+(ch>0?"+":"")+(ch*100).toFixed(1)+' pp today</small>',id=esc(m.market_id);
+    return '<div class="mrow murow'+(m.market_id===cur?" cur":"")+'"><div class="mlabel" data-mopen="'+id+'">'+esc(m.label)+chg+'</div><div class="mpct">'+pct0(m.yes_price)+'</div>'
+     +'<div class="mbtns"><button class="qbtn yes" data-mopen="'+id+'" data-out="YES">'+esc(m.yes_label||"Yes")+" "+c0(m.yes_price)+'</button><button class="qbtn no" data-mopen="'+id+'" data-out="NO">'+esc(m.no_label||"No")+" "+c0(m.no_price)+'</button></div></div>'}).join("")}
+function muInit(){
+  const box=$("#evPanel");
+  box.innerHTML='<div class="evp"><div class="tiny muted" id="muMeta"></div><div class="mkhead"><div class="tiny muted">Top outcomes by chance</div><div class="seg" id="muRange">'+MKR.map(r=>'<button data-v="'+r[0]+'" class="'+(r[0]===EVP.range?"on":"")+'">'+r[1]+'</button>').join("")+'</div></div><div id="muPlot" class="mkplot"></div><div class="mulist" id="muList"></div></div>';
+  $("#muRange").addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;EVP.range=b.dataset.v;$$("#muRange button").forEach(x=>x.classList.toggle("on",x===b));muChart()});
+  $("#muList").addEventListener("click",(e)=>{const o=e.target.closest("[data-mopen]");if(!o)return;TPREF=o.dataset.out?{outcome:o.dataset.out}:null;openMarket("polymarket:"+o.dataset.mopen)});
+  muPaint();muChart();EVP.timers.push(setInterval(muLive,10000),setInterval(muChart,45000))}
+function muPaint(){
+  const ev=EVP.ev;$("#muMeta").textContent=ev.markets.length+(ev.ordered?" ranges":" outcomes")+" · "+compact(ev.volume,"polymarket")+" Vol."+(ev.end_time?" · ends "+endShort(ev.end_time):"");
+  $("#muList").innerHTML=muRows()}
+async function muLive(){
+  if(!evAlive()){evStop();return}const tok=EVP.tok;
+  try{const d=await api("/v1/live/event?venue=polymarket&event_id="+enc(EVP.ev.event_id));if(!evAlive()||EVP.tok!==tok)return;
+    if(d.item&&(d.item.markets||[]).length>1){EVP.ev={...EVP.ev,...d.item};muPaint()}}catch(e){}}
+async function muChart(){
+  if(!evAlive())return;const {ev,range,tok}=EVP,top=[...ev.markets].sort((a,b)=>(num(b.yes_price)||0)-(num(a.yes_price)||0)).slice(0,4);
+  const res=await Promise.all(top.map(m=>api("/v1/markets/"+enc(m.market_id)+"/history?venue=polymarket&interval="+enc(range)+"&outcome=YES")
+    .then(d=>(d.points||[]).map(p=>({t:new Date(p.at).getTime(),v:num(p.close)*100})).filter(p=>Number.isFinite(p.t)&&Number.isFinite(p.v))).catch(()=>[])));
+  if(!evAlive()||EVP.tok!==tok||EVP.range!==range)return;
+  const mx=Math.max(10,...res.flat().map(p=>p.v)),hi=Math.min(100,Math.ceil(mx*1.15/5)*5);
+  svgLines($("#muPlot"),top.map((m,i)=>({name:m.label,color:MU_COLORS[i],pts:res[i]})),{min:0,max:hi,y:(v)=>Math.round(v)+"%",yl:(v)=>v.toFixed(1)+"%"})}
 function spInit(){
   const box=$("#evPanel");
   box.innerHTML='<div class="evp"><div class="split"><span class="pill" id="spLeague"></span><span id="spBadge"></span></div><div id="spBoard"></div><div class="tiny muted" id="spMeta"></div>'
