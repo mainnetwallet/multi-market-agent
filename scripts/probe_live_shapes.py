@@ -302,6 +302,173 @@ def synthetic_fixtures() -> dict[str, dict[str, Any]]:
         "polymarket/binary": binary,
         "kalshi/range_event": kalshi_event,
         "limitless/group": limitless_group,
+        **_more_synthetic(),
+    }
+
+
+def _two_team(
+    mid: str, title: str, price: str, teams: tuple[str, str], game_id: int, kind: str = "moneyline"
+) -> dict[str, Any]:
+    """A market whose two outcomes are the two sides (players, fighters, teams)."""
+
+    return {
+        **_pm_market(mid, title, price, sportsMarketType=kind, gameId=game_id),
+        "outcomes": json.dumps(list(teams)),
+    }
+
+
+def _more_synthetic() -> dict[str, dict[str, Any]]:
+    """Shapes the first synthetic set did not cover: tennis, MMA, esports, mentions, weather, Kalshi sports and
+    binary, Limitless CLOB and recurring. Hand-built from the documented fields, never seen on a live response."""
+
+    def teams(a: tuple[str, str], b: tuple[str, str]) -> list[dict[str, Any]]:
+        return [
+            {"name": a[0], "abbreviation": a[1], "ordering": "home"},
+            {"name": b[0], "abbreviation": b[1], "ordering": "away"},
+        ]
+
+    tennis = {
+        "id": "7001",
+        "slug": "atp-sinner-alcaraz-2026-11-02",
+        "title": "Sinner vs. Alcaraz",
+        "gameId": 9003,
+        "score": "1-0",
+        "period": "S2",
+        "live": True,
+        "teams": teams(("Sinner", "SIN"), ("Alcaraz", "ALC")),
+        "markets": [
+            _two_team("t1", "Sinner vs. Alcaraz", "0.57", ("Sinner", "Alcaraz"), 9003),
+            {
+                **_pm_market("t2", "Total games O/U 22.5", "0.51", sportsMarketType="totals", line=22.5, gameId=9003),
+                "outcomes": '["Over", "Under"]',
+            },
+        ],
+    }
+    mma = {
+        "id": "7002",
+        "slug": "ufc-silva-jones-2026-11-08",
+        "title": "Silva vs. Jones",
+        "gameId": 9004,
+        "live": False,
+        "startTime": "2026-11-08T03:00:00Z",
+        "teams": teams(("Silva", "SIL"), ("Jones", "JON")),
+        "markets": [
+            _two_team("f1", "Silva vs. Jones", "0.44", ("Silva", "Jones"), 9004),
+            _pm_market("f2", "Fight goes the distance?", "0.38", sportsMarketType="method_of_victory", gameId=9004),
+        ],
+    }
+    esports = {
+        "id": "7003",
+        "slug": "cs2-navi-faze-2026-11-03",
+        "title": "NAVI vs. FaZe",
+        "gameId": 9005,
+        "score": "1-0",
+        "period": "Map 2",
+        "live": True,
+        "teams": teams(("NAVI", "NAV"), ("FaZe", "FAZ")),
+        "markets": [
+            _two_team("e1", "NAVI vs. FaZe (BO3)", "0.52", ("NAVI", "FaZe"), 9005),
+            _two_team("e2", "Map 1 winner", "0.60", ("NAVI", "FaZe"), 9005, kind="child_moneyline"),
+        ],
+    }
+    mentions = {
+        "id": "7004",
+        "slug": "what-will-the-ceo-say-on-the-earnings-call",
+        "title": "What will the CEO say on the earnings call?",
+        "markets": [
+            _pm_market("w1", "Will the CEO say Tariff?", "0.71", groupItemTitle="Tariff"),
+            _pm_market("w2", "Will the CEO say Recession?", "0.18", groupItemTitle="Recession"),
+            _pm_market("w3", "Will the CEO say Layoffs?", "0.09", groupItemTitle="Layoffs"),
+        ],
+    }
+    bands = [
+        ("49\u00b0F or below", "0.10"),
+        ("50-51\u00b0F", "0.24"),
+        ("52-53\u00b0F", "0.31"),
+        ("54-55\u00b0F", "0.22"),
+        ("56\u00b0F or higher", "0.13"),
+    ]
+    weather = {
+        "id": "7005",
+        "slug": "highest-temperature-in-nyc-on-november-2",
+        "title": "Highest temperature in NYC on November 2?",
+        "markets": [
+            _pm_market(f"k{i}", f"NYC high {lab}", pr, groupItemTitle=lab) for i, (lab, pr) in enumerate(bands)
+        ],
+    }
+    kalshi_sports = {
+        "event_ticker": "KXNBAGAME-26NOV02LALBOS",
+        "title": "Lakers vs Celtics",
+        "category": "Sports",
+        "markets": [
+            {
+                "ticker": "KXNBAGAME-26NOV02LALBOS-LAL",
+                "yes_sub_title": "Los Angeles L",
+                "status": "active",
+                "yes_bid_dollars": "0.41",
+                "yes_ask_dollars": "0.43",
+            },
+            {
+                "ticker": "KXNBAGAME-26NOV02LALBOS-BOS",
+                "yes_sub_title": "Boston",
+                "status": "active",
+                "yes_bid_dollars": "0.58",
+                "yes_ask_dollars": "0.60",
+            },
+        ],
+    }
+    kalshi_binary = {
+        "event_ticker": "KXRAIN-26NOV02",
+        "title": "Will it rain in NYC on Nov 2?",
+        "category": "Climate and Weather",
+        "markets": [
+            {"ticker": "KXRAIN-26NOV02-Y", "status": "active", "yes_bid_dollars": "0.30", "yes_ask_dollars": "0.33"}
+        ],
+    }
+    kalshi_live_data = {
+        "live_datas": [
+            {
+                "milestone_id": "synthetic-milestone-1",
+                "type": "basketball_game",
+                "details": {
+                    "status": "live",
+                    "home_name": "Boston",
+                    "away_name": "Los Angeles L",
+                    "home_points": 91,
+                    "away_points": 88,
+                    "period": "Q3",
+                },
+            }
+        ]
+    }
+    limitless_clob = {
+        "slug": "synthetic-clob-market",
+        "title": "Will the synthetic thing happen?",
+        "tradeType": "clob",
+        "prices": [0.62, 0.38],
+        "expirationDate": "Nov 30, 2026",
+        "categories": ["Crypto"],
+    }
+    limitless_recurring = {
+        "slug": "synthetic-btc-hourly",
+        "title": "BTC above $100,000 at 15:00 UTC?",
+        "tradeType": "amm",
+        "recurring": True,
+        "prices": [0.5, 0.5],
+        "expirationDate": "Nov 1, 2026",
+        "categories": ["Crypto", "Hourly"],
+    }
+    return {
+        "polymarket/tennis_match": tennis,
+        "polymarket/mma_fight": mma,
+        "polymarket/esports_match": esports,
+        "polymarket/mentions": mentions,
+        "polymarket/weather_temperature": weather,
+        "kalshi/sports_event": kalshi_sports,
+        "kalshi/binary_event": kalshi_binary,
+        "kalshi/live_data_batch": kalshi_live_data,
+        "limitless/clob_market": limitless_clob,
+        "limitless/recurring_market": limitless_recurring,
     }
 
 

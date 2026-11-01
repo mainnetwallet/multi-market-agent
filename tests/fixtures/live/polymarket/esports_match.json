@@ -1,0 +1,52 @@
+{
+  "data": {
+    "gameId": 9005,
+    "id": "7003",
+    "live": true,
+    "markets": [
+      {
+        "bestAsk": "0.53",
+        "bestBid": "0.52",
+        "clobTokenIds": "[\"e11\", \"e12\"]",
+        "gameId": 9005,
+        "groupItemTitle": "NAVI vs. FaZe (BO3)",
+        "id": "e1",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.52\", \"0.48\"]",
+        "outcomes": "[\"NAVI\", \"FaZe\"]",
+        "question": "NAVI vs. FaZe (BO3)",
+        "sportsMarketType": "moneyline"
+      },
+      {
+        "bestAsk": "0.61",
+        "bestBid": "0.60",
+        "clobTokenIds": "[\"e21\", \"e22\"]",
+        "gameId": 9005,
+        "groupItemTitle": "Map 1 winner",
+        "id": "e2",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.60\", \"0.40\"]",
+        "outcomes": "[\"NAVI\", \"FaZe\"]",
+        "question": "Map 1 winner",
+        "sportsMarketType": "child_moneyline"
+      }
+    ],
+    "period": "Map 2",
+    "score": "1-0",
+    "slug": "cs2-navi-faze-2026-11-03",
+    "teams": [
+      {
+        "abbreviation": "NAV",
+        "name": "NAVI",
+        "ordering": "home"
+      },
+      {
+        "abbreviation": "FAZ",
+        "name": "FaZe",
+        "ordering": "away"
+      }
+    ],
+    "title": "NAVI vs. FaZe"
+  },
+  "synthetic": true
+}

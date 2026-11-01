@@ -1,0 +1,16 @@
+{
+  "data": {
+    "categories": [
+      "Crypto"
+    ],
+    "expirationDate": "Nov 30, 2026",
+    "prices": [
+      0.62,
+      0.38
+    ],
+    "slug": "synthetic-clob-market",
+    "title": "Will the synthetic thing happen?",
+    "tradeType": "clob"
+  },
+  "synthetic": true
+}

@@ -1,0 +1,24 @@
+{
+  "data": {
+    "category": "Sports",
+    "event_ticker": "KXNBAGAME-26NOV02LALBOS",
+    "markets": [
+      {
+        "status": "active",
+        "ticker": "KXNBAGAME-26NOV02LALBOS-LAL",
+        "yes_ask_dollars": "0.43",
+        "yes_bid_dollars": "0.41",
+        "yes_sub_title": "Los Angeles L"
+      },
+      {
+        "status": "active",
+        "ticker": "KXNBAGAME-26NOV02LALBOS-BOS",
+        "yes_ask_dollars": "0.60",
+        "yes_bid_dollars": "0.58",
+        "yes_sub_title": "Boston"
+      }
+    ],
+    "title": "Lakers vs Celtics"
+  },
+  "synthetic": true
+}

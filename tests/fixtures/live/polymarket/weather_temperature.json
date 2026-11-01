@@ -1,0 +1,65 @@
+{
+  "data": {
+    "id": "7005",
+    "markets": [
+      {
+        "bestAsk": "0.11",
+        "bestBid": "0.10",
+        "clobTokenIds": "[\"k01\", \"k02\"]",
+        "groupItemTitle": "49\u00b0F or below",
+        "id": "k0",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.10\", \"0.90\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "NYC high 49\u00b0F or below"
+      },
+      {
+        "bestAsk": "0.25",
+        "bestBid": "0.24",
+        "clobTokenIds": "[\"k11\", \"k12\"]",
+        "groupItemTitle": "50-51\u00b0F",
+        "id": "k1",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.24\", \"0.76\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "NYC high 50-51\u00b0F"
+      },
+      {
+        "bestAsk": "0.32",
+        "bestBid": "0.31",
+        "clobTokenIds": "[\"k21\", \"k22\"]",
+        "groupItemTitle": "52-53\u00b0F",
+        "id": "k2",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.31\", \"0.69\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "NYC high 52-53\u00b0F"
+      },
+      {
+        "bestAsk": "0.23",
+        "bestBid": "0.22",
+        "clobTokenIds": "[\"k31\", \"k32\"]",
+        "groupItemTitle": "54-55\u00b0F",
+        "id": "k3",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.22\", \"0.78\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "NYC high 54-55\u00b0F"
+      },
+      {
+        "bestAsk": "0.14",
+        "bestBid": "0.13",
+        "clobTokenIds": "[\"k41\", \"k42\"]",
+        "groupItemTitle": "56\u00b0F or higher",
+        "id": "k4",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.13\", \"0.87\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "NYC high 56\u00b0F or higher"
+      }
+    ],
+    "slug": "highest-temperature-in-nyc-on-november-2",
+    "title": "Highest temperature in NYC on November 2?"
+  },
+  "synthetic": true
+}

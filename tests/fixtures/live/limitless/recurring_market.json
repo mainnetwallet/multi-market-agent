@@ -1,0 +1,18 @@
+{
+  "data": {
+    "categories": [
+      "Crypto",
+      "Hourly"
+    ],
+    "expirationDate": "Nov 1, 2026",
+    "prices": [
+      0.5,
+      0.5
+    ],
+    "recurring": true,
+    "slug": "synthetic-btc-hourly",
+    "title": "BTC above $100,000 at 15:00 UTC?",
+    "tradeType": "amm"
+  },
+  "synthetic": true
+}

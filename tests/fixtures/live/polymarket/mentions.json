@@ -1,0 +1,43 @@
+{
+  "data": {
+    "id": "7004",
+    "markets": [
+      {
+        "bestAsk": "0.72",
+        "bestBid": "0.71",
+        "clobTokenIds": "[\"w11\", \"w12\"]",
+        "groupItemTitle": "Tariff",
+        "id": "w1",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.71\", \"0.29\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Will the CEO say Tariff?"
+      },
+      {
+        "bestAsk": "0.19",
+        "bestBid": "0.18",
+        "clobTokenIds": "[\"w21\", \"w22\"]",
+        "groupItemTitle": "Recession",
+        "id": "w2",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.18\", \"0.82\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Will the CEO say Recession?"
+      },
+      {
+        "bestAsk": "0.10",
+        "bestBid": "0.09",
+        "clobTokenIds": "[\"w31\", \"w32\"]",
+        "groupItemTitle": "Layoffs",
+        "id": "w3",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.09\", \"0.91\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Will the CEO say Layoffs?"
+      }
+    ],
+    "slug": "what-will-the-ceo-say-on-the-earnings-call",
+    "title": "What will the CEO say on the earnings call?"
+  },
+  "synthetic": true
+}
