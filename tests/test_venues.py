@@ -309,3 +309,26 @@ def test_production_registry_has_no_simulated_venue(tmp_path) -> None:
     assert set(registry.adapters) == {"polymarket", "kalshi", "limitless"}
     assert registry.is_ready(VenueId.FAKE) is False
     store.close()
+
+
+async def test_polymarket_price_history_uses_market_param_and_fidelity() -> None:
+    venue = PolymarketVenue(make_settings(__import__("pathlib").Path(".")))
+    seen: list[tuple[str, dict]] = []
+
+    async def fake_get_market(self, ref):  # type: ignore[no-untyped-def]
+        return venue.parse_gamma_market(GAMMA_ROW_NO_CATEGORY)
+
+    async def fake_get_json(self, url, *, params=None, headers=None):  # type: ignore[no-untyped-def]
+        seen.append((url, dict(params or {})))
+        return {"history": [{"t": 1767225600, "p": 0.41}, {"t": 1767229200, "p": 0.43}, {"bad": 1}]}
+
+    venue.get_market = MethodType(fake_get_market, venue)
+    venue.get_json = MethodType(fake_get_json, venue)
+    points = await venue.get_price_history("30828", interval="1w")
+    url, params = seen[0]
+    assert url == "https://clob.polymarket.com/prices-history"
+    # `token_id` is rejected by the CLOB with HTTP 400; the parameter is `market`.
+    assert params == {"market": "111", "interval": "1w", "fidelity": 60}
+    assert [p["close"] for p in points] == ["0.41", "0.43"]
+    with pytest.raises(ValueError):
+        await venue.get_price_history("30828", interval="5y")

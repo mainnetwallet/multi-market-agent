@@ -40,6 +40,7 @@ from .domain import (
 from .execution import ExecutionGateway
 from .store import Store
 from .util import get_logger
+from .venues.base import VenueHTTPError
 from .venues.registry import VenueRegistry
 
 logger = get_logger(__name__)
@@ -655,8 +656,11 @@ class FullControlService:
             raise FullControlError(str(exc), code="bad_interval", status=400) from exc
         except Exception as exc:
             reason = adapter.caps.unsupported_reason.get("price_history")
+            detail = (
+                f"HTTP {exc.status_code}: {exc.body[:160]}" if isinstance(exc, VenueHTTPError) else type(exc).__name__
+            )
             raise FullControlError(
-                reason or f"{target.value} price history is unavailable: {type(exc).__name__}",
+                reason or f"{target.value} price history is unavailable: {detail}",
                 code="unsupported_history",
                 status=400,
             ) from exc

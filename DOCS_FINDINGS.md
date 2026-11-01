@@ -290,7 +290,7 @@ credential was available, so no real order and no authenticated read was made.
 | Cancel all | `POST /cancel-all` | – |
 | Cancel by market | `POST /cancel-market-orders` | – |
 | Order book | `GET /book?token_id=` | public |
-| Price history | `GET /prices-history?token_id=&interval=` | – |
+| Price history | `GET /prices-history?market=<token id>&interval=&fidelity=` (`token_id` is rejected with HTTP 400; verified against docs.polymarket.com 2026-11-01) | – |
 | Heartbeat | `POST /v1/heartbeats` | body `{heartbeat_id}`; legacy `POST /heartbeats` |
 | Bridge deposit | `POST https://bridge.polymarket.com/deposit` | body `{address}`; returns `{address:{evm,svm,btc,tron}, note}` |
 | Bridge supported assets | `GET /supported-assets` | `{supportedAssets:[{chainId,chainName,token:{name,symbol,address,decimals},minCheckoutUsd}]}` |
