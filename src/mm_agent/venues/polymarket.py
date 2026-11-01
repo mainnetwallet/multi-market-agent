@@ -48,6 +48,7 @@ from ..domain import (
     to_decimal,
     utcnow,
 )
+from ..polymarket_data import ClobPublic, PolymarketData
 from . import polymarket_signing
 from .base import HttpVenue, MarketQuery, Page, VenueAuthError, VenueUnavailableError
 
@@ -205,6 +206,9 @@ class PolymarketVenue(HttpVenue):
         self._sub_tags: dict[str, tuple[float, list[dict[str, str]]]] = {}
         # live coin price for the "Up or Down" windows (public Coinbase data, see crypto_feed.py)
         self.spot = SpotFeed(self.get_json)
+        # public Data API v2 and CLOB price routes (other wallets, holders, open interest, leaderboards, ...)
+        self.market_data = PolymarketData(lambda: self.client)
+        self.clob_public = ClobPublic(lambda: self.client)
         self.test_orders = False
         self._test_error: str | None = None
         self._unresolvable_assets: set[str] = set()

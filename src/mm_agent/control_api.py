@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import math
 import os
 import time
 from collections import defaultdict, deque
@@ -13,6 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import (
     Depends,
     FastAPI,
@@ -38,6 +40,7 @@ from .domain import OrderType, Outcome, Side, VenueId, utcnow
 from .events import EventBus
 from .full_control import FullControlError, FullControlService
 from .funds import FundsError, FundsService
+from .polymarket_data import DataAPIError
 from .scanner import Scanner
 from .store import ConversationBusy, ConversationNotFound
 from .util import get_logger, redact
@@ -197,6 +200,14 @@ class WithdrawBody(BaseModel):
 class ApprovalBody(BaseModel):
     venue: VenueId
     kind: str
+
+
+def _data_http_error(exc: DataAPIError) -> HTTPException:
+    """A venue error as an HTTP error: the venue's own 400/404/429/503 are kept, anything else is a 502."""
+
+    status = exc.status if exc.status in (400, 404, 429, 503) else 502
+    headers = {"Retry-After": str(math.ceil(exc.retry_after))} if exc.retry_after else None
+    return HTTPException(status_code=status, detail=exc.message[:200] or "venue error", headers=headers)
 
 
 def _book_json(book: Any) -> dict[str, Any]:
@@ -518,6 +529,67 @@ def create_app(
         if item is None:
             raise HTTPException(status_code=404, detail="event not found")
         return {"ok": True, "item": item}
+
+    # ── Polymarket public data (Data API v2 and CLOB price routes; no credentials) ──
+    def _pm_adapter(attr: str) -> Any:
+        adapter = registry.adapters.get(VenueId.POLYMARKET)
+        client = getattr(adapter, attr, None)
+        if client is None:
+            raise HTTPException(status_code=404, detail="polymarket data is not available")
+        return client
+
+    async def _pm_call(call: Any) -> dict[str, Any]:
+        try:
+            return {"ok": True, "result": await call}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)[:200]) from exc
+        except DataAPIError as exc:
+            raise _data_http_error(exc) from exc
+        except httpx.HTTPError as exc:  # timeout, DNS or connection failure: the venue was not reached
+            raise HTTPException(status_code=502, detail=f"polymarket unreachable: {type(exc).__name__}") from exc
+        except RuntimeError as exc:  # the adapter's HTTP client is not started yet
+            raise HTTPException(status_code=503, detail=str(exc)[:120]) from exc
+
+    @app.get("/v1/polymarket/data")
+    async def polymarket_data_routes(_: str = Depends(require_auth)) -> dict[str, Any]:
+        """Which Data API v2 routes exist and the query parameters each accepts."""
+
+        from .polymarket_data import ENDPOINTS
+
+        return {
+            "ok": True,
+            "routes": {name: sorted(ep.params) for name, ep in ENDPOINTS.items()},
+            "prices": ["midpoint", "midpoints", "spread", "last-trade", "last-trades", "price"],
+        }
+
+    @app.get("/v1/polymarket/data/{name}")
+    async def polymarket_data(name: str, request: Request, _: str = Depends(require_auth)) -> dict[str, Any]:
+        """Read-only Data API v2: positions, trades, activity, holders, open interest, leaderboard,
+        resolutions, token lookup, deep price history and more. Parameters are validated first;
+        paging is by ``pagination.next_cursor`` (send it back as ``cursor``)."""
+
+        client = _pm_adapter("market_data")
+        return await _pm_call(client.fetch(name, dict(request.query_params)))
+
+    @app.get("/v1/polymarket/price/{kind}")
+    async def polymarket_price(
+        kind: str, token_id: str = "", token_ids: str = "", side: str = "", _: str = Depends(require_auth)
+    ) -> dict[str, Any]:
+        """CLOB public prices for outcome tokens: midpoint, spread, last trade, best price (needs
+        ``side``), and the batch forms ``midpoints`` and ``last-trades`` (``token_ids``, comma-separated)."""
+
+        clob = _pm_adapter("clob_public")
+        calls: dict[str, Any] = {
+            "midpoint": lambda: clob.midpoint(token_id),
+            "spread": lambda: clob.spread(token_id),
+            "last-trade": lambda: clob.last_trade_price(token_id),
+            "price": lambda: clob.price(token_id, side),
+            "midpoints": lambda: clob.midpoints(token_ids),
+            "last-trades": lambda: clob.last_trades_prices(token_ids),
+        }
+        if kind not in calls:
+            raise HTTPException(status_code=404, detail=f"unknown price route; use one of: {', '.join(calls)}")
+        return await _pm_call(calls[kind]())
 
     @app.get("/v1/crypto/spot")
     async def crypto_spot(
