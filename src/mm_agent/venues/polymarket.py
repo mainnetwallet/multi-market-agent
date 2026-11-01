@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -15,6 +16,7 @@ import httpx
 
 from .. import discover as discover_lib
 from ..config import Settings
+from ..crypto_feed import SpotFeed
 from ..domain import (
     Balance,
     BookLevel,
@@ -163,6 +165,7 @@ def _handle_summary(handle: Any) -> dict[str, Any]:
 
 class PolymarketVenue(HttpVenue):
     id = VenueId.POLYMARKET
+    history_by_outcome = True  # /prices-history takes either outcome's token id
     # Capabilities verified against docs.polymarket.com on 2026-10-30.
     caps = VenueCaps(
         realtime=True,
@@ -200,6 +203,8 @@ class PolymarketVenue(HttpVenue):
         self._nav_tag_ids: dict[str, str] = {}
         # category id -> (valid until, sub-category rows read from Gamma)
         self._sub_tags: dict[str, tuple[float, list[dict[str, str]]]] = {}
+        # live coin price for the "Up or Down" windows (public Coinbase data, see crypto_feed.py)
+        self.spot = SpotFeed(self.get_json)
         self.test_orders = False
         self._test_error: str | None = None
         self._unresolvable_assets: set[str] = set()
@@ -871,11 +876,41 @@ class PolymarketVenue(HttpVenue):
             handle = await client.merge_positions(condition_id=condition_id, legs=legs, amount="max")
         return {"supported": True, "action": action, "handle": _handle_summary(handle)}
 
-    async def get_price_history(self, market_id: str, *, interval: str = "1d") -> list[dict[str, Any]]:
-        """CLOB /prices-history for the market's YES asset."""
+    async def event_live(self, event_id: str = "", *, slug: str = "") -> dict[str, Any] | None:
+        """One Gamma event as a card, finished games included (the live view shows the final score).
+
+        Looked up by numeric id (``/events/{id}``) or by slug (``/events?slug=``). The markets are
+        remembered so the trade sheet opens without another lookup. None when Gamma has no such event."""
+
+        if event_id:
+            if not event_id.isdigit():
+                raise ValueError("bad event id")
+            raw: Any = await self.get_json(GAMMA + f"/events/{event_id}")
+        else:
+            if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,120}", slug):
+                raise ValueError("bad event slug")
+            rows = await self.get_json(GAMMA + "/events", params={"slug": slug})
+            raw = rows[0] if isinstance(rows, list) and rows else None
+        if not isinstance(raw, dict):
+            return None
+        item = discover_lib.shape_event(raw, allow_closed=True)
+        if item is None:
+            return None
+        for mk in raw.get("markets") or []:
+            if isinstance(mk, dict) and not (mk.get("closed") or mk.get("archived")):
+                try:
+                    self._remember(self.parse_gamma_market({**mk, "events": [raw]}))
+                except Exception:
+                    continue
+        return item
+
+    async def get_price_history(
+        self, market_id: str, *, interval: str = "1d", outcome: Outcome = Outcome.YES
+    ) -> list[dict[str, Any]]:
+        """CLOB /prices-history for one outcome's asset (YES by default)."""
 
         market = await self.get_market(MarketRef(venue=self.id, market_id=market_id))
-        asset_id = market.outcome(Outcome.YES).native_id
+        asset_id = market.outcome(outcome).native_id
         # The CLOB parameter is `market` (it takes the token id); `token_id` is rejected with HTTP 400.
         # `fidelity` is the bucket size in minutes. The default of 1 minute is refused or comes back
         # empty on the long windows, so each window asks for a bucket that keeps the series small.

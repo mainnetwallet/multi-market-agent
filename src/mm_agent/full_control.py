@@ -647,11 +647,28 @@ class FullControlService:
             "as_of": book.timestamp.isoformat(),
         }
 
-    async def market_history(self, market_id: str, *, venue: VenueId | None, interval: str) -> dict[str, Any]:
+    async def market_history(
+        self, market_id: str, *, venue: VenueId | None, interval: str, outcome: Outcome = Outcome.YES
+    ) -> dict[str, Any]:
         target = self._venue_or_active(venue)
         adapter = self.registry.get(target)
         try:
-            points = await adapter.get_price_history(market_id, interval=interval)
+            if outcome == Outcome.YES:
+                points = await adapter.get_price_history(market_id, interval=interval)
+            elif getattr(adapter, "history_by_outcome", False):
+                points = await adapter.get_price_history(market_id, interval=interval, outcome=outcome)
+            else:  # a binary market: the NO price is one minus the YES price
+                points = [
+                    {
+                        **p,
+                        **{
+                            k: str(Decimal(1) - Decimal(str(p[k])))
+                            for k in ("open", "high", "low", "close")
+                            if p.get(k) is not None
+                        },
+                    }
+                    for p in await adapter.get_price_history(market_id, interval=interval)
+                ]
         except ValueError as exc:
             raise FullControlError(str(exc), code="bad_interval", status=400) from exc
         except Exception as exc:

@@ -776,9 +776,12 @@ class KalshiVenue(HttpVenue):
             raw_redacted={"remaining_count": str(remaining), "fill_count": str(filled)},
         )
 
-    async def get_price_history(self, market_id: str, *, interval: str = "1d") -> list[dict[str, Any]]:
-        """Public candlesticks: GET /markets/candlesticks (batch, up to 100 tickers)."""
+    async def get_price_history(
+        self, market_id: str, *, interval: str = "1d", outcome: Any = None
+    ) -> list[dict[str, Any]]:
+        """Public candlesticks: GET /markets/candlesticks (batch, up to 100 tickers). YES price only."""
 
+        del outcome  # the caller inverts the series for NO
         minutes = {"1m": 1, "1h": 60, "1d": 1440}.get(interval)
         if minutes is None:
             raise ValueError(f"unsupported interval {interval}; use 1m, 1h or 1d")
