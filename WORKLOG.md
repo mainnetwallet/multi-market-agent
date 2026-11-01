@@ -107,3 +107,30 @@ Not done / deviations (log):
   and an Up/Down window once on the deployed PWA and watch the indicator.
 Decisions: sports indicator is LIVE while the stream delivers and always shows the vendor "may be delayed" note; REST fallback never faster than 5 s.
 Next step: P4 (Android) or P2b; before either, the owner runs `scripts/probe_live_shapes.py` and `scripts/live_hub_check.py` on a real machine.
+
+## Handoff - P2b follow-up (tests green)
+- `f885050` was pushed with `tests/test_live_venue_feeds.py` "not yet run to green". Fixed in `6c107e6`: the fake Kalshi server awaited its script
+  inside its own receive loop (deadlock when the script waits for a client frame such as `get_snapshot`) - it now runs as a task; the Limitless AMM test
+  expected `ignored == 4`, the code correctly counts 3 (an update for an unwatched market is skipped silently). Full gate green, 486 tests.
+- Not pushed from the interrupted session: hub-level multi-venue tests (`tests/test_live_hub_venues.py`: Kalshi/Limitless feeds wired through the hub,
+  per-venue staleness, `(venue, asset)` index, `on_settled`). Still to write.
+
+## Handoff - P4 (Android event views)
+Done (written; the Android UI layer is NOT compiled, see below):
+- `data/EventStore.kt`: pure snapshot/patch reducer on org.json mirroring `static/js/live.js` (deep row merge, game/status/spot/freshness/chart patches, chart cap 2000,
+  old seq ignored, gap -> RESNAPSHOT, REST snapshot keeps chart points) and `LiveIndicator` (LIVE / DELAYED / OFFLINE, source, age, vendor-delay note for games).
+- `data/LiveStream.kt`: OkHttp client for `/v1/stream` (Bearer): jittered backoff 1..15 s, resubscribe on open, idle snapshot probe (45 s, 10 s reply), 4401 -> `auth`, 4404 -> `disabled`, no retry.
+- `data/EventViewModel.kt` + `data/EventTarget.kt`: follows one event; frames applied on the main thread; `/v1/event/view` fallback never faster than 5 s and only while the socket cannot deliver;
+  a pasted link is read once by URL, then followed by the venue/event id the server resolved; `EventTarget.fromPaste` accepts https links to polymarket.com / kalshi.com / limitless.exchange only.
+- `ui/event/`: `EventScreen` (layout dispatch from `view.layout`, unknown -> generic), `GameScreen` (scoreboard, Home/Draw/Away found by name, tabs only for non-empty sections), `BracketScreen`,
+  `GenericScreen` (candidates, Up/Down with spot and price to beat, binary, generic), shared `EventCommon` (LiveBadge, Crest with initials fallback and https-only logos, Yes/No at the ask,
+  Canvas multi-line chart with range chips). Entry: tap a Discover card, or paste a venue link in the Markets search. Yes/No opens the existing trade sheet; Back from it returns to the event.
+- Tests: `EventStoreTest.kt` (16 cases). Run for real on a plain JVM with kotlinc 2.0.21 + org.json 20240303 and a tiny JUnit shim: 16 passed. That run also caught a real build break
+  (`/v1/orders/*` inside a KDoc opens a nested comment in Kotlin) - fixed.
+Not done / deviations:
+- Not compiled with Gradle (no Android SDK or Maven access in the sandbox): `LiveStream`, `EventViewModel`, all Compose screens and the MainActivity wiring are syntax-checked only (kotlinc parse, no errors).
+  First real build may need small import fixes. Owner: `gradle -p android testDebugUnitTest assembleDebug`.
+- Candidates and Up/Down use the shared `GenericScreen` list (PWA has dedicated layouts); no tab/crest image cache beyond Coil defaults; chart has no hover tip; sibling chips / related list absent (server still sends none).
+- `AUTO_REFRESH_MS` untouched (it is the account safety net, not an event poller).
+- PriceButton in `DiscoverScreen.kt` changed from private to internal (reused for the Yes/No buttons).
+Next step: P5 (hardening, load test, docs) - and first the owner builds the Android app once and runs the live probes (`scripts/probe_live_shapes.py`, `scripts/live_hub_check.py`).
