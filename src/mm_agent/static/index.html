@@ -174,6 +174,32 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 
 .bookcard .obhead{margin:0 0 8px}.obtabs{border-bottom:0;margin:0;padding:0}.obtabs .tab{padding:6px 2px;font-size:15px}
 .obseg{display:flex;width:100%;margin-bottom:6px}.obseg button{flex:1}
 .bookcard .ladder{margin-top:6px}
+/* ---- v8: Polymarket-style trade ticket ---- */
+.ticket.pm{padding:16px 16px 14px;--no:#e5303a;--no-soft:rgba(229,48,58,.14)}
+.pm .pmhead{position:relative;margin-bottom:12px}.pm .pmttl{font-size:13px;color:var(--muted);line-height:1.3;padding-right:92px}.pm .pmsel{font-size:19px;font-weight:800;letter-spacing:-.01em}.pm .pmsel.yes{color:var(--yes)}.pm .pmsel.no{color:var(--no)}.pm .pmhead .pill{position:absolute;right:0;top:0}
+.pm .pmtabs{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);margin:0 -16px 14px;padding:0 16px}
+.pm .pmbs{display:flex;gap:18px}.pm .pmbs button{background:none;border:0;padding:8px 0 10px;font-weight:700;font-size:15px;color:var(--muted);cursor:pointer;box-shadow:inset 0 -2px 0 transparent}.pm .pmbs button.on{color:var(--text);box-shadow:inset 0 -2px 0 var(--text)}
+.pm .pmdrop{width:auto;border:0;background:transparent;box-shadow:none;font-weight:700;font-size:14px;padding:6px 2px;cursor:pointer;color:var(--text)}.pm .pmdrop.static{cursor:default}.pm .pmdrop:focus{box-shadow:none;border:0}
+.pm .pmouts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.pm .pmout{border:0;border-radius:10px;padding:13px 8px;font-weight:700;font-size:15px;background:var(--card2);color:var(--muted);cursor:pointer;text-align:center}.pm .pmout b{font-weight:800}
+.pm .pmout.yes.sel{background:var(--yes);color:#fff}.pm .pmout.no.sel{background:var(--no);color:#fff}
+.pm .pmrow{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:10px 0}.pm .pmrow>label{font-weight:700;font-size:15px;flex:none}
+.pm .pmrow.big>label{font-size:17px}.pm .pmbig{display:flex;align-items:center;justify-content:flex-end;flex:1;min-width:0}.pm .pmbig span{font-size:34px;font-weight:800;line-height:1}
+.pm .pmbig input{border:0;background:transparent;box-shadow:none;padding:0 0 0 2px;width:2ch;min-width:1ch;max-width:100%;text-align:right;font-size:34px;font-weight:800;line-height:1.1;letter-spacing:-.02em}.pm .pmbig input:focus{box-shadow:none;border:0}
+.pm input[type=number]{-moz-appearance:textfield;appearance:textfield}.pm input[type=number]::-webkit-inner-spin-button,.pm input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.pm .pmchips{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;margin:6px 0 4px}.pm .pmchips button{border:0;background:var(--card2);color:var(--text);border-radius:8px;padding:6px 10px;font-weight:700;font-size:12.5px;cursor:pointer}.pm .pmchips button:hover{filter:brightness(1.15)}
+.pm .pmrow.sm{margin:4px 0}.pm .pmrow.sm>label{font-size:12px;font-weight:600;color:var(--muted)}.pm .pmmini{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)}.pm .pmmini input{width:64px;padding:5px 8px;border-radius:8px;text-align:right}
+.pm .pmstep{display:flex;align-items:center;border:1px solid var(--line2);border-radius:12px;overflow:hidden;background:var(--bg2)}.pm .pmstep button{border:0;background:transparent;width:38px;height:40px;font-size:18px;font-weight:700;cursor:pointer;color:var(--text)}.pm .pmstep button:hover{background:var(--card2)}
+.pm .pmstep input{border:0;background:transparent;box-shadow:none;border-radius:0;width:64px;padding:0;text-align:right;font-weight:800;font-size:17px}.pm .pmstep span{font-weight:800;font-size:17px;padding-right:4px}.pm .pmstep input:focus{box-shadow:none;border:0}
+.pm .pmshr input{width:150px;text-align:right;font-weight:800;font-size:17px;padding:9px 12px}
+.pm .pmmatchrow{text-align:right;min-height:4px}.pm .pmmatch{display:inline-block;background:var(--yes-soft);color:var(--yes);border-radius:8px;padding:4px 9px;font-size:12px;font-weight:700}
+.pm .pmhold{text-align:right;margin:2px 0}.pm .pmexp>label{color:var(--muted);font-weight:600;font-size:14px}.pm .pmpost{margin:4px 0}
+.pm .pmdiv{border-top:1px solid var(--line);margin:12px -16px 10px}
+.pm .pmsumbox{margin-bottom:10px}.pm .pmsum{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:8px 0}.pm .pmsum b{font-size:16px;display:block}.pm .pmsum small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.pm .pmsum .v{font-size:26px;font-weight:800;letter-spacing:-.02em}.pm .pmsum .v.green{color:var(--yes)}.pm .pmsum .v.blue{color:var(--blue)}
+.pm .pmerr{margin-top:4px}
+.pm #tkMsg{margin-bottom:10px}
+.ticket.pm #tkGo.primary{background:var(--accent);border-color:var(--accent);color:#fff;min-height:46px;font-size:15px;border-radius:10px}
 /* ---- v7: top navbar, cards, market page ---- */
 .content{max-width:1280px}
 .dgrid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));align-items:stretch}
@@ -553,31 +579,44 @@ async function renderTicket(m,books){
   TK.okAt=Date.now();TK.fail=0;tkDraw();tkLive(true)}
 function tkBook(){const bk=(TK.books&&TK.books[TK.outcome])||{};const lv=(a)=>(a||[]).map(x=>({p:num(x.price),s:num(x.size)})).filter(x=>x.p>0&&x.s>0);return{asks:lv(bk.asks).sort((a,b)=>a.p-b.p),bids:lv(bk.bids).sort((a,b)=>b.p-a.p),bk}}
 function tkHeld(){const ps=(STATE&&STATE.positions)||[];const p=ps.find(x=>x.venue===TK.venue&&x.market_id===TK.id&&x.outcome===TK.outcome);return p?num(p.shares):0}
+const pxc=(v)=>{const n=num(v);return Number.isNaN(n)?"—":trimDec(n*100,1)+"¢"};
+function tkDefaultPrice(){const bk=(TK.books&&TK.books[TK.outcome])||{},buy=TK.side==="BUY";const a=num(bk.best_ask),d=num(bk.best_bid);const v=buy?(Number.isNaN(a)?d:a):(Number.isNaN(d)?a:d);return Number.isNaN(v)?"":trimDec(v*100,1)}
 function tkDraw(){
   const box=$("#ticketBox");if(!box||!TK)return;
-  const vc=TK.vc,buy=TK.side==="BUY",ready=vc.ready!==false,held=tkHeld();
-  const px=(o)=>{const b=(TK.books&&TK.books[o])||{};return buy?b.best_ask:b.best_bid};
+  const vc=TK.vc,buy=TK.side==="BUY",ready=vc.ready!==false,held=tkHeld(),lim=TK.type==="limit",yes=TK.outcome==="YES";
+  if(lim&&!TK.price)TK.price=tkDefaultPrice();
   const {asks,bids}=tkBook();
-  let fields="";
-  if(TK.type==="market"){
-    fields=buy?'<div class="field"><label for="tkAmt">Amount</label><div class="inwrap"><input id="tkAmt" type="number" inputmode="decimal" min="0.1" step="0.1" value="'+esc(TK.amount)+'"><span class="sfx">USD</span></div></div>'
-      :'<div class="field"><label for="tkShr">Shares to sell</label><div class="inwrap"><input id="tkShr" type="number" inputmode="decimal" min="0" step="any" value="'+esc(TK.shares)+'"><span class="sfx">shares</span></div></div>';
-    fields+='<div class="field" style="max-width:150px"><label for="tkSlip">Max slippage</label><div class="inwrap"><input id="tkSlip" type="number" inputmode="decimal" min="0" step="0.5" value="'+esc(TK.slip)+'"><span class="sfx">¢</span></div></div>'}
+  const px=(o)=>{const b=(TK.books&&TK.books[o])||{};return buy?b.best_ask:b.best_bid};
+  const outBtn=(o,lab)=>'<button type="button" class="pmout '+(o==="YES"?"yes":"no")+(TK.outcome===o?" sel":"")+'" data-v="'+o+'"><span>'+lab+'</span> <b data-px="'+o+'">'+pxc(px(o))+'</b></button>';
+  const chips=(kind)=>{
+    if(!buy||(kind==="pct"))return '<div class="pmchips">'+[[25,"25%"],[50,"50%"],[75,"75%"],["max","Max"]].map(c=>'<button type="button" data-pct="'+c[0]+'">'+c[1]+'</button>').join("")+'</div>';
+    if(kind==="amt")return '<div class="pmchips">'+[1,5,10,100].map(v=>'<button type="button" data-add="'+v+'">+$'+v+'</button>').join("")+'</div>';
+    return '<div class="pmchips">'+[-100,-10,10,100,200].map(v=>'<button type="button" data-addsh="'+v+'">'+(v>0?"+":"−")+Math.abs(v)+'</button>').join("")+'</div>'};
+  let body="";
+  if(!lim){
+    if(buy){
+      body='<div class="pmrow big"><label for="tkAmt">Amount</label><div class="pmbig"><span>$</span><input id="tkAmt" type="number" inputmode="decimal" min="0.1" step="0.1" placeholder="0" style="width:calc('+Math.max(1,String(TK.amount).length)+'ch + 6px)" value="'+esc(TK.amount)+'"></div></div>'+chips("amt")
+        +'<div class="pmrow sm"><label for="tkSlip">Max slippage</label><div class="pmmini"><input id="tkSlip" type="number" inputmode="decimal" min="0" step="0.5" value="'+esc(TK.slip)+'"><span>¢</span></div></div>'}
+    else{
+      body='<div class="pmrow big"><label for="tkShr">Shares</label><div class="pmbig"><input id="tkShr" type="number" inputmode="decimal" min="0" step="any" placeholder="0" style="width:calc('+Math.max(1,String(TK.shares).length)+'ch + 6px)" value="'+esc(TK.shares)+'"></div></div>'+chips("pct")
+        +'<div class="tiny muted pmhold">You hold <b>'+(held>0?trimDec(held,4):"0")+'</b> '+(yes?"Yes":"No")+' shares</div>'}}
   else{
-    fields='<div class="field"><label for="tkPrc">Limit price</label><div class="inwrap"><input id="tkPrc" type="number" inputmode="decimal" min="0.1" max="99.9" step="any" value="'+esc(TK.price)+'" placeholder="e.g. 57"><span class="sfx">¢</span></div></div>'
-      +'<div class="field"><label for="tkShr">Shares</label><div class="inwrap"><input id="tkShr" type="number" inputmode="decimal" min="0" step="any" value="'+esc(TK.shares)+'"><span class="sfx">shares</span></div></div>'}
-  const tifRow=TK.type==="limit"&&TK.side==="BUY"?'<div class="row" style="margin-top:10px;align-items:flex-end"><div class="field" style="max-width:170px"><label for="tkTif">Time in force</label><select id="tkTif">'+TK.tifs.map(t=>'<option'+(t===TK.tif?" selected":"")+'>'+t+'</option>').join("")+'</select></div>'
-    +(TK.tif==="GTD"?'<div class="field"><label for="tkExp">Expires</label><input id="tkExp" type="datetime-local" value="'+esc(TK.expires)+'"></div>':"")
-    +(vc.post_only?'<label class="ck"><input id="tkPost" type="checkbox"'+(TK.post?" checked":"")+'> Post only</label>':"")+'</div>':"";
-  box.innerHTML='<div class="card ticket"><div class="sectionhead"><h2>Trade by hand</h2><span class="pill bad">real money</span></div>'
+    body='<div class="pmrow"><label for="tkPrc">Limit price</label><div class="pmstep"><button type="button" data-step="-1" aria-label="Lower price">−</button><input id="tkPrc" type="number" inputmode="decimal" min="0.1" max="99.9" step="any" value="'+esc(TK.price)+'"><span>¢</span><button type="button" data-step="1" aria-label="Raise price">+</button></div></div>'
+      +'<div class="pmrow"><label for="tkShr">Shares</label><div class="pmshr"><input id="tkShr" type="number" inputmode="decimal" min="0" step="any" placeholder="0" value="'+esc(TK.shares)+'"></div></div>'
+      +(buy?chips("sh"):chips("pct"))+'<div id="tkMatch" class="pmmatchrow"></div>'
+      +(!buy?'<div class="tiny muted pmhold">You hold <b>'+(held>0?trimDec(held,4):"0")+'</b> '+(yes?"Yes":"No")+' shares</div>':"")
+      +(buy?'<div class="pmrow pmexp"><label for="tkTif">Expires</label>'+(TK.tifs.length>1?'<select id="tkTif" class="pmdrop">'+TK.tifs.map(t=>'<option value="'+t+'"'+(t===TK.tif?" selected":"")+'>'+(t==="GTC"?"Never":"At a set time")+'</option>').join("")+'</select>':'<span class="pmdrop static">Never</span>')+'</div>'
+        +(TK.tif==="GTD"?'<div class="pmrow"><label for="tkExp">Expires at</label><input id="tkExp" type="datetime-local" value="'+esc(TK.expires)+'"></div>':"")
+        +(vc.post_only?'<label class="ck pmpost"><input id="tkPost" type="checkbox"'+(TK.post?" checked":"")+'> Post only</label>':""):"")}
+  box.innerHTML='<div class="card ticket pm">'
+   +'<div class="pmhead"><div class="pmttl">'+esc(TK.title)+'</div><div class="pmsel '+(yes?"yes":"no")+'">'+(yes?"Yes":"No")+'</div><span class="pill bad">real money</span></div>'
    +(ready?'':'<div class="notice">'+esc(vc.reason||"This venue is not ready; orders are blocked.")+'</div>')
-   +'<div class="seg wide" id="tkSide"><button data-v="BUY" class="'+(buy?"on":"")+'">Buy</button><button data-v="SELL" class="'+(!buy?"on":"")+'">Sell</button></div>'
-   +'<div class="buygrid" style="margin:12px 0" id="tkOut"><button class="pricebox yes'+(TK.outcome==="YES"?" sel":"")+'" data-v="YES"><div class="k">YES</div><div class="big" data-px="YES">'+cents(px("YES"))+'</div><div class="tiny muted">'+(buy?"best ask":"best bid")+'</div></button><button class="pricebox no'+(TK.outcome==="NO"?" sel":"")+'" data-v="NO"><div class="k">NO</div><div class="big" data-px="NO">'+cents(px("NO"))+'</div><div class="tiny muted">'+(buy?"best ask":"best bid")+'</div></button></div>'
-   +(TK.canMarket?'<div class="seg wide" id="tkType" style="margin-bottom:12px"><button data-v="market" class="'+(TK.type==="market"?"on":"")+'">Market</button><button data-v="limit" class="'+(TK.type==="limit"?"on":"")+'">Limit</button></div>':'<div class="tiny muted" style="margin-bottom:10px">This venue takes limit orders only here.</div>')
-   +'<div class="row" style="align-items:flex-end">'+fields+'</div>'+tifRow
-   +(!buy?'<div class="tiny muted" style="margin-top:8px">You hold <b>'+(held>0?trimDec(held,4):"0")+'</b> '+esc(TK.outcome)+' shares'+(held>0?' · <a href="#" id="tkMax">use all</a>':"")+'</div>':"")
-   +'<div class="sumbox" id="tkSum"></div><div id="tkMsg" class="small" role="status" style="margin-bottom:10px"></div>'
-   +'<button class="btn '+(buy?"primary":"danger")+' wide" data-oc="'+esc(TK.outcome)+'" id="tkGo"'+(ready?"":" disabled")+'>Review '+(buy?"buy ":"sell ")+esc(TK.outcome)+' order</button>'
+   +'<div class="pmtabs"><div class="pmbs" id="tkSide"><button type="button" data-v="BUY" class="'+(buy?"on":"")+'">Buy</button><button type="button" data-v="SELL" class="'+(!buy?"on":"")+'">Sell</button></div>'
+   +(TK.canMarket?'<select id="tkTypeSel" class="pmdrop" aria-label="Order type"><option value="market"'+(!lim?" selected":"")+'>Market</option><option value="limit"'+(lim?" selected":"")+'>Limit</option></select>':'<span class="pmdrop static">Limit</span>')+'</div>'
+   +'<div class="pmouts" id="tkOut">'+outBtn("YES","Yes")+outBtn("NO","No")+'</div>'
+   +body
+   +'<div class="pmdiv"></div><div id="tkSum" class="pmsumbox"></div><div id="tkMsg" class="small" role="status"></div>'
+   +'<button type="button" class="btn primary wide pmgo" data-oc="'+esc(TK.outcome)+'" id="tkGo"'+(ready?"":" disabled")+'>Trade</button>'
    +'<div class="tiny muted" style="margin-top:8px">Passes the same risk caps, pause state and audit trail as an agent proposal. Min order '+esc(vc.min_order_shares||"?")+' shares / $'+esc(vc.min_notional_usd||"?")+'.</div>'
    +'</div>';
   tkDrawBook(bids,asks);tkWire();tkSum()}
@@ -598,16 +637,22 @@ function tkLadder(bids,asks){
     +'<div class="lmid">'+mid+'</div>'
     +(b.length?b.map(r=>row(r,"bid")).join(""):'<div class="le">No bids</div>')}
 function tkWire(){
-  const q=(s)=>$(s,$("#ticketBox"));
-  q("#tkSide").addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.side=b.dataset.v;if(TK.side==="SELL"&&!TK.shares){const h=tkHeld();if(h>0)TK.shares=trimDec(h,4)}tkDraw()});
-  const pickOutcome=(e)=>{const b=e.target.closest("button");if(!b)return;TK.outcome=b.dataset.v;if(TK.side==="SELL"){const h=tkHeld();TK.shares=h>0?trimDec(h,4):""}tkDraw()};
-  q("#tkOut").addEventListener("click",pickOutcome);const qb=(sel)=>$(sel,$("#bookBox"));const ob=qb("#tkOb");if(ob)ob.addEventListener("click",pickOutcome);
-  const ty=q("#tkType");if(ty)ty.addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.type=b.dataset.v;tkDraw()});
-  const bind=(id,key)=>{const el=q(id);if(el)el.addEventListener("input",()=>{TK[key]=el.value;tkSum()})};
+  const q=(sel)=>$(sel,$("#ticketBox")),qb=(sel)=>$(sel,$("#bookBox"));
+  q("#tkSide").addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.side=b.dataset.v;TK.price="";if(TK.side==="SELL"&&!TK.shares){const h=tkHeld();if(h>0)TK.shares=trimDec(h,4)}tkDraw()});
+  const pickOutcome=(e)=>{const b=e.target.closest("button");if(!b||!b.dataset.v)return;TK.outcome=b.dataset.v;TK.price="";if(TK.side==="SELL"){const h=tkHeld();TK.shares=h>0?trimDec(h,4):""}tkDraw()};
+  q("#tkOut").addEventListener("click",pickOutcome);const ob=qb("#tkOb");if(ob)ob.addEventListener("click",pickOutcome);
+  const ts=q("#tkTypeSel");if(ts)ts.addEventListener("change",()=>{TK.type=ts.value;TK.price="";tkDraw()});
+  const bind=(id,key)=>{const el=q(id);if(el)el.addEventListener("input",()=>{TK[key]=el.value;if(el.closest(".pmbig"))el.style.width="calc("+Math.max(1,el.value.length)+"ch + 6px)";tkSum()})};
   bind("#tkAmt","amount");bind("#tkShr","shares");bind("#tkPrc","price");bind("#tkSlip","slip");bind("#tkExp","expires");
   const tif=q("#tkTif");if(tif)tif.addEventListener("change",()=>{TK.tif=tif.value;tkDraw()});
   const post=q("#tkPost");if(post)post.addEventListener("change",()=>{TK.post=post.checked;tkSum()});
-  const mx=q("#tkMax");if(mx)mx.addEventListener("click",(e)=>{e.preventDefault();TK.shares=trimDec(tkHeld(),4);tkDraw()});
+  q(".pm").addEventListener("click",(e)=>{
+    const c=e.target.closest("[data-add],[data-addsh],[data-pct],[data-step]");if(!c)return;
+    if(c.dataset.add!==undefined){TK.amount=trimDec((num(TK.amount)||0)+Number(c.dataset.add),2)}
+    else if(c.dataset.addsh!==undefined){TK.shares=trimDec(Math.max(0,(num(TK.shares)||0)+Number(c.dataset.addsh)),4)}
+    else if(c.dataset.pct!==undefined){const h=tkHeld();if(!(h>0)){toast("You hold no "+TK.outcome+" shares.");return}TK.shares=trimDec(c.dataset.pct==="max"?h:h*Number(c.dataset.pct)/100,4)}
+    else if(c.dataset.step!==undefined){const cur=num(TK.price);const base=Number.isNaN(cur)?(num(tkDefaultPrice())||50):cur;TK.price=trimDec(Math.min(99.9,Math.max(0.1,base+Number(c.dataset.step))),1)}
+    tkDraw()});
   const lad=qb("#tkLadder");if(lad)lad.addEventListener("click",(e)=>{const r=e.target.closest("[data-lp]");if(!r)return;TK.type="limit";TK.price=trimDec(Number(r.dataset.lp)*100,2);if(TK.side==="BUY"&&!TK.shares)TK.shares="";tkDraw();const p=q("#tkPrc");if(p)p.focus()});
   q("#tkGo").addEventListener("click",tkSubmit)}
 function tkCalc(){
@@ -619,7 +664,7 @@ function tkCalc(){
       if(!asks.length){out.err="There are no asks in the book.";return out}
       let rem=A,sh=0,spent=0;for(const l of asks){if(rem<=1e-9)break;const cost=Math.min(rem,l.p*l.s);sh+=cost/l.p;spent+=cost;rem-=cost}
       out.rows=[["Spend",money(A)],["Est. shares",sh.toFixed(2)],["Avg price",cents(spent/sh)],["If it wins",money(sh)+" (profit "+money(sh-spent)+")"]];
-      if(rem>0.01)out.warn="The visible book covers only "+money(spent)+" of this amount.";
+      out.total=A;out.win=sh;out.avg=spent/sh;if(rem>0.01)out.warn="The visible book covers only "+money(spent)+" of this amount.";
       const cap=num(STATE&&STATE.limits&&STATE.limits.max_trade_usd);if(!Number.isNaN(cap)&&A>cap)out.warn=(out.warn?out.warn+" ":"")+"Above the per-trade cap of "+money(cap)+"; the server will refuse it.";
       out.req={path:"/v1/orders/market",body:{...base,side:"BUY",amount_usd:String(TK.amount),max_slippage_cents:String(TK.slip||"2")}}}
     else{
@@ -628,14 +673,14 @@ function tkCalc(){
       if(!bids.length){out.err="There are no bids in the book.";return out}
       let rem=S,got=0;for(const l of bids){if(rem<=1e-9)break;const q=Math.min(rem,l.s);got+=q*l.p;rem-=q}
       out.rows=[["Sell",trimDec(S,4)+" shares"],["Est. proceeds",money(got)],["Avg price",cents(got/(S-rem||1))]];
-      if(rem>1e-6)out.warn="The visible book covers only "+trimDec(S-rem,4)+" shares.";
+      out.recv=got;out.avg=got/(S-rem||1);if(rem>1e-6)out.warn="The visible book covers only "+trimDec(S-rem,4)+" shares.";
       out.req={path:"/v1/positions/sell",body:{...base,shares:String(TK.shares)}}}}
   else{
     const P=num(TK.price)/100,S=num(TK.shares);
     if(!(P>0&&P<1)){out.err="Enter a limit price between 0 and 100¢.";return out}
     if(!(S>0)){out.err="Enter how many shares.";return out}
     if(!buy&&S>tkHeld()+1e-9){out.err="You hold only "+trimDec(tkHeld(),4)+" "+TK.outcome+" shares.";return out}
-    const total=P*S;
+    const total=P*S;out.total=total;if(buy){out.win=S;out.match=Math.min(S,asks.filter(l=>l.p<=P+1e-9).reduce((t,l)=>t+l.s,0))}else{out.recv=total;out.match=Math.min(S,bids.filter(l=>l.p>=P-1e-9).reduce((t,l)=>t+l.s,0))}
     out.rows=buy?[["Price",cents(P)],["Shares",trimDec(S,4)],["Cost",money(total)],["If it wins",money(S)+" (profit "+money(S-total)+")"]]:[["Price",cents(P)],["Shares",trimDec(S,4)],["Proceeds",money(total)]];
     if(buy){
       const body={...base,side:"BUY",price:trimDec(P,4),shares:String(TK.shares),tif:TK.tif,post_only:!!TK.post};
@@ -645,7 +690,14 @@ function tkCalc(){
   return out}
 function tkSum(){
   const c=tkCalc(),el=$("#tkSum");if(!el)return;
-  el.innerHTML=c.err?'<span class="muted small">'+esc(c.err)+'</span>':c.rows.map(([k,v])=>'<div class="split small"><span class="muted">'+esc(k)+'</span><b>'+esc(v)+'</b></div>').join("")+(c.warn?'<div class="small warn">'+esc(c.warn)+'</div>':"")}
+  const buy=TK.side==="BUY",lim=TK.type==="limit",usd=(v)=>"$"+(Number.isFinite(v)?v.toFixed(2):"0.00");
+  const row=(label,val,cls,sub)=>'<div class="pmsum"><div><b>'+label+'</b>'+(sub?'<small>'+esc(sub)+'</small>':"")+'</div><span class="v '+cls+'">'+val+'</span></div>';
+  let h="";
+  if(buy){if(lim)h+=row("Total",usd(c.total),"blue");h+=row("To win",usd(c.win),"green",(!lim&&c.avg)?"Avg. Price "+pxc(c.avg):"")}
+  else h+=row("You’ll receive",usd(c.recv),"green",(!lim&&c.avg)?"Avg. Price "+pxc(c.avg):"");
+  h+=(c.err?'<div class="small muted pmerr">'+esc(c.err)+'</div>':"")+(c.warn?'<div class="small warn pmerr">'+esc(c.warn)+'</div>':"");
+  el.innerHTML=h;
+  const mt=$("#tkMatch");if(mt)mt.innerHTML=c.match>0?'<span class="pmmatch">'+trimDec(c.match,2)+' matching</span>':""}
 async function tkSubmit(){
   const c=tkCalc(),msg=$("#tkMsg");msg.className="small";msg.textContent="";
   if(c.err){msg.textContent=c.err;msg.classList.add("neg");return}
@@ -693,7 +745,7 @@ function mkDraw(){
 let TK_T=[];
 function tkPaint(){
   if(!TK)return;const l=$("#tkLadder");if(l){const {asks,bids}=tkBook();l.innerHTML=tkLadder(bids,asks)}
-  const buy=TK.side==="BUY";["YES","NO"].forEach(o=>{const e=document.querySelector('#ticketBox [data-px="'+o+'"]');if(e){const bk=(TK.books&&TK.books[o])||{};e.textContent=cents(buy?bk.best_ask:bk.best_bid)}});
+  const buy=TK.side==="BUY";["YES","NO"].forEach(o=>{const e=document.querySelector('#ticketBox [data-px="'+o+'"]');if(e){const bk=(TK.books&&TK.books[o])||{};e.textContent=pxc(buy?bk.best_ask:bk.best_bid)}});
   tkSum();tkAge()}
 function tkAge(){
   const e=$("#tkLive");if(!e||!TK)return;const bk=(TK.books&&TK.books[TK.outcome])||{},srv=Number(bk.age_seconds),since=TK.okAt?(Date.now()-TK.okAt)/1000:null;
