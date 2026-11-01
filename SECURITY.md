@@ -111,3 +111,17 @@ pretending to work.
 
 After any suspected compromise: `/panic`, revoke venue credentials, move funds
 manually on each venue, rotate all secrets, and rebuild the host.
+
+
+## Live stream routes (`/v1/stream`, `/v1/event/view`) - reviewed in P5
+
+- Auth: both need a signed-in session (cookie or Bearer); unauthenticated sockets close with 4401 before `accept`.
+- Display only: no order, risk, funds or signing code is reachable from them; trades from the views use `/v1/orders/*`.
+- Input: client frames over 2 KB are refused; `venue` must be one of three names, `id` must match `[A-Za-z0-9][A-Za-z0-9._-]{0,129}`;
+  `/v1/event/view?url=` accepts only https polymarket.com / kalshi.com / limitless.exchange links; upstream errors reach
+  clients as an error class name (stream) or a 160-character message (REST), never a trace or a credential.
+- Caps: 8 sockets per user, 12 subscriptions per socket, 200 followed events, 30 event lookups per minute per socket,
+  64 queued patches and 512 queued frames per client, idle readers closed after 120 s; the per-id lock table is released after each
+  lookup. Before P5 the frame queue and the lock table were unbounded and a client could trigger unlimited venue lookups.
+- Known gap: `/v1/event/view` has no per-user rate limit of its own (it sits behind the session and the venue clients' own limiter).
+- Secrets: nothing in `live/` reads or logs a key, token or cookie; do not put a GitHub or API token in a URL, a remote or a log.

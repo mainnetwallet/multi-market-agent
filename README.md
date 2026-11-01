@@ -82,7 +82,7 @@ venue's own site.
 | Redeem | yes | settles automatically | on-chain only |
 | Merge / split | yes | no | partner server-wallet only |
 | Approvals | yes | not needed | yes |
-| Price history | yes | yes | no documented endpoint |
+| Price history | yes | yes | yes (`/markets/{slug}/historical-price`, per the venue docs; not yet confirmed on a live response) |
 
 Every cell was verified against the venue's own docs on 2026-10-30; the links and
 the exact endpoints are in [DOCS_FINDINGS.md](DOCS_FINDINGS.md).
@@ -490,6 +490,36 @@ actions rather than hiding a combined call.
 
 ---
 
+## Live event stream (`WS /v1/stream`)
+
+Display-only push updates for event views (`GET /v1/event/view`). Same auth as `/v1/ws` (session cookie or Bearer).
+Send `{"op": "subscribe", "topic": "event", "venue": "polymarket", "id": "<event id or slug>", "range": "1D"}`; the server
+answers with a `snapshot` (the full EventView) and then `patch` frames (changed rows, game score/period, chart tail, freshness).
+Every frame has `seq` (per event), `source`, `source_ts`, `server_ts`. A gap in `seq` means send `{"op": "snapshot", ...}`.
+Patches are merged and sent at most 4 times a second per event, the chance is the midpoint and the buttons carry the ask.
+`/v1/event/view?url=` accepts https links to polymarket.com, kalshi.com and limitless.exchange only.
+
+| Data | Polymarket | Kalshi | Limitless |
+|---|---|---|---|
+| Quotes / books | market WebSocket (push) | native WS (needs an API key: signed handshake) | native WS |
+| Game score, period | sports WebSocket (vendor may be late or wrong) | not carried by the hub | not carried by the hub |
+| Chart history | `batch-prices-history` | price history | `historical-price` (docs only) |
+| Without its feed | REST poll, `DELAYED` | REST poll, `DELAYED` | REST poll, `DELAYED` |
+
+A feed that is down or silent sets `stale: true` and the hub polls REST until it is back; a venue answering 429 (or failing)
+is paused for its `Retry-After` (else 4 s doubling to 30 s) instead of being hit every 2 s. "No delay" means push-based and
+sub-second from the venue feed; venue data itself can lag, so every view shows its source and age (LIVE / DELAYED / OFFLINE).
+
+Limits per account/client: 8 open stream sockets per user (close code 4429), 12 subscriptions per socket, 200 followed events
+in the process, 30 new event lookups per minute per socket (`rate_limited` error), client frames of at most 2 KB, at most 64
+queued patches and 512 queued frames per client (a client over the cap, or one that stops reading for 120 s, is closed with
+4408). Codes: 4401 not signed in, 4404 `LIVE_VIEWS_ENABLED=false`, 4408 dropped, 4429 too many sockets.
+`LIVE_VIEWS_ENABLED=false` turns the stream and `/v1/event/view` off. `/status` reports `live` metrics.
+`python scripts/live_load_test.py` runs an in-process load test (200 clients, 50 events, no network). The feed protocols are
+tested against fakes only; run `scripts/probe_live_shapes.py` and `scripts/live_hub_check.py` once on a real machine.
+
+---
+
 ## Polymarket public data (Data API v2 and CLOB prices)
 
 Read-only, no credentials, Polymarket only. This is the part of the official API that the trading
@@ -666,8 +696,10 @@ idempotency key, hold window, daily limit and audit trail apply either way; no p
   `holders` call against a real wallet and market before relying on the field names.
 - **Price charts still use the CLOB `/prices-history`** (`fidelity` buckets). The Data API v2
   `prices-history` route is available through the new endpoint but the app's chart is not switched to it.
-- **Limitless price history has no documented endpoint**, so the market chart is
-  not available for that venue.
+- **Limitless price history**: `GET /markets/{slug}/historical-price` is documented (YES series, newest
+  first), which corrects the earlier claim that Limitless has no history endpoint. The live event views chart
+  it, but the response shape and interval names have not been seen on a live reply (see `DOCS_FINDINGS.md`
+  section 7); a failed or odd reply shows "history not available" instead of a line.
 - **The withdraw flow signs and sends the on-chain transfer, but the whole path
   is unverified against a live venue.** The ERC-20 transfer is built, signed and
   sent through the configured RPC, and the bridge's status endpoint moves the

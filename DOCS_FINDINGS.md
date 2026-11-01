@@ -401,7 +401,7 @@ credential was available, so no real order and no authenticated read was made.
 - Order types are GTC, FAK and FOK. Post-only is not documented.
 - Amounts are raw 6-decimal integers; `price × contracts` must equal the collateral
   amount exactly.
-- **No price-history endpoint is documented.** The app shows that capability as
+- **[SUPERSEDED, see section 7] No price-history endpoint is documented.** The app shows that capability as
   unavailable rather than drawing an empty chart.
 - The docs mention geographic restrictions. The build surfaces the venue's own
   reason string when it reports one.
@@ -416,7 +416,7 @@ credential was available, so no real order and no authenticated read was made.
 4. Kalshi *does* have amend and decrease, which the prompt assumed.
 5. Kalshi candles are public (`GET /markets/candlesticks`) — the prompt did not
    mention them.
-6. Limitless has **no** documented price-history endpoint, which the prompt's
+6. [SUPERSEDED, see section 7] Limitless has **no** documented price-history endpoint, which the prompt's
    "GET /v1/markets/{id}/history from each venue's public endpoints" assumed.
 7. Limitless split/merge exist but are server-wallet only, so "Merge and Split
    under Advanced on Polymarket" is right for Polymarket and unsupported for a
@@ -476,3 +476,39 @@ Perps API (`api.perpetuals.polymarket.com`, HTTP and WebSocket, a separate produ
 routes (`/v2/positions/combos`, `/v2/activity/combos`), builder boards (`/v2/builders/leaderboard`,
 `/v2/builders/volume`), Gamma series/comments/sports, CLOB batch `/books` and `/spreads`, sports and RFQ
 WebSocket channels.
+
+---
+
+## 7. Live category views recon (P0, 2026-11-01) - NOT VERIFIED LIVE
+
+`LIVE_VERIFIED=false`. The build sandbox had no route to `gamma-api.polymarket.com`, `clob.polymarket.com`,
+`api.elections.kalshi.com` or `api.limitless.exchange` (all connections failed), so nothing below was observed on a
+live response. `scripts/probe_live_shapes.py` is ready; the fixtures in `tests/fixtures/live/` are hand-built from
+the documented shapes and carry `"synthetic": true`.
+
+**Owner must run once on a real machine** (read-only, public, no credentials): `python scripts/probe_live_shapes.py`,
+then commit the scrubbed fixtures it writes (they replace the synthetic ones) and fill in the checklist below.
+
+Claims taken from the docs summary in `docs/live-views/00_CONTEXT.md`, all still `[INFERRED]` until the probe runs:
+
+- Limitless: `GET /markets/{slug}/historical-price` is documented (YES series, newest first). This contradicts the
+  older claim in section 3 and in README that Limitless has no history endpoint. Intervals unconfirmed.
+- Polymarket: `GET /events/keyset` with `after_cursor`, `version=v1&version=v2`, `game_id=`; companion events
+  joined by `gameId`; `teams[].ordering` = `home|away` (the synthetic soccer fixture lists the away team first on
+  purpose); `sportsMarketType` values; `POST /batch-prices-history`.
+- Kalshi: `/milestones`, `/live_data/batch` (max 100 ids), `/live_data/milestone/{id}/game_stats`.
+
+Checklist for the live run (record answers here): Gamma fields linking sibling events and the related list; team logo
+field name; whether `/events` honours `version`; every `sportsMarketType` seen; max asset ids per market-WS connection;
+PolyBolt auth needs; Limitless history intervals and group behaviour; Kalshi milestone linkage.
+
+
+---
+
+## 8. P5 hardening notes (2026-11-01) - synthetic only
+
+- README previously said Limitless has no price-history endpoint; the venue docs list `GET /markets/{slug}/historical-price`.
+  README now says so, still `[INFERRED]` until `probe_live_shapes.py` runs on a real machine (section 7 checklist).
+- No venue was contacted in P5 (sandbox has no route to them). Every drill uses fakes: silent feed, reconnect storm, a venue
+  429 with `Retry-After`, malformed client frames. Nothing here says how a real venue behaves under rate limiting; the
+  `Retry-After` handling reads `exc.retry_after` or `exc.response.headers["Retry-After"]` and is untested against a real 429.

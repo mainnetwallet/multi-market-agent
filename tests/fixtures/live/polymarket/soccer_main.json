@@ -1,0 +1,68 @@
+{
+  "data": {
+    "elapsed": "63",
+    "gameId": 9001,
+    "id": "1001",
+    "live": true,
+    "markets": [
+      {
+        "bestAsk": "0.56",
+        "bestBid": "0.55",
+        "clobTokenIds": "[\"m11\", \"m12\"]",
+        "gameId": 9001,
+        "groupItemTitle": "Arsenal",
+        "id": "m1",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.55\", \"0.45\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Will Arsenal win?",
+        "sportsMarketType": "moneyline"
+      },
+      {
+        "bestAsk": "0.26",
+        "bestBid": "0.25",
+        "clobTokenIds": "[\"m21\", \"m22\"]",
+        "gameId": 9001,
+        "groupItemTitle": "Draw",
+        "id": "m2",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.25\", \"0.75\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Will it be a draw?",
+        "sportsMarketType": "moneyline"
+      },
+      {
+        "bestAsk": "0.21",
+        "bestBid": "0.20",
+        "clobTokenIds": "[\"m31\", \"m32\"]",
+        "gameId": 9001,
+        "groupItemTitle": "Chelsea",
+        "id": "m3",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.20\", \"0.80\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Will Chelsea win?",
+        "sportsMarketType": "moneyline"
+      }
+    ],
+    "period": "2H",
+    "score": "2-1",
+    "slug": "epl-ars-che-2026-11-01",
+    "teams": [
+      {
+        "abbreviation": "CHE",
+        "logo": "https://example.invalid/che.png",
+        "name": "Chelsea",
+        "ordering": "away"
+      },
+      {
+        "abbreviation": "ARS",
+        "logo": "https://example.invalid/ars.png",
+        "name": "Arsenal",
+        "ordering": "home"
+      }
+    ],
+    "title": "Arsenal vs. Chelsea"
+  },
+  "synthetic": true
+}

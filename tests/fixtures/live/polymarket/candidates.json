@@ -1,0 +1,43 @@
+{
+  "data": {
+    "id": "4001",
+    "markets": [
+      {
+        "bestAsk": "0.49",
+        "bestBid": "0.48",
+        "clobTokenIds": "[\"c11\", \"c12\"]",
+        "groupItemTitle": "Alice",
+        "id": "c1",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.48\", \"0.52\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Alice"
+      },
+      {
+        "bestAsk": "0.31",
+        "bestBid": "0.30",
+        "clobTokenIds": "[\"c21\", \"c22\"]",
+        "groupItemTitle": "Bob",
+        "id": "c2",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.30\", \"0.70\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Bob"
+      },
+      {
+        "bestAsk": "0.13",
+        "bestBid": "0.12",
+        "clobTokenIds": "[\"c31\", \"c32\"]",
+        "groupItemTitle": "Cara",
+        "id": "c3",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.12\", \"0.88\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Cara"
+      }
+    ],
+    "slug": "synthetic-candidates",
+    "title": "Who wins the award?"
+  },
+  "synthetic": true
+}
