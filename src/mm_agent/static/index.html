@@ -170,6 +170,10 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 
 #tkLive{display:inline-flex;align-items:center;gap:6px}#tkLive.good::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;animation:lv 1.4s infinite}
 @keyframes lv{50%{opacity:.25}}
 
+.bookcard{margin-top:14px;padding:12px 14px}
+.bookcard .obhead{margin:0 0 8px}.obtabs{border-bottom:0;margin:0;padding:0}.obtabs .tab{padding:6px 2px;font-size:15px}
+.obseg{display:flex;width:100%;margin-bottom:6px}.obseg button{flex:1}
+.bookcard .ladder{margin-top:6px}
 /* ---- v7: top navbar, cards, market page ---- */
 .content{max-width:1280px}
 .dgrid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));align-items:stretch}
@@ -379,7 +383,7 @@ async function approveProposal(id){try{const r=await api("/v1/proposals/"+encode
 async function rejectProposal(id){try{await api("/v1/proposals/"+encodeURIComponent(id)+"/reject",{method:"POST",body:"{}"});toast("Proposal rejected");loadStatus()}catch(e){toast(e.message)}}
 async function loadMarkets(){try{const q=$("#marketSearch").value.trim();const v=$("#marketVenue").value;const d=await api("/v1/markets?limit=80"+ (q?"&q="+encodeURIComponent(q):"")+(v?"&venue="+encodeURIComponent(v):""));$("#marketList").innerHTML=d.markets.length?d.markets.map(m=>`<div class="item" data-market="${esc(m.venue)}:${esc(m.native_id)}" style="cursor:pointer"><div class="split"><div><span class="pill">${esc(m.venue)}</span> <b>${esc(m.title)}</b><div class="tiny muted">${esc(m.category)} · ends ${dhaka(m.end_time)} · ${esc(m.native_id)}</div></div><div class="small">${esc(m.status)}</div></div></div>`).join(""):'<div class="muted">No markets stored yet. Check feed_diag on Home.</div>';$$("[data-market]").forEach(x=>x.addEventListener("click",()=>openMarket(x.dataset.market)))}catch(e){toast(e.message)}}
 async function openMarket(ref){const [venue,id]=ref.split(":");try{const d=await api("/v1/market?venue="+encodeURIComponent(venue)+"&market_id="+encodeURIComponent(id));CURRENT_MARKET=d.market;const m=d.market,b=d.books;const yes=b.YES||{},no=b.NO||{};const research=d.research;const box=$("#marketDetail");box.classList.remove("hidden");box.innerHTML=`<div class="card" style="margin-top:16px"><div class="split"><div><span class="pill">${esc(m.venue)}</span> <span class="pill">${esc(m.status)}</span><h2 style="margin:8px 0">${esc(m.title)}</h2><div class="small muted">Ends ${dhaka(m.end_time)} · tick ${m.tick_size} · event ${esc(m.event_id||"—")} · ${esc(m.url||"")}</div></div><button class="btn small" onclick="document.getElementById('marketDetail').classList.add('hidden')">Close</button></div>
-<div id="mkChart" class="mkchart"></div><div id="ticketBox"></div>
+<div id="mkChart" class="mkchart"></div><div id="ticketBox"></div><div id="bookBox"></div>
 <h3>Agent proposal</h3><div class="row"><input id="buyAmount" type="number" min="0.1" step="0.1" value="${Math.min(2,Number(STATE?.limits?.max_trade_usd||2))}" style="max-width:150px"><button class="btn buy" id="buyYes">Buy YES → proposal</button><button class="btn buy" id="buyNo">Buy NO → proposal</button></div>
 <h3>Research</h3>${research?`<div class="small"><b>p = ${pct(research.probability)}</b> · ${esc(research.model)} · ${dhaka(research.created_at)}<p>${esc(research.summary)}</p><div class="muted">${(research.sources||[]).map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title||s.url)}</a>`).join("<br>")}</div></div>`:'<div class="small muted">No usable sourced research stored. No proposal will be created. Configure LLM and web search, then analyze.</div>'}
 <h3>Exit rules</h3><div class="row"><input id="ruleTP" type="number" min="0.001" max="0.999" step="0.001" placeholder="TP price e.g. 0.70" style="max-width:180px"><input id="ruleSL" type="number" min="0.001" max="0.999" step="0.001" placeholder="SL price e.g. 0.30" style="max-width:180px"><button class="btn small" id="saveRules">Arm rules on held outcome</button></div><div class="tiny muted" style="margin-top:4px">Rules only apply to positions you already hold. Exits are reduce-only.</div></div>`;
@@ -577,8 +581,15 @@ function tkDraw(){
    +'<div class="sumbox" id="tkSum"></div><div id="tkMsg" class="small" role="status" style="margin-bottom:10px"></div>'
    +'<button class="btn '+(buy?"primary":"danger")+' wide" data-oc="'+esc(TK.outcome)+'" id="tkGo"'+(ready?"":" disabled")+'>Review '+(buy?"buy ":"sell ")+esc(TK.outcome)+' order</button>'
    +'<div class="tiny muted" style="margin-top:8px">Passes the same risk caps, pause state and audit trail as an agent proposal. Min order '+esc(vc.min_order_shares||"?")+' shares / $'+esc(vc.min_notional_usd||"?")+'.</div>'
-   +'<div class="obhead"><h3>Order book</h3><span id="tkLive" class="pill warn">connecting…</span></div><div class="seg wide" id="tkOb"><button data-v="YES" class="'+(TK.outcome==="YES"?"on":"")+'">Trade Yes</button><button data-v="NO" class="'+(TK.outcome==="NO"?"on":"")+'">Trade No</button></div><div class="ladder" id="tkLadder">'+tkLadder(bids,asks)+'</div><div class="tiny muted" style="margin-top:6px">Tap a price to use it as a limit. Refreshes every 2 s while this window is open.</div></div>';
-  tkWire();tkSum()}
+   +'</div>';
+  tkDrawBook(bids,asks);tkWire();tkSum()}
+function tkDrawBook(bids,asks){
+  const bx=$("#bookBox");if(!bx||!TK)return;
+  bx.innerHTML='<div class="card bookcard"><div class="obhead"><div class="tabbar obtabs"><button class="tab on" type="button">Order Book</button></div><span id="tkLive" class="pill warn">connecting…</span></div>'
+   +'<div class="seg obseg" id="tkOb"><button data-v="YES" class="'+(TK.outcome==="YES"?"on":"")+'">Trade Yes</button><button data-v="NO" class="'+(TK.outcome==="NO"?"on":"")+'">Trade No</button></div>'
+   +'<div class="ladder" id="tkLadder">'+tkLadder(bids,asks)+'</div>'
+   +'<div class="tiny muted" style="margin-top:6px">Tap a price to use it as a limit. Refreshes every 2 s while this window is open.</div></div>';
+  tkAge()}
 function tkLadder(bids,asks){
   const N=8,cum=(rows)=>{let c=0;return rows.slice(0,N).map(r=>{c+=r.s;return{p:r.p,s:r.s,c,t:c*r.p}})};
   const a=cum(asks),b=cum(bids),mx=Math.max(1e-9,a.length?a[a.length-1].c:0,b.length?b[b.length-1].c:0);
@@ -592,14 +603,14 @@ function tkWire(){
   const q=(s)=>$(s,$("#ticketBox"));
   q("#tkSide").addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.side=b.dataset.v;if(TK.side==="SELL"&&!TK.shares){const h=tkHeld();if(h>0)TK.shares=trimDec(h,4)}tkDraw()});
   const pickOutcome=(e)=>{const b=e.target.closest("button");if(!b)return;TK.outcome=b.dataset.v;if(TK.side==="SELL"){const h=tkHeld();TK.shares=h>0?trimDec(h,4):""}tkDraw()};
-  q("#tkOut").addEventListener("click",pickOutcome);q("#tkOb").addEventListener("click",pickOutcome);
+  q("#tkOut").addEventListener("click",pickOutcome);const qb=(sel)=>$(sel,$("#bookBox"));const ob=qb("#tkOb");if(ob)ob.addEventListener("click",pickOutcome);
   const ty=q("#tkType");if(ty)ty.addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.type=b.dataset.v;tkDraw()});
   const bind=(id,key)=>{const el=q(id);if(el)el.addEventListener("input",()=>{TK[key]=el.value;tkSum()})};
   bind("#tkAmt","amount");bind("#tkShr","shares");bind("#tkPrc","price");bind("#tkSlip","slip");bind("#tkExp","expires");
   const tif=q("#tkTif");if(tif)tif.addEventListener("change",()=>{TK.tif=tif.value;tkDraw()});
   const post=q("#tkPost");if(post)post.addEventListener("change",()=>{TK.post=post.checked;tkSum()});
   const mx=q("#tkMax");if(mx)mx.addEventListener("click",(e)=>{e.preventDefault();TK.shares=trimDec(tkHeld(),4);tkDraw()});
-  q("#tkLadder").addEventListener("click",(e)=>{const r=e.target.closest("[data-lp]");if(!r)return;TK.type="limit";TK.price=trimDec(Number(r.dataset.lp)*100,2);if(TK.side==="BUY"&&!TK.shares)TK.shares="";tkDraw();const p=q("#tkPrc");if(p)p.focus()});
+  const lad=qb("#tkLadder");if(lad)lad.addEventListener("click",(e)=>{const r=e.target.closest("[data-lp]");if(!r)return;TK.type="limit";TK.price=trimDec(Number(r.dataset.lp)*100,2);if(TK.side==="BUY"&&!TK.shares)TK.shares="";tkDraw();const p=q("#tkPrc");if(p)p.focus()});
   q("#tkGo").addEventListener("click",tkSubmit)}
 function tkCalc(){
   const {asks,bids}=tkBook(),buy=TK.side==="BUY",out={rows:[],err:"",warn:"",req:null};
