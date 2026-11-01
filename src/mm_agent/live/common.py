@@ -20,6 +20,7 @@ class Quote:
     ask: Decimal | None
     last: Decimal | None
     source_ts: str | None = None
+    quoted: Decimal | None = None  # one quoted price with no book behind it (an AMM market): no bid, no ask
 
 
 def backoff_delay(
@@ -49,6 +50,11 @@ class FeedStats:
         self.last_msg = now
         self.total += 1
         self._recent.append(now)
+
+    def heartbeat(self) -> None:
+        """The connection answered a keep-alive: it is alive, but this is not a data message."""
+
+        self.last_msg = self._clock()
 
     def age(self) -> float | None:
         return None if self.last_msg is None else max(0.0, self._clock() - self.last_msg)

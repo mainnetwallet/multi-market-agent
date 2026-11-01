@@ -680,8 +680,10 @@ idempotency key, hold window, daily limit and audit trail apply either way; no p
   `holders` call against a real wallet and market before relying on the field names.
 - **Price charts still use the CLOB `/prices-history`** (`fidelity` buckets). The Data API v2
   `prices-history` route is available through the new endpoint but the app's chart is not switched to it.
-- **Limitless price history has no documented endpoint**, so the market chart is
-  not available for that venue.
+- **Limitless price history**: `GET /markets/{slug}/historical-price` is documented (YES series, newest
+  first), which corrects the earlier claim that Limitless has no history endpoint. The live event views chart
+  it, but the response shape and interval names have not been seen on a live reply (see `DOCS_FINDINGS.md`
+  section 7); a failed or odd reply shows "history not available" instead of a line.
 - **The withdraw flow signs and sends the on-chain transfer, but the whole path
   is unverified against a live venue.** The ERC-20 transfer is built, signed and
   sent through the configured RPC, and the bridge's status endpoint moves the

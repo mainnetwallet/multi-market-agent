@@ -40,6 +40,7 @@ HistoryFn = Callable[[list[str], str], Awaitable[dict[str, list[list[Any]]]]]
 Key = tuple[str, str]
 
 VENUES = {"polymarket", "kalshi", "limitless"}
+FEED_VENUE = {"polymarket_market": "polymarket", "kalshi_ws": "kalshi", "limitless_ws": "limitless"}
 _IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,129}$")
 ONE = Decimal(1)
 ZERO = Decimal(0)
@@ -152,6 +153,7 @@ class LiveHub:
         *,
         load_view: LoadView,
         history: HistoryFn | None = None,
+        venue_history: dict[str, HistoryFn] | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
         flush_interval: float = 0.25,
@@ -166,6 +168,7 @@ class LiveHub:
     ) -> None:
         self._load_view = load_view
         self._history = history
+        self._venue_history = venue_history or {}
         self._clock = clock
         self._wall = wall
         self.flush_interval = flush_interval
@@ -180,19 +183,45 @@ class LiveHub:
         self.market: Any = None  # PolymarketMarketFeed
         self.sports: Any = None  # PolymarketSportsFeed
         self.crypto: Any = None  # CryptoPrices
+        self.kalshi: Any = None  # KalshiMarketFeed
+        self.limitless: Any = None  # LimitlessMarketFeed
+        self.unavailable: dict[str, str] = {}  # feed name -> why it is not running (shown in /status)
+        self._feed_up: dict[str, bool] = {}
         self._states: dict[Key, _State] = {}
         self._alias: dict[Key, Key] = {}
-        self._asset_index: dict[str, set[Key]] = {}
+        self._asset_index: dict[Key, set[Key]] = {}  # (venue, asset) -> the events that follow it
         self._clients: set[ClientSink] = set()
         self._locks: dict[Key, asyncio.Lock] = {}
-        self._market_up = False
         self._tasks: list[asyncio.Task[None]] = []
         self.dropped_total = 0
 
     # ------------------------------------------------------------------ wiring
-    def attach(self, *, market: Any = None, sports: Any = None, crypto: Any = None) -> None:
+    def attach(
+        self,
+        *,
+        market: Any = None,
+        sports: Any = None,
+        crypto: Any = None,
+        kalshi: Any = None,
+        limitless: Any = None,
+        unavailable: dict[str, str] | None = None,
+    ) -> None:
         self.market, self.sports, self.crypto = market, sports, crypto
-        self._market_up = bool(market is not None and market.stats.connected)
+        self.kalshi, self.limitless = kalshi, limitless
+        self.unavailable = dict(unavailable or {})
+        self._feed_up = {f.name: bool(f.stats.connected) for f in self._market_feeds()}
+
+    def _market_feeds(self) -> list[Any]:
+        """The feeds that carry prices (the sports feed carries scores and is not tied to any one venue)."""
+
+        return [f for f in (self.market, self.kalshi, self.limitless) if f is not None]
+
+    def _feed_for(self, venue: str) -> Any:
+        return {"polymarket": self.market, "kalshi": self.kalshi, "limitless": self.limitless}.get(venue)
+
+    def _up(self, venue: str) -> bool:
+        feed = self._feed_for(venue)
+        return bool(feed is not None and self._feed_up.get(feed.name, False))
 
     def start(self) -> None:
         if self._tasks and not any(t.done() for t in self._tasks):
@@ -202,7 +231,7 @@ class LiveHub:
             asyncio.create_task(self._loop(self.flush, self.flush_interval), name="live-flush"),
             asyncio.create_task(self._loop(self.housekeeping, 1.0), name="live-housekeeping"),
         ]
-        for feed in (self.market, self.sports):
+        for feed in (*self._market_feeds(), self.sports):
             if feed is not None:
                 feed.start()
 
@@ -211,7 +240,7 @@ class LiveHub:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        for feed in (self.market, self.sports):
+        for feed in (*self._market_feeds(), self.sports):
             if feed is not None:
                 await feed.stop()
         for sink in list(self._clients):
@@ -328,6 +357,8 @@ class LiveHub:
                 ids = row.get("token_ids") or []
                 if key[0] == "polymarket" and mid and ids:
                     tokens[str(ids[0])] = mid  # YES token; NO is its complement
+                elif key[0] != "polymarket" and mid and row.get("status") == "open":
+                    tokens[mid] = mid  # Kalshi tickers and Limitless slugs are their own asset ids
         crypto = (view.get("raw_extra") or {}).get("crypto")
         coin = crypto.get("coin") if isinstance(crypto, dict) else None
         state = _State(
@@ -336,39 +367,44 @@ class LiveHub:
             view=view,
             rows=rows,
             tokens=tokens,
-            uses_feed=bool(tokens and self.market is not None),
+            uses_feed=bool(tokens and self._feed_for(key[0]) is not None),
             spot_symbol=str(coin).upper() if coin and self.crypto is not None else None,
             price_ts=self._now(),
             last_rest=self._clock(),
         )
-        state.source = "ws" if state.uses_feed and self._market_up else "rest"
+        up = self._up(key[0])
+        state.source = "ws" if state.uses_feed and up else "rest"
         state.awaiting_book = state.uses_feed
-        state.stale = state.uses_feed and not self._market_up
+        state.stale = state.uses_feed and not up
         self._link_game(state)
         return state
 
     def _watch(self, state: _State) -> None:
         fresh: list[str] = []
+        venue = state.key[0]
         for token in state.tokens:
-            owners = self._asset_index.setdefault(token, set())
+            owners = self._asset_index.setdefault((venue, token), set())
             if not owners:
                 fresh.append(token)
             owners.add(state.key)
-        if fresh and self.market is not None:
-            self.market.watch(fresh)
+        feed = self._feed_for(venue)
+        if fresh and feed is not None:
+            feed.watch(fresh)
 
     def _unwatch(self, state: _State) -> None:
         gone: list[str] = []
+        venue = state.key[0]
         for token in state.tokens:
-            owners = self._asset_index.get(token)
+            owners = self._asset_index.get((venue, token))
             if owners is None:
                 continue
             owners.discard(state.key)
             if not owners:
-                del self._asset_index[token]
+                del self._asset_index[(venue, token)]
                 gone.append(token)
-        if gone and self.market is not None:
-            self.market.unwatch(gone)
+        feed = self._feed_for(venue)
+        if gone and feed is not None:
+            feed.unwatch(gone)
 
     def _leave(self, sink: ClientSink, key: Key) -> None:
         sink.keys.discard(key)
@@ -417,16 +453,22 @@ class LiveHub:
 
     async def _ensure_history(self, state: _State, rng: str) -> None:
         chart = state.view.get("chart")
-        if rng in state.series or not chart or self._history is None or state.key[0] != "polymarket":
+        venue = state.key[0]
+        fetch = self._history if venue == "polymarket" else self._venue_history.get(venue)
+        if rng in state.series or not chart or fetch is None:
             return
         by_token = {mid: tok for tok, mid in state.tokens.items()}
+        if venue != "polymarket":  # Kalshi and Limitless charts follow every row, open or not
+            by_token = {
+                str(r.get("market_id")): str(r.get("market_id")) for r in state.rows.values() if r.get("market_id")
+            }
         wanted = {
             line["row_id"]: by_token[line["row_id"]] for line in chart.get("series") or [] if line["row_id"] in by_token
         }
         if not wanted:
             return
         try:
-            got = await self._history(list(wanted.values()), rng)
+            got = await fetch(list(wanted.values()), rng)
         except Exception as exc:
             logger.info("live_history_failed", error=type(exc).__name__)
             return
@@ -452,25 +494,26 @@ class LiveHub:
 
     # ------------------------------------------------------------------ feed callbacks
     def on_feed_state(self, name: str, connected: bool) -> None:
-        if name != "polymarket_market":
+        venue = FEED_VENUE.get(name)
+        if venue is None:
             return
-        self._market_up = connected
+        self._feed_up[name] = connected
         for state in self._states.values():
-            if not state.uses_feed:
+            if not state.uses_feed or state.key[0] != venue:
                 continue
             if connected:
                 state.awaiting_book = True  # the server resends every book; the first one proves it is live
             else:
                 self._set_stale(state, True)
 
-    def on_quote(self, quote: Quote) -> None:
-        for key in self._asset_index.get(quote.asset, ()):
+    def on_quote(self, quote: Quote, venue: str = "polymarket") -> None:
+        for key in self._asset_index.get((venue, quote.asset), ()):
             state = self._states.get(key)
             if state is None:
                 continue
-            mid = state.tokens[quote.asset]
-            row = state.rows.get(mid)
-            if row is None:
+            mid = state.tokens.get(quote.asset)
+            row = state.rows.get(mid) if mid else None
+            if mid is None or row is None:
                 continue
             changed = self._apply_quote(state, row, mid, quote)
             state.source_ts = quote.source_ts or state.source_ts
@@ -483,8 +526,11 @@ class LiveHub:
     def _apply_quote(self, state: _State, row: dict[str, Any], mid: str, q: Quote) -> bool:
         bid, ask = _clamp(q.bid), _clamp(q.ask)
         old_chance = _dec(row.get("chance"))
-        if bid is not None and ask is not None and ask >= bid:
-            chance: Decimal | None = (bid + ask) / 2
+        quoted = _clamp(q.quoted) if bid is None and ask is None else None
+        if quoted is not None:  # one quoted price and no book: the chance and both buttons show it
+            chance: Decimal | None = quoted
+        elif bid is not None and ask is not None and ask >= bid:
+            chance = (bid + ask) / 2
         elif q.last is not None:
             chance = _clamp(q.last)
         else:
@@ -492,8 +538,15 @@ class LiveHub:
         patch: dict[str, Any] = {}
         if chance is not None and chance != old_chance:
             patch["chance"] = fmt(chance)
-        yes = {"ask": fmt(ask), "bid": fmt(bid)}
-        no = {"ask": fmt(ONE - bid) if bid is not None else None, "bid": fmt(ONE - ask) if ask is not None else None}
+        if quoted is not None:
+            yes = {"ask": fmt(quoted)}
+            no = {"ask": fmt(ONE - quoted)}
+        else:
+            yes = {"ask": fmt(ask), "bid": fmt(bid)}
+            no = {
+                "ask": fmt(ONE - bid) if bid is not None else None,
+                "bid": fmt(ONE - ask) if ask is not None else None,
+            }
         for side, new in (("yes", yes), ("no", no)):
             current = row.get(side) or {}
             diff = {k: v for k, v in new.items() if _dec(current.get(k)) != _dec(v)}
@@ -517,7 +570,7 @@ class LiveHub:
 
     def on_resolved(self, asset_ids: list[str], winner: str | None) -> None:
         ids = set(asset_ids)
-        for key in {k for a in ids for k in self._asset_index.get(a, ())}:
+        for key in {k for a in ids for k in self._asset_index.get(("polymarket", a), ())}:
             state = self._states.get(key)
             if state is None:
                 continue
@@ -532,9 +585,29 @@ class LiveHub:
                 if winner is not None:
                     row["chance"] = patch["chance"] = "1" if winner == token else "0"
                 state.pending.setdefault("rows", {}).setdefault(mid, {}).update(patch)
-            if state.rows and all(r.get("status") != "open" for r in state.rows.values()):
-                state.view["status"] = "resolved"
-                state.pending["status"] = "resolved"
+            self._close_if_done(state)
+
+    def on_settled(self, venue: str, asset: str, yes_won: bool | None) -> None:
+        """Kalshi or Limitless says one market is settled (``yes_won`` None: settled, result unknown)."""
+
+        for key in tuple(self._asset_index.get((venue, asset), ())):
+            state = self._states.get(key)
+            mid = state.tokens.get(asset) if state else None
+            row = state.rows.get(mid) if state and mid else None
+            if state is None or mid is None or row is None:
+                continue
+            row["status"] = "resolved"
+            patch: dict[str, Any] = {"status": "resolved"}
+            if yes_won is not None:
+                row["chance"] = patch["chance"] = "1" if yes_won else "0"
+            state.pending.setdefault("rows", {}).setdefault(mid, {}).update(patch)
+            self._close_if_done(state)
+
+    @staticmethod
+    def _close_if_done(state: _State) -> None:
+        if state.rows and all(r.get("status") != "open" for r in state.rows.values()):
+            state.view["status"] = "resolved"
+            state.pending["status"] = "resolved"
 
     # ------------------------------------------------------------------ sports
     def _link_game(self, state: _State) -> None:
@@ -672,10 +745,13 @@ class LiveHub:
         await self._poll_spot()
 
     def _check_stale(self) -> None:
-        feed = self.market
-        silent = feed is not None and feed.stats.connected and (feed.stats.age() or 0.0) > self.stale_after
+        silent: dict[str, bool] = {}
+        for feed in self._market_feeds():
+            age = feed.stats.age() or 0.0
+            silent[FEED_VENUE.get(feed.name, "")] = bool(feed.stats.connected and age > self.stale_after)
         for state in self._states.values():
-            if state.uses_feed and (not self._market_up or silent):
+            venue = state.key[0]
+            if state.uses_feed and (not self._up(venue) or silent.get(venue, False)):
                 self._set_stale(state, True)
 
     def sweep(self, now: float) -> None:
@@ -761,7 +837,9 @@ class LiveHub:
 
     # ------------------------------------------------------------------ metrics
     def metrics(self) -> dict[str, Any]:
-        feeds = {f.name: f.stats.as_dict() for f in (self.market, self.sports) if f is not None}
+        feeds = {f.name: f.stats.as_dict() for f in (*self._market_feeds(), self.sports) if f is not None}
+        for name, reason in self.unavailable.items():
+            feeds[name] = {"connected": False, "available": False, "reason": reason}
         dropped = self.dropped_total + sum(s.dropped for s in self._clients)
         return {
             "clients": len(self._clients),
