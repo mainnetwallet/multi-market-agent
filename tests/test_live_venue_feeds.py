@@ -81,6 +81,7 @@ class KalshiServer:
         self.connections += 1
         self.headers.append({k.lower(): v for k, v in ws.request.headers.items()})
         sids: dict[str, int] = {}
+        tasks: list[asyncio.Task[None]] = []
         try:
             async for raw in ws:
                 msg = json.loads(raw)
@@ -95,9 +96,13 @@ class KalshiServer:
                     )
                 )
                 if channel == "orderbook_delta" and self.script is not None:
-                    await self.script(ws, sids)
+                    # a task, not an await: the script may wait for frames that only this receive loop can read
+                    tasks.append(asyncio.create_task(self.script(ws, sids)))
         except Exception:
             return
+        finally:
+            for task in tasks:
+                task.cancel()
 
     def commands(self, cmd: str) -> list[dict[str, Any]]:
         return [f for f in self.frames if f["cmd"] == cmd]
@@ -382,7 +387,7 @@ async def test_kalshi_stays_disconnected_until_something_is_watched() -> None:
 class LimitlessServer:
     """Engine.IO open, namespace ack, then records ``subscribe_*`` events; ``script`` may push events."""
 
-    def __init__(self, script: Callable[[ServerConnection, "LimitlessServer"], Awaitable[None]] | None = None) -> None:
+    def __init__(self, script: Callable[[ServerConnection, LimitlessServer], Awaitable[None]] | None = None) -> None:
         self.events: list[list[Any]] = []
         self.headers: list[dict[str, str]] = []
         self.pongs = 0
@@ -502,7 +507,8 @@ async def test_limitless_amm_price_is_a_single_quoted_price_and_bad_values_are_i
     feed.handle("42/markets,[]")
     assert len(quotes) == count + 1  # only the book with no valid level (55 is out of range) still emits an empty quote
     assert (quotes[-1].bid, quotes[-1].ask) == (None, None)
-    assert feed.ignored == 4
+    # counted: percent price, update naming no market, crossed book; an unwatched market is skipped silently
+    assert feed.ignored == 3
 
 
 async def test_limitless_lifecycle_settlement_and_error_events() -> None:
@@ -637,4 +643,4 @@ async def test_limitless_history_cuts_to_the_range_and_tries_interval_only_when_
     assert out == {"fast": [[now - 600, "0.5"]], "slow": [[now - 600, "0.5"]]}  # two hours ago is outside 1H
     urls = [(u.rsplit("/", 2)[-2], p) for u, p in calls]
     assert ("fast", None) in urls and ("slow", {"interval": "1h"}) in urls
-    assert not any("x" == u and "../" in str(p) for u, p in urls) and not any("../x" in u for u, _ in calls)
+    assert not any(u == "x" and "../" in str(p) for u, p in urls) and not any("../x" in u for u, _ in calls)
