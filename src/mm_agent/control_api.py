@@ -20,6 +20,7 @@ from fastapi import (
     FastAPI,
     Header,
     HTTPException,
+    Query,
     Request,
     Response,
     WebSocket,
@@ -33,6 +34,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 
 from . import discover as discover_lib
+from . import eventview, eventview_source
 from .agent import AgentService
 from .chat import ChatService
 from .config import Settings
@@ -529,6 +531,45 @@ def create_app(
         if item is None:
             raise HTTPException(status_code=404, detail="event not found")
         return {"ok": True, "item": item}
+
+    @app.get("/v1/event/view")
+    async def event_view(
+        venue: VenueId | None = None,
+        event_id: str = Query("", alias="id", max_length=130),
+        slug: str = Query("", max_length=130),
+        url: str = Query("", max_length=300),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """One event as an EventView: layout, rows, sections, chart shell. Any open market renders; an
+        unknown shape comes back as ``generic_list``. Display data only: orders use ``/v1/orders/*``."""
+
+        if not settings.live_views_enabled:
+            raise HTTPException(status_code=404, detail="live views are disabled")
+        try:
+            if url:
+                parsed_venue, ident = eventview.parse_event_url(url)
+                venue, slug, event_id = VenueId(parsed_venue), ident, ""
+            venue = venue or registry.active_or_none or VenueId.POLYMARKET
+            adapter = registry.adapters.get(venue)
+            if adapter is None:
+                raise HTTPException(status_code=404, detail=f"{venue.value} is not enabled")
+            if not event_id and not slug:
+                raise ValueError("id, slug or url is required")
+            if venue == VenueId.POLYMARKET:
+                view = await eventview_source.polymarket_view(adapter, event_id=event_id, slug=slug)
+            elif venue == VenueId.KALSHI:
+                view = await eventview_source.kalshi_view(adapter, ticker=(slug or event_id).upper())
+            else:
+                view = await eventview_source.limitless_view(adapter, slug=slug or event_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)[:160]) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"event lookup failed: {str(exc)[:160]}") from exc
+        if view is None:
+            raise HTTPException(status_code=404, detail="event not found")
+        return {"ok": True, "view": view}
 
     # ── Polymarket public data (Data API v2 and CLOB price routes; no credentials) ──
     def _pm_adapter(attr: str) -> Any:
