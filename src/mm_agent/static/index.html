@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#07090d">
+<meta name="theme-color" content="#ffffff">
 <meta name="color-scheme" content="dark light">
 <meta name="description" content="Human-supervised prediction market agent">
 <title>MM Agent</title>
@@ -126,6 +126,49 @@ details>summary{cursor:pointer;font-weight:700;font-size:15px;list-style:none;di
 @media(min-width:1000px){.chatwrap{display:grid;grid-template-columns:272px minmax(0,1fr);gap:14px;align-items:start}.chathist{position:sticky;top:78px;transform:none;width:auto;max-height:calc(100dvh - 104px);height:calc(100dvh - 104px);border:1px solid var(--line);border-radius:var(--radius);box-shadow:none;background:var(--card);padding:14px 12px;z-index:1}.histonly{display:none}.scrim{display:none!important}.chatlog{height:calc(100dvh - 330px)}}
 .chatlog{height:calc(100dvh - 392px)}
 @media(max-width:900px){.chatlog{height:calc(100dvh - 420px)}.bottomnav button{font-size:10px;padding:0 1px}.dgrid{grid-template-columns:1fr}.mbtns .qbtn{min-width:72px;padding:8px 9px}}
+
+/* ---- v6: Polymarket look + live order book ---- */
+:root{--bg:#1d2b39;--bg2:#1d2b39;--card:#243546;--card2:#2c4055;--line:#2f4357;--line2:#40566c;--text:#f1f4f8;--muted:#8d9fb3;--accent:#3b7bff;--accent-ink:#fff;--accent-soft:rgba(59,123,255,.16);--blue:#5b92ff;--yes:#2fbf71;--yes-soft:rgba(47,191,113,.16);--no:#ff6a2b;--no-soft:rgba(255,106,43,.16);--danger:#ff6a2b;--danger-soft:rgba(255,106,43,.16);--live:#e64800;--radius:12px;--shadow:0 8px 28px rgba(0,0,0,.35)}
+:root[data-theme=light]{--bg:#fff;--bg2:#fff;--card:#fff;--card2:#f3f5f7;--line:#e6e9ed;--line2:#d3d8de;--text:#1d2b39;--muted:#77808d;--accent:#1652f0;--accent-ink:#fff;--accent-soft:rgba(22,82,240,.09);--blue:#1652f0;--yes:#27ae60;--yes-soft:rgba(39,174,96,.12);--no:#e64800;--no-soft:rgba(230,72,0,.11);--danger:#e64800;--danger-soft:rgba(230,72,0,.11);--live:#e64800;--shadow:0 8px 28px rgba(29,43,57,.12)}
+.logo{background:var(--accent);color:#fff;border-radius:10px}.brand{font-weight:800;letter-spacing:-.01em}
+.sidebar{border-right:1px solid var(--line)}.navbtn{border-radius:10px;font-weight:600}.navbtn.active{background:var(--accent-soft);color:var(--accent)}
+.header{background:color-mix(in srgb,var(--bg) 92%,transparent);box-shadow:0 1px 0 var(--line);border-bottom:0}
+.card,.item{box-shadow:none;border-radius:12px}.dcard,.item[data-market]{transition:box-shadow .15s,border-color .15s,transform .15s}
+.dcard:hover,.item[data-market]:hover{box-shadow:var(--shadow);border-color:var(--line2);transform:none}
+h1{font-weight:700;letter-spacing:-.025em}
+.btn{border-radius:10px;font-weight:600}.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.buy{background:var(--yes-soft);color:var(--yes)}.btn.sell{background:var(--no-soft);color:var(--no)}.btn.danger{background:var(--no);border-color:var(--no)}
+#tkGo.primary[data-oc=YES]{background:var(--yes);border-color:var(--yes);color:#fff}#tkGo.primary[data-oc=NO]{background:var(--no);border-color:var(--no);color:#fff}
+.pos,.pill.good{color:var(--yes)}.neg,.pill.bad{color:var(--no)}.pill.good{background:var(--yes-soft)}.pill.bad{background:var(--no-soft)}
+.seg{border-radius:10px;background:var(--card2)}.seg button{border-radius:8px;font-weight:600}.seg button.on{background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.12);color:var(--text)}
+.tabbar{gap:2px;border-bottom:1px solid var(--line);padding-bottom:0;margin-top:12px}
+.tab{border:0;border-radius:0;background:transparent;padding:10px 12px;font-weight:600;font-size:14px;color:var(--muted);box-shadow:inset 0 -2px 0 transparent}
+.tab:hover{color:var(--text)}.tab.on{background:transparent;color:var(--text);box-shadow:inset 0 -2px 0 var(--text)}
+.tab.hl{border:0;color:var(--no)}.tab.on.hl{background:transparent;color:var(--no);box-shadow:inset 0 -2px 0 var(--no)}
+.tabbar.sub{border-bottom:0;gap:6px;padding:8px 0 4px}.tabbar.sub .tab{border-radius:999px;background:var(--card2);padding:5px 12px;font-size:13px;box-shadow:none;color:var(--text)}
+.tabbar.sub .tab.on{background:var(--text);color:var(--bg);box-shadow:none}
+.dcard{padding:16px;gap:12px}.mrow{border-top:0;padding-top:0}.mlabel{font-weight:600}
+.qbtn{border-radius:8px;min-width:78px;font-weight:700}.qbtn:hover{filter:none}
+.qbtn.yes{background:var(--yes-soft);color:var(--yes)}.qbtn.no{background:var(--no-soft);color:var(--no)}
+.qbtn.yes:hover{background:var(--yes);color:#fff}.qbtn.no:hover{background:var(--no);color:#fff}
+.pricebox{border-radius:10px}.pricebox.yes{background:var(--yes-soft)}.pricebox.yes .big{color:var(--yes)}.pricebox.no{background:var(--no-soft)}.pricebox.no .big{color:var(--no)}
+.pricebox.sel.yes{box-shadow:0 0 0 2px var(--yes)}.pricebox.sel.no{box-shadow:0 0 0 2px var(--no)}
+.chip.on{background:var(--accent-soft);color:var(--accent)}.msg.user{background:var(--accent);color:var(--accent-ink)}
+input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.bar>span{background:var(--accent)}
+.ladder{display:block;margin-top:8px;border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:12.5px}
+.lh,.lr{display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:6px;padding:5px 12px;position:relative;align-items:center}
+.lh{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.06em;background:var(--card2)}
+.lh span:nth-child(n+2),.lr span:nth-of-type(n+2){text-align:right}
+.lr{cursor:pointer}.lr:hover{background:var(--card2)}.lr span{position:relative;z-index:1}
+.lr>i{position:absolute;right:0;top:0;bottom:0;opacity:.16;transition:width .25s ease}
+.lr.ask>i{background:var(--no)}.lr.bid>i{background:var(--yes)}
+.lr.ask>span:nth-of-type(1){color:var(--no);font-weight:700}.lr.bid>span:nth-of-type(1){color:var(--yes);font-weight:700}
+.lmid{padding:6px 12px;text-align:center;font-size:12px;color:var(--muted);border-block:1px solid var(--line);background:var(--card2)}
+.le{padding:10px 12px;text-align:center;color:var(--muted)}
+.obhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:18px 0 8px}.obhead h3{margin:0}
+#tkLive{display:inline-flex;align-items:center;gap:6px}#tkLive.good::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;animation:lv 1.4s infinite}
+@keyframes lv{50%{opacity:.25}}
 </style>
 </head>
 <body>
@@ -304,10 +347,8 @@ async function approveProposal(id){try{const r=await api("/v1/proposals/"+encode
 async function rejectProposal(id){try{await api("/v1/proposals/"+encodeURIComponent(id)+"/reject",{method:"POST",body:"{}"});toast("Proposal rejected");loadStatus()}catch(e){toast(e.message)}}
 async function loadMarkets(){try{const q=$("#marketSearch").value.trim();const v=$("#marketVenue").value;const d=await api("/v1/markets?limit=80"+ (q?"&q="+encodeURIComponent(q):"")+(v?"&venue="+encodeURIComponent(v):""));$("#marketList").innerHTML=d.markets.length?d.markets.map(m=>`<div class="item" data-market="${esc(m.venue)}:${esc(m.native_id)}" style="cursor:pointer"><div class="split"><div><span class="pill">${esc(m.venue)}</span> <b>${esc(m.title)}</b><div class="tiny muted">${esc(m.category)} · ends ${dhaka(m.end_time)} · ${esc(m.native_id)}</div></div><div class="small">${esc(m.status)}</div></div></div>`).join(""):'<div class="muted">No markets stored yet. Check feed_diag on Home.</div>';$$("[data-market]").forEach(x=>x.addEventListener("click",()=>openMarket(x.dataset.market)))}catch(e){toast(e.message)}}
 async function openMarket(ref){const [venue,id]=ref.split(":");try{const d=await api("/v1/market?venue="+encodeURIComponent(venue)+"&market_id="+encodeURIComponent(id));CURRENT_MARKET=d.market;const m=d.market,b=d.books;const yes=b.YES||{},no=b.NO||{};const research=d.research;const box=$("#marketDetail");box.classList.remove("hidden");box.innerHTML=`<div class="card" style="margin-top:16px"><div class="split"><div><span class="pill">${esc(m.venue)}</span> <span class="pill">${esc(m.status)}</span><h2 style="margin:8px 0">${esc(m.title)}</h2><div class="small muted">Ends ${dhaka(m.end_time)} · tick ${m.tick_size} · event ${esc(m.event_id||"—")} · ${esc(m.url||"")}</div></div><button class="btn small" onclick="document.getElementById('marketDetail').classList.add('hidden')">Close</button></div>
-<div class="buygrid" style="margin-top:14px"><div class="pricebox yes"><div class="k">YES</div><div class="big">${cents(yes.best_ask)}</div><div class="tiny muted">bid ${cents(yes.best_bid)} · spread ${cents(yes.spread)}</div></div><div class="pricebox no"><div class="k">NO</div><div class="big">${cents(no.best_ask)}</div><div class="tiny muted">bid ${cents(no.best_bid)} · spread ${cents(no.spread)}</div></div></div>
 <div id="ticketBox" style="margin-top:14px"></div>
 <h3>Agent proposal</h3><div class="row"><input id="buyAmount" type="number" min="0.1" step="0.1" value="${Math.min(2,Number(STATE?.limits?.max_trade_usd||2))}" style="max-width:150px"><button class="btn buy" id="buyYes">Buy YES → proposal</button><button class="btn buy" id="buyNo">Buy NO → proposal</button></div>
-<h3>Book</h3><div class="grid"><div class="card span6"><b class="small">YES asks</b><table><tr><th>price</th><th>size</th></tr>${(yes.asks||[]).slice(0,10).map(x=>`<tr><td>${cents(x.price)}</td><td>${x.size}</td></tr>`).join("")}</table></div><div class="card span6"><b class="small">NO asks</b><table><tr><th>price</th><th>size</th></tr>${(no.asks||[]).slice(0,10).map(x=>`<tr><td>${cents(x.price)}</td><td>${x.size}</td></tr>`).join("")}</table></div></div>
 <h3>Research</h3>${research?`<div class="small"><b>p = ${pct(research.probability)}</b> · ${esc(research.model)} · ${dhaka(research.created_at)}<p>${esc(research.summary)}</p><div class="muted">${(research.sources||[]).map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title||s.url)}</a>`).join("<br>")}</div></div>`:'<div class="small muted">No usable sourced research stored. No proposal will be created. Configure LLM and web search, then analyze.</div>'}
 <h3>Exit rules</h3><div class="row"><input id="ruleTP" type="number" min="0.001" max="0.999" step="0.001" placeholder="TP price e.g. 0.70" style="max-width:180px"><input id="ruleSL" type="number" min="0.001" max="0.999" step="0.001" placeholder="SL price e.g. 0.30" style="max-width:180px"><button class="btn small" id="saveRules">Arm rules on held outcome</button></div><div class="tiny muted" style="margin-top:4px">Rules only apply to positions you already hold. Exits are reduce-only.</div></div>`;
 renderTicket(m,b);$("#buyYes").onclick=()=>createProposal("YES");$("#buyNo").onclick=()=>createProposal("NO");$("#saveRules").onclick=()=>saveRules(m);box.scrollIntoView({behavior:"smooth"})}catch(e){toast(e.message)}}
@@ -331,7 +372,7 @@ $("#loginScreen").classList.remove("hidden");if("serviceWorker" in navigator)nav
 </script>
 <script>
 (function(){const root=document.documentElement,meta=document.querySelector('meta[name=theme-color]');
-function apply(t){root.dataset.theme=t;meta.content=t==="light"?"#f3f5f9":"#07090d";try{localStorage.setItem("mm-theme",t)}catch(e){}}
+function apply(t){root.dataset.theme=t;meta.content=t==="light"?"#ffffff":"#1d2b39";try{localStorage.setItem("mm-theme",t)}catch(e){}}
 apply(root.dataset.theme==="light"?"light":"dark");
 document.querySelectorAll(".js-theme").forEach(b=>b.addEventListener("click",()=>apply(root.dataset.theme==="light"?"dark":"light")));
 document.querySelectorAll(".chip[data-cmd]").forEach(c=>c.addEventListener("click",()=>{document.getElementById("chatInput").value=c.dataset.cmd;sendChat()}));})();
@@ -473,7 +514,7 @@ async function renderTicket(m,books){
   const cap=num(STATE&&STATE.limits&&STATE.limits.max_trade_usd);
   TK={venue:m.venue,id:m.native_id,title:m.title,books:books||{},vc,canMarket,tifs:tifs.length?tifs:["GTC"],side:pref.side||"BUY",outcome:pref.outcome||"YES",type:canMarket?"market":"limit",amount:String(Number.isNaN(cap)?2:Math.min(2,cap)),shares:"",price:"",tif:"GTC",post:false,expires:"",slip:"2",last:null};
   if(pref.side==="SELL"){const h=tkHeld();if(h>0)TK.shares=trimDec(h,4)}
-  tkDraw()}
+  TK.okAt=Date.now();TK.fail=0;tkDraw();tkLive(true)}
 function tkBook(){const bk=(TK.books&&TK.books[TK.outcome])||{};const lv=(a)=>(a||[]).map(x=>({p:num(x.price),s:num(x.size)})).filter(x=>x.p>0&&x.s>0);return{asks:lv(bk.asks).sort((a,b)=>a.p-b.p),bids:lv(bk.bids).sort((a,b)=>b.p-a.p),bk}}
 function tkHeld(){const ps=(STATE&&STATE.positions)||[];const p=ps.find(x=>x.venue===TK.venue&&x.market_id===TK.id&&x.outcome===TK.outcome);return p?num(p.shares):0}
 function tkDraw(){
@@ -495,22 +536,29 @@ function tkDraw(){
   box.innerHTML='<div class="card ticket"><div class="sectionhead"><h2>Trade by hand</h2><span class="pill bad">real money</span></div>'
    +(ready?'':'<div class="notice">'+esc(vc.reason||"This venue is not ready; orders are blocked.")+'</div>')
    +'<div class="seg wide" id="tkSide"><button data-v="BUY" class="'+(buy?"on":"")+'">Buy</button><button data-v="SELL" class="'+(!buy?"on":"")+'">Sell</button></div>'
-   +'<div class="buygrid" style="margin:12px 0" id="tkOut"><button class="pricebox yes'+(TK.outcome==="YES"?" sel":"")+'" data-v="YES"><div class="k">YES</div><div class="big">'+cents(px("YES"))+'</div><div class="tiny muted">'+(buy?"best ask":"best bid")+'</div></button><button class="pricebox no'+(TK.outcome==="NO"?" sel":"")+'" data-v="NO"><div class="k">NO</div><div class="big">'+cents(px("NO"))+'</div><div class="tiny muted">'+(buy?"best ask":"best bid")+'</div></button></div>'
+   +'<div class="buygrid" style="margin:12px 0" id="tkOut"><button class="pricebox yes'+(TK.outcome==="YES"?" sel":"")+'" data-v="YES"><div class="k">YES</div><div class="big" data-px="YES">'+cents(px("YES"))+'</div><div class="tiny muted">'+(buy?"best ask":"best bid")+'</div></button><button class="pricebox no'+(TK.outcome==="NO"?" sel":"")+'" data-v="NO"><div class="k">NO</div><div class="big" data-px="NO">'+cents(px("NO"))+'</div><div class="tiny muted">'+(buy?"best ask":"best bid")+'</div></button></div>'
    +(TK.canMarket?'<div class="seg wide" id="tkType" style="margin-bottom:12px"><button data-v="market" class="'+(TK.type==="market"?"on":"")+'">Market</button><button data-v="limit" class="'+(TK.type==="limit"?"on":"")+'">Limit</button></div>':'<div class="tiny muted" style="margin-bottom:10px">This venue takes limit orders only here.</div>')
    +'<div class="row" style="align-items:flex-end">'+fields+'</div>'+tifRow
    +(!buy?'<div class="tiny muted" style="margin-top:8px">You hold <b>'+(held>0?trimDec(held,4):"0")+'</b> '+esc(TK.outcome)+' shares'+(held>0?' · <a href="#" id="tkMax">use all</a>':"")+'</div>':"")
    +'<div class="sumbox" id="tkSum"></div><div id="tkMsg" class="small" role="status" style="margin-bottom:10px"></div>'
-   +'<button class="btn '+(buy?"primary":"danger")+' wide" id="tkGo"'+(ready?"":" disabled")+'>Review '+(buy?"buy ":"sell ")+esc(TK.outcome)+' order</button>'
+   +'<button class="btn '+(buy?"primary":"danger")+' wide" data-oc="'+esc(TK.outcome)+'" id="tkGo"'+(ready?"":" disabled")+'>Review '+(buy?"buy ":"sell ")+esc(TK.outcome)+' order</button>'
    +'<div class="tiny muted" style="margin-top:8px">Passes the same risk caps, pause state and audit trail as an agent proposal. Min order '+esc(vc.min_order_shares||"?")+' shares / $'+esc(vc.min_notional_usd||"?")+'.</div>'
-   +'<h3>Order book · '+esc(TK.outcome)+' <span class="tiny" style="text-transform:none;letter-spacing:0">(tap a price to use it as a limit)</span></h3><div class="ladder" id="tkLadder">'+tkLadder(bids,asks)+'</div></div>';
+   +'<div class="obhead"><h3>Order book</h3><span id="tkLive" class="pill warn">connecting…</span></div><div class="seg wide" id="tkOb"><button data-v="YES" class="'+(TK.outcome==="YES"?"on":"")+'">Trade Yes</button><button data-v="NO" class="'+(TK.outcome==="NO"?"on":"")+'">Trade No</button></div><div class="ladder" id="tkLadder">'+tkLadder(bids,asks)+'</div><div class="tiny muted" style="margin-top:6px">Tap a price to use it as a limit. Refreshes every 2 s while this window is open.</div></div>';
   tkWire();tkSum()}
 function tkLadder(bids,asks){
-  const t=(rows,l)=>'<div><b class="small">'+l+'</b><table><tr><th>price</th><th>size</th></tr>'+(rows.slice(0,6).map(x=>'<tr data-lp="'+x.p+'"><td>'+cents(x.p)+'</td><td>'+trimDec(x.s,2)+'</td></tr>').join("")||'<tr><td colspan="2" class="muted">empty</td></tr>')+'</table></div>';
-  return t(bids,"Bids")+t(asks,"Asks")}
+  const N=8,cum=(rows)=>{let c=0;return rows.slice(0,N).map(r=>{c+=r.s;return{p:r.p,s:r.s,c,t:c*r.p}})};
+  const a=cum(asks),b=cum(bids),mx=Math.max(1e-9,a.length?a[a.length-1].c:0,b.length?b[b.length-1].c:0);
+  const row=(r,k)=>'<div class="lr '+k+'" data-lp="'+r.p+'"><i style="width:'+Math.min(100,r.c/mx*100).toFixed(1)+'%"></i><span>'+trimDec(r.p*100,1)+'¢</span><span>'+trimDec(r.s,2)+'</span><span>$'+r.t.toFixed(2)+'</span></div>';
+  const mid=asks.length&&bids.length?'Spread '+trimDec((asks[0].p-bids[0].p)*100,1)+'¢ · Mid '+trimDec((asks[0].p+bids[0].p)*50,1)+'¢':'No two-sided market';
+  return '<div class="lh"><span>Price</span><span>Shares</span><span>Total</span></div>'
+    +(a.length?a.slice().reverse().map(r=>row(r,"ask")).join(""):'<div class="le">No asks</div>')
+    +'<div class="lmid">'+mid+'</div>'
+    +(b.length?b.map(r=>row(r,"bid")).join(""):'<div class="le">No bids</div>')}
 function tkWire(){
   const q=(s)=>$(s,$("#ticketBox"));
   q("#tkSide").addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.side=b.dataset.v;if(TK.side==="SELL"&&!TK.shares){const h=tkHeld();if(h>0)TK.shares=trimDec(h,4)}tkDraw()});
-  q("#tkOut").addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.outcome=b.dataset.v;if(TK.side==="SELL"){const h=tkHeld();TK.shares=h>0?trimDec(h,4):""}tkDraw()});
+  const pickOutcome=(e)=>{const b=e.target.closest("button");if(!b)return;TK.outcome=b.dataset.v;if(TK.side==="SELL"){const h=tkHeld();TK.shares=h>0?trimDec(h,4):""}tkDraw()};
+  q("#tkOut").addEventListener("click",pickOutcome);q("#tkOb").addEventListener("click",pickOutcome);
   const ty=q("#tkType");if(ty)ty.addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.type=b.dataset.v;tkDraw()});
   const bind=(id,key)=>{const el=q(id);if(el)el.addEventListener("input",()=>{TK[key]=el.value;tkSum()})};
   bind("#tkAmt","amount");bind("#tkShr","shares");bind("#tkPrc","price");bind("#tkSlip","slip");bind("#tkExp","expires");
@@ -570,9 +618,28 @@ async function tkSubmit(){
     toast("Order "+st);loadStatus();loadOrders();tkRefreshBook()}
   catch(e){if(!e.network)TK.last=null;msg.classList.add("neg");msg.textContent=(e.network?"Not confirmed: "+e.message+". The order may have gone through; check Open orders before retrying (a retry of the same order reuses its key).":e.message)}
   finally{btn.disabled=false}}
-async function tkRefreshBook(){
-  if(!TK)return;try{const d=await api("/v1/market?venue="+enc(TK.venue)+"&market_id="+enc(TK.id));TK.books=d.books||TK.books;
-    const l=$("#tkLadder");if(l){const {asks,bids}=tkBook();l.innerHTML=tkLadder(bids,asks)}tkSum()}catch(e){}}
+let TK_T=[];
+function tkPaint(){
+  if(!TK)return;const l=$("#tkLadder");if(l){const {asks,bids}=tkBook();l.innerHTML=tkLadder(bids,asks)}
+  const buy=TK.side==="BUY";["YES","NO"].forEach(o=>{const e=document.querySelector('#ticketBox [data-px="'+o+'"]');if(e){const bk=(TK.books&&TK.books[o])||{};e.textContent=cents(buy?bk.best_ask:bk.best_bid)}});
+  tkSum();tkAge()}
+function tkAge(){
+  const e=$("#tkLive");if(!e||!TK)return;const bk=(TK.books&&TK.books[TK.outcome])||{},srv=Number(bk.age_seconds),since=TK.okAt?(Date.now()-TK.okAt)/1000:null;
+  let cls="good",txt;
+  if(TK.fail>=2){cls="bad";txt="OFFLINE · retrying"}
+  else if(since==null){cls="warn";txt="connecting…"}
+  else{const age=since+(Number.isFinite(srv)?srv:0);if(age>15){cls="warn";txt="STALE · "+Math.round(age)+"s"}else txt="LIVE · "+(age<1.5?"now":Math.round(age)+"s ago")}
+  e.className="pill "+cls;e.textContent=txt}
+async function tkPoll(){
+  const gone=!TK||!$("#tkLadder")||$("#marketDetail").classList.contains("hidden");
+  if(gone){tkLive(false);return}
+  if(document.hidden||TK.busy)return;TK.busy=true;
+  try{const d=await api("/v1/book?venue="+enc(TK.venue)+"&market_id="+enc(TK.id));if(TK&&d.books){TK.books=d.books;TK.okAt=Date.now();TK.fail=0;tkPaint()}}
+  catch(e){if(TK){TK.fail=(TK.fail||0)+1;tkAge()}}
+  finally{if(TK)TK.busy=false}}
+function tkLive(on){TK_T.forEach(clearInterval);TK_T=[];if(on&&TK)TK_T=[setInterval(tkPoll,2000),setInterval(tkAge,1000)]}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&TK)tkPoll()});
+async function tkRefreshBook(){await tkPoll()}
 
 /* ---------- Open orders ---------- */
 async function loadOrders(){

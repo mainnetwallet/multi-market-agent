@@ -596,6 +596,34 @@ def test_market_book_and_history(harness: Harness) -> None:
     assert history.json()["points"]
 
 
+def test_live_book_endpoint_returns_both_outcomes_with_best_prices(harness: Harness) -> None:
+    client = make_client(harness)
+    res = client.get("/v1/book?venue=fake&market_id=fed-cut")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert set(body["books"]) == {"YES", "NO"}
+    yes = body["books"]["YES"]
+    # The UI's price boxes read these; they are plain properties on the model, so they must be added by hand.
+    assert yes["best_ask"] == str(yes["asks"][0]["price"]) or float(yes["best_ask"]) == float(yes["asks"][0]["price"])
+    assert float(yes["best_bid"]) == float(yes["bids"][0]["price"])
+    assert yes["spread"] is not None and yes["age_seconds"] >= 0
+    assert body["server_time"]
+
+
+def test_live_book_endpoint_needs_login_and_a_known_market(harness: Harness) -> None:
+    app = create_app(harness.settings, harness.agent, harness.scanner, harness.registry, harness.chat, harness.bus)
+    assert TestClient(app).get("/v1/book?venue=fake&market_id=fed-cut").status_code == 401
+    client = make_client(harness)
+    assert client.get("/v1/book?venue=fake&market_id=does-not-exist").status_code in (404, 502)
+
+
+def test_market_detail_books_carry_best_prices(harness: Harness) -> None:
+    client = make_client(harness)
+    res = client.get("/v1/market?venue=fake&market_id=fed-cut")
+    assert res.status_code == 200, res.text
+    assert res.json()["books"]["YES"]["best_ask"] is not None
+
+
 def test_ws_accepts_a_bearer_token(harness: Harness) -> None:
     client = make_client(harness)
     login = client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})

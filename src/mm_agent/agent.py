@@ -175,13 +175,15 @@ class AgentService:
     def markets(self, *, q: str | None = None, limit: int = 50, venue: VenueId | None = None) -> list[Market]:
         return self.store.list_markets(venue=venue or self.registry.active_or_none, q=q, limit=limit)
 
-    async def books_for(self, market: Market, *, force: bool = False) -> dict[Outcome, BookSnapshot]:
+    async def books_for(
+        self, market: Market, *, force: bool = False, max_age: int | None = None
+    ) -> dict[Outcome, BookSnapshot]:
         adapter = self.registry.get(market.venue)
         out: dict[Outcome, BookSnapshot] = {}
         for outcome in (Outcome.YES, Outcome.NO):
             ref = MarketRef(venue=market.venue, market_id=market.native_id, outcome=outcome)
             try:
-                out[outcome] = await self.books.get(adapter, ref, force=force)
+                out[outcome] = await self.books.get(adapter, ref, force=force, max_age=max_age)
             except Exception as exc:
                 logger.warning("book_fetch_failed", ref=ref.namespaced, error=str(exc)[:160])
         return out
