@@ -311,6 +311,9 @@ def shape_market(raw: dict[str, Any], *, allow_closed: bool = False) -> dict[str
         "yes_price": str(yes),
         "no_price": str(no),
         "change_1d": str(change) if change is not None else None,
+        "threshold": str(dec(raw.get("groupItemThreshold")))
+        if dec(raw.get("groupItemThreshold")) is not None
+        else None,
         "volume": str(dec(raw.get("volume")) or Decimal(0)),
         "end_time": _text(raw.get("endDate")) or None,
     }
@@ -371,8 +374,12 @@ def shape_sport(raw: dict[str, Any]) -> dict[str, Any] | None:
     """The live-game part of a sports event: teams with price, score, period, live/ended flags."""
 
     rows = [m for m in raw.get("markets") or [] if isinstance(m, dict)]
+    labels_in_tags = {
+        _text(t.get("label")).lower() for t in raw.get("tags") or [] if isinstance(t, dict) and _text(t.get("label"))
+    }
     is_game = bool(
-        _text(raw.get("score"))
+        labels_in_tags & {"sports", "esports"}
+        or _text(raw.get("score"))
         or _text(raw.get("period"))
         or _text(raw.get("gameStatus"))
         or raw.get("live")
@@ -477,8 +484,9 @@ def shape_event(raw: dict[str, Any], *, allow_closed: bool = False) -> dict[str,
     """One Gamma event -> one card. None when it has no open Yes/No market.
 
     ``allow_closed`` keeps a finished event (the live endpoint still has to show the final score).
-    ``kind`` tells the app how to draw it: ``sport`` (teams + score), ``crypto_updown`` (price to beat)
-    or plain ``market``.
+    ``kind`` tells the app how to draw it: ``sport`` (teams + score), ``crypto_updown`` (price to beat),
+    ``multi`` (several outcomes: candidates, brackets, mentions; ``ordered`` = a natural range order) or a
+    single ``market``.
     """
 
     if (raw.get("closed") or raw.get("archived")) and not allow_closed:
@@ -492,7 +500,14 @@ def shape_event(raw: dict[str, Any], *, allow_closed: bool = False) -> dict[str,
     crypto = None if sport else shape_crypto(raw)
     if not markets and not (sport and allow_closed):
         return None
-    markets.sort(key=lambda m: dec(m["yes_price"]) or Decimal(0), reverse=True)
+    # Range markets (temperature brackets, price levels, dates) carry a threshold: keep their natural order.
+    # Everything else (candidates, options) is ordered by chance, the likeliest first.
+    thresholds = [dec(m["threshold"]) for m in markets]
+    ordered = len(markets) > 1 and all(t is not None for t in thresholds) and len(set(thresholds)) == len(markets)
+    if ordered:
+        markets.sort(key=lambda m: dec(m["threshold"]) or Decimal(0))
+    else:
+        markets.sort(key=lambda m: dec(m["yes_price"]) or Decimal(0), reverse=True)
     changes = [abs(c) for c in (dec(m["change_1d"]) for m in markets) if c is not None]
     tags = [_text(t.get("label")) for t in raw.get("tags") or [] if isinstance(t, dict) and _text(t.get("label"))]
     slug = _text(raw.get("slug"))
@@ -509,7 +524,8 @@ def shape_event(raw: dict[str, Any], *, allow_closed: bool = False) -> dict[str,
         "tags": tags[:5],
         "market_count": len(markets),
         "max_change_1d": str(max(changes)) if changes else None,
-        "kind": "sport" if sport else ("crypto_updown" if crypto else "market"),
+        "kind": "sport" if sport else ("crypto_updown" if crypto else ("multi" if len(markets) > 1 else "market")),
+        "ordered": ordered,
         "sport": sport,
         "crypto": crypto,
         "markets": markets,
