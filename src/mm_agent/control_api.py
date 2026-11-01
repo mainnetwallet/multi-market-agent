@@ -199,6 +199,18 @@ class ApprovalBody(BaseModel):
     kind: str
 
 
+def _book_json(book: Any) -> dict[str, Any]:
+    """A book snapshot for the UI. `best_bid`/`best_ask`/`mid`/`spread` are plain properties on the model,
+    so `model_dump` leaves them out; the UI's price boxes need them, so they are added here."""
+
+    data: dict[str, Any] = book.model_dump(mode="json")
+    for name in ("best_bid", "best_ask", "mid", "spread"):
+        value = getattr(book, name)
+        data[name] = None if value is None else str(value)
+    data["age_seconds"] = round(book.age_seconds(), 2)
+    return data
+
+
 def create_app(
     settings: Settings,
     agent: AgentService,
@@ -464,9 +476,34 @@ def create_app(
         research = agent.store.latest_research(market.venue, market.native_id)
         return {
             "market": market.model_dump(mode="json"),
-            "books": {k.value: v.model_dump(mode="json") for k, v in books.items()},
+            "books": {k.value: _book_json(v) for k, v in books.items()},
             "research": research,
             "badge": _badge(),
+        }
+
+    @app.get("/v1/book")
+    async def book_snapshot(
+        market_id: str, venue: VenueId | None = None, _: str = Depends(require_auth)
+    ) -> dict[str, Any]:
+        """Order books only (no research), for the UI's live ladder.
+
+        Served from the cache when the snapshot is at most 1 s old, otherwise fetched from the venue, so
+        several open tabs cannot multiply the venue load. Each book carries its own `timestamp`,
+        `age_seconds` and `source`, so the UI can show how fresh the numbers really are.
+        """
+
+        try:
+            market = await agent.get_market(market_id, venue)
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail=str(exc)[:200]) from exc
+        books = await agent.books_for(market, max_age=1)
+        if not books:
+            raise HTTPException(status_code=502, detail=f"{market.venue.value} order book unavailable")
+        return {
+            "venue": market.venue.value,
+            "market_id": market.native_id,
+            "books": {k.value: _book_json(v) for k, v in books.items()},
+            "server_time": utcnow().isoformat(),
         }
 
     @app.post("/v1/proposals/analyze")
