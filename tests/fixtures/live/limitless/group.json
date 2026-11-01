@@ -1,0 +1,18 @@
+{
+  "data": {
+    "marketType": "group",
+    "markets": [
+      {
+        "prices": [
+          0.4,
+          0.6
+        ],
+        "slug": "synthetic-group-a",
+        "title": "A"
+      }
+    ],
+    "slug": "synthetic-group",
+    "title": "Synthetic group"
+  },
+  "synthetic": true
+}

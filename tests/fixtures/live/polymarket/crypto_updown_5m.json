@@ -1,0 +1,21 @@
+{
+  "data": {
+    "id": "5001",
+    "markets": [
+      {
+        "bestAsk": "0.52",
+        "bestBid": "0.51",
+        "clobTokenIds": "[\"u11\", \"u12\"]",
+        "groupItemTitle": "BTC up?",
+        "id": "u1",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.51\", \"0.49\"]",
+        "outcomes": "[\"Up\", \"Down\"]",
+        "question": "BTC up?"
+      }
+    ],
+    "slug": "btc-updown-5m-1793000000",
+    "title": "Bitcoin Up or Down - 5 minutes"
+  },
+  "synthetic": true
+}
