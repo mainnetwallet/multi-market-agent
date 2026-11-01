@@ -53,6 +53,8 @@ ZERO = Decimal("0")
 ONE = Decimal("1")
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
+# Chart window -> `fidelity` (minutes per point) sent to GET /prices-history.
+_PRICE_HISTORY_FIDELITY = {"1h": 1, "6h": 5, "1d": 10, "1w": 60, "1m": 240, "max": 1440}
 
 EVENT_TAG_TTL_SECONDS = 6 * 3600
 EVENT_TAG_RETRY_SECONDS = 60
@@ -874,7 +876,15 @@ class PolymarketVenue(HttpVenue):
 
         market = await self.get_market(MarketRef(venue=self.id, market_id=market_id))
         asset_id = market.outcome(Outcome.YES).native_id
-        data = await self.get_json(CLOB + "/prices-history", params={"token_id": asset_id, "interval": interval})
+        # The CLOB parameter is `market` (it takes the token id); `token_id` is rejected with HTTP 400.
+        # `fidelity` is the bucket size in minutes. The default of 1 minute is refused or comes back
+        # empty on the long windows, so each window asks for a bucket that keeps the series small.
+        if interval not in _PRICE_HISTORY_FIDELITY:
+            raise ValueError(f"unsupported interval {interval!r}; use one of {', '.join(_PRICE_HISTORY_FIDELITY)}")
+        data = await self.get_json(
+            CLOB + "/prices-history",
+            params={"market": asset_id, "interval": interval, "fidelity": _PRICE_HISTORY_FIDELITY[interval]},
+        )
         out: list[dict[str, Any]] = []
         for row in data.get("history") or []:
             try:
