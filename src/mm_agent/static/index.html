@@ -169,6 +169,36 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 
 .obhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:18px 0 8px}.obhead h3{margin:0}
 #tkLive{display:inline-flex;align-items:center;gap:6px}#tkLive.good::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;animation:lv 1.4s infinite}
 @keyframes lv{50%{opacity:.25}}
+
+/* ---- v7: top navbar, cards, market page ---- */
+.content{max-width:1280px}
+.dgrid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));align-items:stretch}
+.dhead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.dtitle{font-size:15px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.dgauge{flex:none;text-align:right;line-height:1.1}.dgauge span{font-size:20px;font-weight:700}.dgauge small{display:block;color:var(--muted);font-size:11px}
+.mpct{font-weight:700;font-size:14px;min-width:42px;text-align:right}
+.dfoot{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;color:var(--muted);font-size:12px;margin-top:auto;padding-top:2px}
+.dcard .mrow{padding-top:0}
+.mkchart{margin:14px 0 6px}.mkhead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.mknow{font-size:15px;display:flex;align-items:baseline;gap:6px}.mknow b{font-size:30px;font-weight:700;letter-spacing:-.02em}
+.mkplot{position:relative}.mkplotsvg{width:100%;height:220px;display:block;touch-action:none}
+.mkplotsvg .gl{stroke:var(--line);stroke-width:1;vector-effect:non-scaling-stroke;stroke-dasharray:3 4}.mkplotsvg .gt{fill:var(--muted);font-size:11px}
+.mkplotsvg .ln{fill:none;stroke:var(--accent);stroke-width:2;vector-effect:non-scaling-stroke;stroke-linejoin:round}.mkplotsvg .ar{fill:var(--accent);opacity:.08}
+.mkplotsvg .cx{stroke:var(--muted);stroke-width:1;vector-effect:non-scaling-stroke}.mkplotsvg .dt{fill:var(--accent);stroke:var(--card);stroke-width:2}
+.mktip{position:absolute;top:0;transform:translateX(-50%);background:var(--text);color:var(--bg);font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px;pointer-events:none;white-space:nowrap}
+@media(min-width:901px){
+.app{display:block}
+.sidebar{position:sticky;top:0;z-index:30;width:auto;height:56px;flex:none;flex-direction:row;align-items:center;gap:4px;padding:0 24px;border-right:0;border-bottom:1px solid var(--line)}
+.sidebar .brandrow{padding:0 18px 0 0}.sidebar .sub,.sidebar .sidefoot{display:none}
+.navsearch{flex:0 1 420px;margin:0 14px 0 0}.navsearch input{border-radius:999px;background:var(--card2);border-color:transparent;padding-top:8px;padding-bottom:8px}
+.navbtn{width:auto;padding:8px 12px;gap:7px;border-radius:8px}.navbtn svg.i{width:17px;height:17px}
+.header{top:56px;padding:6px 24px;z-index:25}
+}
+@media(min-width:1000px){
+#marketDetail:not(.hidden)>.card{max-width:1140px;display:grid;grid-template-columns:minmax(0,1fr) 380px;column-gap:26px;align-items:start}
+#marketDetail:not(.hidden)>.card>*{grid-column:1}
+#marketDetail:not(.hidden)>.card>#ticketBox{grid-column:2;grid-row:1/span 30;position:sticky;top:8px;margin-top:14px}
+}
 </style>
 </head>
 <body>
@@ -208,6 +238,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 
 <div class="app hidden" id="app">
   <aside class="sidebar">
     <div class="brandrow"><div class="logo"><svg class="i"><use href="#i-pulse"/></svg></div><div><div class="brand">MM Agent</div><div class="sub">human-supervised</div></div></div>
+    <div class="search navsearch"><svg class="i"><use href="#i-search"/></svg><input id="navSearch" placeholder="Search markets" autocomplete="off" aria-label="Search markets"></div>
     <button class="navbtn active" data-view="home"><svg class="i"><use href="#i-home"/></svg>Home</button>
     <button class="navbtn" data-view="markets"><svg class="i"><use href="#i-chart"/></svg>Markets</button>
     <button class="navbtn" data-view="chat"><svg class="i"><use href="#i-chat"/></svg>Chat</button>
@@ -339,6 +370,7 @@ function showLogin(show){$("#loginScreen").classList.toggle("hidden",!show);$("#
 $("#loginForm").addEventListener("submit",async(e)=>{e.preventDefault();$("#loginError").textContent="";try{await api("/v1/auth/login",{method:"POST",body:JSON.stringify({username:$("#username").value,password:$("#password").value})});showLogin(false);await boot()}catch(err){$("#loginError").textContent=err.message}});
 function setView(name){window.scrollTo(0,0);$$(".view").forEach(v=>v.classList.toggle("active",v.id==="view-"+name));$$("[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===name));if(name==="home")loadStatus();if(name==="markets"){if(MK_MODE==="discover")dvInit();else loadMarkets()}if(name==="positions"){loadPositions();loadOrders()}if(name==="wallet")loadWallet();if(name==="chat")chatRestore();if(name==="settings")loadSettings();}
 $$("[data-view]").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.view)));
+$("#navSearch").addEventListener("keydown",(e)=>{if(e.key!=="Enter")return;const q=e.target.value.trim();setView("markets");const d=$("#dvSearch");if(d){d.value=q;DV.q=q;dvPage(true)}});
 async function boot(){try{const me=await api("/v1/auth/me");showLogin(false);await loadStatus();await loadMarkets();connectWs()}catch(e){showLogin(true)}}
 async function loadStatus(){try{const s=await api("/v1/status");STATE=s;$("#badge").textContent=s.badge;$("#badge").classList.toggle("live",s.badge.includes("LIVE"));$("#pausedPill").textContent=s.paused?"PAUSED":"RUNNING";$("#pauseBtn").textContent=s.paused?"Resume entries":"Pause entries";$("#pausedPill").className="pill "+(s.paused?"warn":"good");$("#homeVenue").textContent=s.active_venue||"none";$("#homeMode").textContent=s.unit_guard.ok?"Unit check OK · "+s.server_time_dhaka:"HALTED: "+s.unit_guard.reason;$("#homePositions").textContent=s.counts.open_positions;$("#homePnl").innerHTML="Today PnL <b class=\""+(Number(s.today_pnl_usd)>=0?"pos":"neg")+"\">"+money(s.today_pnl_usd)+"</b>";$("#homePending").textContent=s.counts.pending_proposals;$("#homeUnknown").textContent="UNKNOWN orders: "+s.counts.unknown_orders;$("#homeStatus").innerHTML=(s.research?.available?"":`<div class="warn small" style="margin-bottom:8px">Research disabled: ${esc(s.research?.reason||"configure LLM + web search")}. No new proposals; guardrails stay active.</div>`)+s.venues.map(v=>`<div>${esc(v.venue)} · <span class="pill ${v.ready?"good":"bad"}">${v.ready?"LIVE":"UNAVAILABLE"}</span> ${v.credentialed?"":'<span class="pill warn">PUBLIC</span> '}${esc(v.reason||"")}</div>`).join("")||"No venues enabled";$("#feedDiag").textContent=JSON.stringify({scanner:s.feed_diag,book_feed:s.book_feed},null,2);$("#sideVenues").innerHTML=s.venues.map(v=>`<div>${esc(v.venue)} ${v.ready?"●":"○"}</div>`).join("");$("#feedPill").textContent=Object.values(s.feed_diag.venues||{}).some(v=>v.error)?"feed error":"feed ok";$("#feedPill").className="pill "+ (Object.values(s.feed_diag.venues||{}).some(v=>v.error)?"bad":"good");await loadProposals();await loadPositions();if(!$("#venueSelect").options.length)fillVenueSelect(s.venues);renderLimits(s.limits)}catch(e){toast(e.message)}}
 async function loadProposals(){try{const d=await api("/v1/proposals?limit=30");const p=d.proposals.filter(x=>x.status==="PENDING");$("#proposalList").innerHTML=p.length?p.map(x=>proposalCard(x)).join(""):'<div class="muted">No pending proposals. Proposals expire after 5 minutes and require sourced research.</div>';$$("[data-approve]").forEach(b=>b.addEventListener("click",()=>approveProposal(b.dataset.approve)));$$("[data-reject]").forEach(b=>b.addEventListener("click",()=>rejectProposal(b.dataset.reject)));$("#homePending").textContent=p.length}catch(e){}}
@@ -347,11 +379,11 @@ async function approveProposal(id){try{const r=await api("/v1/proposals/"+encode
 async function rejectProposal(id){try{await api("/v1/proposals/"+encodeURIComponent(id)+"/reject",{method:"POST",body:"{}"});toast("Proposal rejected");loadStatus()}catch(e){toast(e.message)}}
 async function loadMarkets(){try{const q=$("#marketSearch").value.trim();const v=$("#marketVenue").value;const d=await api("/v1/markets?limit=80"+ (q?"&q="+encodeURIComponent(q):"")+(v?"&venue="+encodeURIComponent(v):""));$("#marketList").innerHTML=d.markets.length?d.markets.map(m=>`<div class="item" data-market="${esc(m.venue)}:${esc(m.native_id)}" style="cursor:pointer"><div class="split"><div><span class="pill">${esc(m.venue)}</span> <b>${esc(m.title)}</b><div class="tiny muted">${esc(m.category)} · ends ${dhaka(m.end_time)} · ${esc(m.native_id)}</div></div><div class="small">${esc(m.status)}</div></div></div>`).join(""):'<div class="muted">No markets stored yet. Check feed_diag on Home.</div>';$$("[data-market]").forEach(x=>x.addEventListener("click",()=>openMarket(x.dataset.market)))}catch(e){toast(e.message)}}
 async function openMarket(ref){const [venue,id]=ref.split(":");try{const d=await api("/v1/market?venue="+encodeURIComponent(venue)+"&market_id="+encodeURIComponent(id));CURRENT_MARKET=d.market;const m=d.market,b=d.books;const yes=b.YES||{},no=b.NO||{};const research=d.research;const box=$("#marketDetail");box.classList.remove("hidden");box.innerHTML=`<div class="card" style="margin-top:16px"><div class="split"><div><span class="pill">${esc(m.venue)}</span> <span class="pill">${esc(m.status)}</span><h2 style="margin:8px 0">${esc(m.title)}</h2><div class="small muted">Ends ${dhaka(m.end_time)} · tick ${m.tick_size} · event ${esc(m.event_id||"—")} · ${esc(m.url||"")}</div></div><button class="btn small" onclick="document.getElementById('marketDetail').classList.add('hidden')">Close</button></div>
-<div id="ticketBox" style="margin-top:14px"></div>
+<div id="mkChart" class="mkchart"></div><div id="ticketBox"></div>
 <h3>Agent proposal</h3><div class="row"><input id="buyAmount" type="number" min="0.1" step="0.1" value="${Math.min(2,Number(STATE?.limits?.max_trade_usd||2))}" style="max-width:150px"><button class="btn buy" id="buyYes">Buy YES → proposal</button><button class="btn buy" id="buyNo">Buy NO → proposal</button></div>
 <h3>Research</h3>${research?`<div class="small"><b>p = ${pct(research.probability)}</b> · ${esc(research.model)} · ${dhaka(research.created_at)}<p>${esc(research.summary)}</p><div class="muted">${(research.sources||[]).map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title||s.url)}</a>`).join("<br>")}</div></div>`:'<div class="small muted">No usable sourced research stored. No proposal will be created. Configure LLM and web search, then analyze.</div>'}
 <h3>Exit rules</h3><div class="row"><input id="ruleTP" type="number" min="0.001" max="0.999" step="0.001" placeholder="TP price e.g. 0.70" style="max-width:180px"><input id="ruleSL" type="number" min="0.001" max="0.999" step="0.001" placeholder="SL price e.g. 0.30" style="max-width:180px"><button class="btn small" id="saveRules">Arm rules on held outcome</button></div><div class="tiny muted" style="margin-top:4px">Rules only apply to positions you already hold. Exits are reduce-only.</div></div>`;
-renderTicket(m,b);$("#buyYes").onclick=()=>createProposal("YES");$("#buyNo").onclick=()=>createProposal("NO");$("#saveRules").onclick=()=>saveRules(m);box.scrollIntoView({behavior:"smooth"})}catch(e){toast(e.message)}}
+renderTicket(m,b);mkChart(m.venue,m.native_id,MKC.range);$("#buyYes").onclick=()=>createProposal("YES");$("#buyNo").onclick=()=>createProposal("NO");$("#saveRules").onclick=()=>saveRules(m);box.scrollIntoView({behavior:"smooth"})}catch(e){toast(e.message)}}
 async function createProposal(outcome){if(!CURRENT_MARKET)return;try{const amount=Number($("#buyAmount").value);const r=await api("/v1/proposals/analyze",{method:"POST",body:JSON.stringify({venue:CURRENT_MARKET.venue,market_id:CURRENT_MARKET.native_id,outcome,amount_usd:amount})});if(!r.ok){toast("No trade: "+(r.reasons||[]).join(", "));return}toast(`Proposal ${r.proposal.id.slice(0,8)} created. Review and approve on Home.`);loadStatus()}catch(e){toast(e.message)}}
 async function saveRules(market){try{const tp=Number($("#ruleTP").value),sl=Number($("#ruleSL").value);let held=(STATE?.positions||[]).filter(p=>p.market_id===market.native_id);if(!held.length){toast("No local position on this market.");return}const p=held[0];for(const [kind,val] of [["TAKE_PROFIT",tp],["STOP_LOSS",sl]]){if(val>0)await api("/v1/rules",{method:"POST",body:JSON.stringify({market_id:p.market_id,outcome:p.outcome,kind,trigger_price:val})})}toast("Rules armed");loadPositions()}catch(e){toast(e.message)}}
 async function loadPositions(){try{const d=await api("/v1/positions");STATE=STATE||{};STATE.positions=d.positions;$("#positionList").innerHTML=d.positions.length?d.positions.map(p=>`<div class="item"><div class="split"><div><span class="pill">${esc(p.venue)}</span> <b>${esc(p.outcome)} ${esc(p.shares)}</b> @ ${cents(p.avg_price)}<div class="small muted">${esc(p.market_title||p.market_id)}</div><div class="tiny muted">uPnL <b class="${Number(p.unrealized_pnl)>=0?"pos":"neg"}">${money(p.unrealized_pnl)}</b> · current ${cents(p.current_price)}</div></div><div class="row" style="flex-wrap:nowrap"><button class="btn small" data-sell="${esc(p.venue)}:${esc(p.market_id)}|${esc(p.outcome)}">Sell…</button><button class="btn small sell" data-close="${esc(p.market_id)}|${esc(p.outcome)}">Close</button></div></div></div>`).join(""):'<div class="muted">No open positions.</div>';$$("[data-close]").forEach(b=>b.addEventListener("click",()=>closePos(b.dataset.close)));$$("[data-sell]").forEach(b=>b.addEventListener("click",()=>{const [ref,out]=b.dataset.sell.split("|");TPREF={side:"SELL",outcome:out};openMarket(ref)}));const r=await api("/v1/rules");$("#ruleList").innerHTML=r.rules.length?r.rules.map(x=>`<div class="item small"><span class="pill">${esc(x.status)}</span> ${esc(x.venue)} · ${esc(x.kind)} · ${esc(x.market_id)} · trigger ${esc(x.trigger_price||x.trigger_at)} <button class="btn small" data-cancelrule="${esc(x.id)}">Cancel</button></div>`).join(""):'<div class="muted">No rules.</div>';$$("[data-cancelrule]").forEach(b=>b.addEventListener("click",async()=>{try{await api("/v1/rules/"+encodeURIComponent(b.dataset.cancelrule),{method:"DELETE"});toast("Rule cancelled");loadPositions()}catch(e){toast(e.message)}}))}catch(e){}}
@@ -484,16 +516,18 @@ async function dvPage(reset){
     $("#dvNote").textContent=d.note||"";dvRender()}
   catch(e){if(seq!==DV.seq)return;if(reset)$("#dvList").innerHTML='<div class="muted">'+esc(e.message)+'</div>';else toast(e.message)}
   finally{if(seq===DV.seq)DV.loading=false}}
+function pct0(v){const n=num(v);return Number.isNaN(n)?"—":Math.round(n*100)+"%"}
 function dvMarketRow(ev,m,single,i){
   const ref=esc(DV.venue+":"+m.market_id),ch=num(m.change_1d);
   const chg=Number.isNaN(ch)||ch===0?"":'<small class="'+(ch>0?"pos":"neg")+'">'+(ch>0?"+":"")+(ch*100).toFixed(1)+' pp today</small>';
-  return '<div class="mrow"><div class="mlabel" data-open="'+ref+'">'+(single?"":esc(m.label))+chg+'</div><div class="mbtns"><button class="qbtn yes" data-open="'+ref+'" data-out="YES">'+esc(m.yes_label||"Yes")+" "+c0(m.yes_price)+'</button><button class="qbtn no" data-open="'+ref+'" data-out="NO">'+esc(m.no_label||"No")+" "+c0(m.no_price)+'</button></div></div>'}
+  return '<div class="mrow"><div class="mlabel" data-open="'+ref+'">'+(single?"":esc(m.label))+chg+'</div>'+(single?"":'<div class="mpct">'+pct0(m.yes_price)+'</div>')+'<div class="mbtns"><button class="qbtn yes" data-open="'+ref+'" data-out="YES">'+esc(m.yes_label||"Yes")+" "+c0(m.yes_price)+'</button><button class="qbtn no" data-open="'+ref+'" data-out="NO">'+esc(m.no_label||"No")+" "+c0(m.no_price)+'</button></div></div>'}
 function dvCard(ev,i){
   const ms=ev.markets||[],single=ms.length===1,open=DV.expanded&&DV.expanded[i],shown=(single||open)?ms:ms.slice(0,3);
-  return '<div class="item dcard"><div><b class="tr">'+esc(ev.title)+'</b><div class="tiny muted">'+compact(ev.volume,DV.venue)+' vol · ends '+endShort(ev.end_time)+(ev.market_count>1?" · "+ev.market_count+" markets":"")+'</div></div>'
-   +'<div class="tags">'+(ev.tags||[]).slice(0,3).map(t=>'<span class="pill">'+esc(t)+'</span>').join("")+'</div>'
+  const head=single?'<div class="dhead"><b class="dtitle">'+esc(ev.title)+'</b><div class="dgauge"><span>'+pct0(ms[0].yes_price)+'</span><small>chance</small></div></div>':'<div class="dhead"><b class="dtitle">'+esc(ev.title)+'</b></div>';
+  return '<div class="item dcard">'+head
    +shown.map(m=>dvMarketRow(ev,m,single,i)).join("")
-   +((!single&&!open&&ms.length>3)?'<button class="btn small" data-more="'+i+'">Show '+(ms.length-3)+' more</button>':"")+'</div>'}
+   +((!single&&!open&&ms.length>3)?'<button class="btn small" data-more="'+i+'">Show '+(ms.length-3)+' more</button>':"")
+   +'<div class="dfoot"><span>'+compact(ev.volume,DV.venue)+' Vol.</span><span>'+(ev.market_count>1?ev.market_count+" markets · ":"")+'ends '+endShort(ev.end_time)+'</span>'+((ev.tags||[])[0]?'<span class="pill">'+esc(ev.tags[0])+'</span>':"")+'</div></div>'}
 function dvRender(){
   DV.expanded=DV.expanded||{};
   $("#dvList").innerHTML=DV.items.length?DV.items.map(dvCard).join(""):'<div class="muted" style="grid-column:1/-1">'+(DV.q?'No markets match “'+esc(DV.q)+'”.':'Nothing to show in this tab right now.')+'</div>';
@@ -618,6 +652,35 @@ async function tkSubmit(){
     toast("Order "+st);loadStatus();loadOrders();tkRefreshBook()}
   catch(e){if(!e.network)TK.last=null;msg.classList.add("neg");msg.textContent=(e.network?"Not confirmed: "+e.message+". The order may have gone through; check Open orders before retrying (a retry of the same order reuses its key).":e.message)}
   finally{btn.disabled=false}}
+
+let MKC={range:"1d",pts:[],seq:0};
+const MKR=[["1h","1H"],["6h","6H"],["1d","1D"],["1w","1W"],["1m","1M"],["max","ALL"]];
+async function mkChart(venue,id,range){
+  const box=$("#mkChart");if(!box)return;MKC.range=range;const seq=++MKC.seq;
+  const bar='<div class="seg" id="mkRange">'+MKR.map(r=>'<button data-v="'+r[0]+'" class="'+(r[0]===range?"on":"")+'">'+r[1]+'</button>').join("")+'</div>';
+  box.innerHTML='<div class="mkhead"><div id="mkNow"></div>'+bar+'</div><div id="mkPlot" class="mkplot"><div class="muted small" style="padding:60px 0;text-align:center">Loading chart…</div></div>';
+  $("#mkRange").addEventListener("click",(e)=>{const b=e.target.closest("button");if(b)mkChart(venue,id,b.dataset.v)});
+  try{const d=await api("/v1/markets/"+enc(id)+"/history?venue="+enc(venue)+"&interval="+enc(range));if(seq!==MKC.seq)return;
+    MKC.pts=(d.points||[]).map(p=>({t:new Date(p.at).getTime(),v:num(p.close)*100})).filter(p=>Number.isFinite(p.t)&&Number.isFinite(p.v));mkDraw()}
+  catch(e){if(seq!==MKC.seq)return;$("#mkPlot").innerHTML='<div class="muted small" style="padding:46px 12px;text-align:center">'+esc(e.message||"Price history is not available for this venue.")+'</div>'}}
+function mkDraw(){
+  const P=MKC.pts,plot=$("#mkPlot");if(!plot)return;if(P.length<2){plot.innerHTML='<div class="muted small" style="padding:46px 12px;text-align:center">Not enough history for this range.</div>';return}
+  const W=Math.max(280,Math.round(plot.clientWidth||640)),H=220,L=6,R=40,T=10,B=22,vs=P.map(p=>p.v),lo=Math.max(0,Math.floor(Math.min(...vs)-2)),hi=Math.min(100,Math.ceil(Math.max(...vs)+2)),t0=P[0].t,t1=P[P.length-1].t;
+  const X=(t)=>L+(t-t0)/Math.max(1,t1-t0)*(W-L-R),Y=(v)=>T+(hi-v)/Math.max(1,hi-lo)*(H-T-B);
+  const line=P.map((p,i)=>(i?"L":"M")+X(p.t).toFixed(1)+" "+Y(p.v).toFixed(1)).join(" "),area=line+" L"+X(t1).toFixed(1)+" "+(H-B)+" L"+X(t0).toFixed(1)+" "+(H-B)+" Z";
+  const ticks=[0,1,2,3].map(i=>lo+(hi-lo)*i/3),fmt=(t)=>new Date(t).toLocaleString("en-GB",{timeZone:"Asia/Dhaka",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+  plot.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" class="mkplotsvg" id="mkSvg">'
+   +ticks.map(v=>'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+Y(v).toFixed(1)+'" y2="'+Y(v).toFixed(1)+'" class="gl"/><text x="'+(W-R+6)+'" y="'+(Y(v)+4).toFixed(1)+'" class="gt">'+Math.round(v)+'%</text>').join("")
+   +'<path d="'+area+'" class="ar"/><path d="'+line+'" class="ln"/><line id="mkX" class="cx" y1="'+T+'" y2="'+(H-B)+'" x1="0" x2="0" style="display:none"/><circle id="mkDot" r="4" class="dt" style="display:none"/></svg><div class="mktip hidden" id="mkTip"></div>';
+  const first=P[0].v,last=P[P.length-1].v,d=last-first;
+  const now=(p,dd)=>'<div class="mknow"><b>'+Math.round(p.v)+'%</b> <span class="muted">chance</span>'+(dd==null?"":' <span class="'+(dd>=0?"pos":"neg")+'">'+(dd>=0?"▲ ":"▼ ")+Math.abs(dd).toFixed(1)+'</span>')+'</div>';
+  $("#mkNow").innerHTML=now(P[P.length-1],d);
+  const svg=$("#mkSvg"),tip=$("#mkTip");
+  const move=(ev)=>{const r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)/r.width*W;let best=P[0],bd=1e18;for(const p of P){const dx=Math.abs(X(p.t)-x);if(dx<bd){bd=dx;best=p}}
+    const cx=X(best.t),cy=Y(best.v),dot=$("#mkDot"),vx=$("#mkX");dot.setAttribute("cx",cx);dot.setAttribute("cy",cy);vx.setAttribute("x1",cx);vx.setAttribute("x2",cx);dot.style.display=vx.style.display="";
+    tip.classList.remove("hidden");tip.textContent=best.v.toFixed(1)+"% · "+fmt(best.t);tip.style.left=Math.min(Math.max(cx/W*100,12),72)+"%";$("#mkNow").innerHTML=now(best,null)};
+  const out=()=>{$("#mkDot").style.display=$("#mkX").style.display="none";tip.classList.add("hidden");$("#mkNow").innerHTML=now(P[P.length-1],d)};
+  svg.addEventListener("pointermove",move);svg.addEventListener("pointerleave",out)}
 let TK_T=[];
 function tkPaint(){
   if(!TK)return;const l=$("#tkLadder");if(l){const {asks,bids}=tkBook();l.innerHTML=tkLadder(bids,asks)}
