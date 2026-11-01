@@ -501,3 +501,14 @@ Claims taken from the docs summary in `docs/live-views/00_CONTEXT.md`, all still
 Checklist for the live run (record answers here): Gamma fields linking sibling events and the related list; team logo
 field name; whether `/events` honours `version`; every `sportsMarketType` seen; max asset ids per market-WS connection;
 PolyBolt auth needs; Limitless history intervals and group behaviour; Kalshi milestone linkage.
+
+
+---
+
+## 8. P5 hardening notes (2026-11-01) - synthetic only
+
+- README previously said Limitless has no price-history endpoint; the venue docs list `GET /markets/{slug}/historical-price`.
+  README now says so, still `[INFERRED]` until `probe_live_shapes.py` runs on a real machine (section 7 checklist).
+- No venue was contacted in P5 (sandbox has no route to them). Every drill uses fakes: silent feed, reconnect storm, a venue
+  429 with `Retry-After`, malformed client frames. Nothing here says how a real venue behaves under rate limiting; the
+  `Retry-After` handling reads `exc.retry_after` or `exc.response.headers["Retry-After"]` and is untested against a real 429.

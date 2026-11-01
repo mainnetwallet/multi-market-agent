@@ -134,3 +134,41 @@ Not done / deviations:
 - `AUTO_REFRESH_MS` untouched (it is the account safety net, not an event poller).
 - PriceButton in `DiscoverScreen.kt` changed from private to internal (reused for the Yes/No buttons).
 Next step: P5 (hardening, load test, docs) - and first the owner builds the Android app once and runs the live probes (`scripts/probe_live_shapes.py`, `scripts/live_hub_check.py`).
+
+
+## Handoff - P5 (hardening, load test, docs)
+Done:
+- Security review of `/v1/stream` and `/v1/event/view` (notes in `SECURITY.md`). Auth, frame size, venue/id allow-list, URL allow-list and
+  error text were already fine. Four real gaps fixed: (1) a client's non-patch frames (errors, snapshots, status) were unbounded
+  -> hard cap of 512 queued frames, over it the client is closed (4408); (2) every uncached subscribe cost the venue a REST lookup with no
+  budget -> 30 lookups/min per socket (`rate_limited`); (3) the per-id lock table grew with every invented id -> released after each lookup;
+  (4) no limit on sockets per account -> 8 per user, close code 4429. Also: stale/live status frames are coalesced per event for slow readers.
+- Venue 429 / failures: the hub refreshed stale events over REST every 2 s whatever the venue answered. Now a failing venue is paused for
+  `Retry-After` (read from `exc.retry_after` or `exc.response.headers`, max 120 s) else 4 s doubling to 30 s; a success clears it.
+- Tests: `tests/test_live_hardening.py` (flood, lookup budget, shared lookups free, lock table, 16 malformed frames, silent feed ->
+  stale -> recovery, reconnect storm with a reading and a never-reading client, slow reader sweep, 429 pause + resume, backoff, socket cap
+  4429, no secrets in error frames). Gate green twice: ruff, format, mypy, pytest.
+- `scripts/live_load_test.py` (in-process, no network). Run here: 200 clients (175 normal, 20 slow, 5 stuck) on 50 events, 3 events each,
+  20 s, ~1530 quotes/s in: 2060 patches/s out (8.9 quotes folded into one patch per subscriber), peak 2192 patches/s vs limit 2340,
+  max 64 frames queued in any client, 5/5 stuck clients evicted (idle limit shortened to 3 s for the test), CPU 24.5% of one core,
+  RSS 126 -> 131 MB and flat after disconnect, hub empty afterwards. Hub-internal latency quote -> client: p50 51 ms, p95 156 ms
+  (bounded by the 250 ms flush). These are sandbox numbers for the hub only: no network, no venue, one Python process.
+- REST calls per minute, computed from the timers in `index.html` (not measured): before, one open sport game 5 s poll + 30 s chart = 14/min;
+  a multi/bracket event 10 s + 45 s = 7.3/min; crypto Up/Down 2 s poll = 30/min; Discover sport cards 8 s tick = 7.5/min per batch;
+  an open trade ticket adds 30/min (`tkPoll`, still there). After, an open event is 1 WebSocket snapshot + 1 history request on the server for
+  everyone following it, 0 REST/min while the feed delivers; REST fallback never faster than 5 s per client (PWA/Android) and the hub's own
+  stale refresh is 2 s, now with backoff. Ticket ladder and Discover list cards still poll (see P3 handoff).
+- Docs: README (venue table row for history, live-stream section with feed table, limits and close codes, `LIVE_VIEWS_ENABLED`),
+  `DOCS_FINDINGS.md` section 8, `SECURITY.md` live-routes section.
+Not done / gaps:
+- Nothing was run against a real venue or a real browser (`LIVE_VERIFIED=false`). Measured latency venue event -> client paint does not
+  exist; only the hub-internal figure above. The 429 handling is tested with a fake exception, not a real 429.
+- Android UI layer (P4) is still not compiled with Gradle.
+- `/v1/event/view` has no per-user rate limit of its own.
+- `tests/test_live_hub_venues.py` (multi-venue hub tests) is still unwritten.
+- Socket release after a client leaves was seen working in isolation, but the TestClient did not reliably show it in the full suite, so
+  the test only asserts the 4429 rejection.
+Owner must still run once: `gradle -p android testDebugUnitTest assembleDebug`; `scripts/probe_live_shapes.py` and `scripts/live_hub_check.py`
+on a real machine; open a soccer game, a bracket and an Up/Down on the deployed PWA and watch the indicator; `scripts/live_load_test.py`
+on the production-size host. Also revoke the GitHub token pasted in chat.
+Next step: owner runs the items above and reports back; then fix what the real build/probes show. STOP.

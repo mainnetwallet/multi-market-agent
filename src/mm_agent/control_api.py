@@ -1469,6 +1469,9 @@ def create_app(
         except Exception:
             return
 
+    stream_conns: dict[str, int] = {}
+    MAX_STREAMS_PER_USER = 8
+
     @app.websocket("/v1/stream")
     async def stream(ws: WebSocket) -> None:
         """Push updates for event views. Same auth as ``/v1/ws``. Client frames: ``{"op": "subscribe" |
@@ -1487,7 +1490,15 @@ def create_app(
         if not settings.live_views_enabled:
             await ws.close(code=4404)
             return
-        await ws.accept()
+        if stream_conns.get(user, 0) >= MAX_STREAMS_PER_USER:
+            await ws.close(code=4429)  # too many open sockets for this account
+            return
+        stream_conns[user] = stream_conns.get(user, 0) + 1
+        try:
+            await ws.accept()
+        except BaseException:
+            stream_conns[user] -= 1
+            raise
         if own_hub:
             live_hub.start()
         sink = live_hub.connect(user)
@@ -1515,6 +1526,9 @@ def create_app(
             live_hub.disconnect(sink)
             sender.cancel()
             await asyncio.gather(sender, return_exceptions=True)
+            stream_conns[user] -= 1
+            if stream_conns[user] <= 0:
+                stream_conns.pop(user, None)
 
     @app.head("/", include_in_schema=False)
     async def index_head() -> Response:

@@ -72,12 +72,22 @@ def _iso(ts: float) -> str:
 class ClientSink:
     """One connected client's outgoing queue. Patches are bounded (oldest dropped); snapshots are kept."""
 
-    def __init__(self, client_id: str, *, max_patches: int = 64, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        client_id: str,
+        *,
+        max_patches: int = 64,
+        max_frames: int = 512,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.client_id = client_id
         self.keys: set[Key] = set()
         self.dropped = 0
         self.closed = False
+        self.overflowed = False
+        self.loads: deque[float] = deque()  # when this client last made the server look an event up
         self._max = max_patches
+        self._max_frames = max_frames
         self._clock = clock
         self._frames: deque[dict[str, Any]] = deque()
         self._event = asyncio.Event()
@@ -86,12 +96,15 @@ class ClientSink:
     def put(self, frame: dict[str, Any]) -> None:
         if self.closed:
             return
-        if frame["type"] == "snapshot":  # a snapshot supersedes older queued patches of the same event
+        if frame["type"] in ("snapshot", "status") and "venue" in frame:
+            # a snapshot supersedes older queued patches of that event; a status only supersedes an older status,
+            # so a stale/live flap does not pile up frames for a slow reader
+            gone = {"patch"} if frame["type"] == "snapshot" else {"status"}
             before = len(self._frames)
             self._frames = deque(
                 f
                 for f in self._frames
-                if not (f["type"] == "patch" and (f["venue"], f["id"]) == (frame["venue"], frame["id"]))
+                if not (f["type"] in gone and (f.get("venue"), f.get("id")) == (frame["venue"], frame["id"]))
             )
             self.dropped += before - len(self._frames)
         elif frame["type"] == "patch":
@@ -102,6 +115,11 @@ class ClientSink:
                         self.dropped += 1
                         break
         self._frames.append(frame)
+        if len(self._frames) > self._max_frames:  # snapshots/errors are not coalesced: cap them too
+            self.dropped += len(self._frames)
+            self._frames.clear()
+            self.overflowed = True
+            self.closed = True
         self._event.set()
 
     async def get(self) -> dict[str, Any] | None:
@@ -165,6 +183,7 @@ class LiveHub:
         poll_interval: float = 5.0,
         rest_per_tick: int = 10,
         max_patches: int = 64,
+        max_loads_per_minute: int = 30,
     ) -> None:
         self._load_view = load_view
         self._history = history
@@ -180,6 +199,7 @@ class LiveHub:
         self.poll_interval = poll_interval
         self.rest_per_tick = rest_per_tick
         self.max_patches = max_patches
+        self.max_loads = max_loads_per_minute
         self.market: Any = None  # PolymarketMarketFeed
         self.sports: Any = None  # PolymarketSportsFeed
         self.crypto: Any = None  # CryptoPrices
@@ -191,7 +211,8 @@ class LiveHub:
         self._alias: dict[Key, Key] = {}
         self._asset_index: dict[Key, set[Key]] = {}  # (venue, asset) -> the events that follow it
         self._clients: set[ClientSink] = set()
-        self._locks: dict[Key, asyncio.Lock] = {}
+        self._rest_block: dict[str, tuple[float, int]] = {}  # venue -> (no REST refresh before, failures in a row)
+        self._locks: dict[Key, tuple[asyncio.Lock, int]] = {}  # lock + number of tasks using it
         self._tasks: list[asyncio.Task[None]] = []
         self.dropped_total = 0
 
@@ -301,6 +322,13 @@ class LiveHub:
             return None
         if len(sink.keys) >= self.max_subs:
             return self._error(sink, "limit", f"at most {self.max_subs} subscriptions per connection", venue, ident)
+        if key not in self._states:  # a lookup costs the venue a REST call: budget it per client
+            now = self._clock()
+            while sink.loads and now - sink.loads[0] > 60.0:
+                sink.loads.popleft()
+            if len(sink.loads) >= self.max_loads:
+                return self._error(sink, "rate_limited", "too many event lookups, slow down", venue, ident)
+            sink.loads.append(now)
         try:
             state = await self._ensure_state(venue, ident)
         except _Limit:
@@ -327,24 +355,32 @@ class LiveHub:
         key = self._alias.get((venue, ident), (venue, ident))
         if key in self._states:
             return self._states[key]
-        lock = self._locks.setdefault((venue, ident), asyncio.Lock())
-        async with lock:
-            key = self._alias.get((venue, ident), (venue, ident))
-            if key in self._states:
-                return self._states[key]
-            view = await self._load_view(venue, ident)
-            if not view:
-                return None
-            canonical: Key = (venue, str(view.get("event_id") or ident))
-            self._alias[(venue, ident)] = canonical
-            if canonical in self._states:
-                return self._states[canonical]
-            if len(self._states) >= self.max_events:
-                raise _Limit
-            state = self._new_state(canonical, ident, view)
-            self._states[canonical] = state
-            self._watch(state)
-            return state
+        lock, users = self._locks.get((venue, ident), (asyncio.Lock(), 0))
+        self._locks[(venue, ident)] = (lock, users + 1)
+        try:
+            async with lock:
+                key = self._alias.get((venue, ident), (venue, ident))
+                if key in self._states:
+                    return self._states[key]
+                view = await self._load_view(venue, ident)
+                if not view:
+                    return None
+                canonical: Key = (venue, str(view.get("event_id") or ident))
+                self._alias[(venue, ident)] = canonical
+                if canonical in self._states:
+                    return self._states[canonical]
+                if len(self._states) >= self.max_events:
+                    raise _Limit
+                state = self._new_state(canonical, ident, view)
+                self._states[canonical] = state
+                self._watch(state)
+                return state
+        finally:  # the lock table must not grow with every id a client invents
+            lock, users = self._locks[(venue, ident)]
+            if users <= 1:
+                del self._locks[(venue, ident)]
+            else:
+                self._locks[(venue, ident)] = (lock, users - 1)
 
     def _new_state(self, key: Key, ident: str, view: dict[str, Any]) -> _State:
         rows: dict[str, dict[str, Any]] = {}
@@ -765,6 +801,8 @@ class LiveHub:
         due: list[_State] = []
         for state in self._states.values():
             every = self.rest_interval if state.stale else self.poll_interval
+            if self._rest_block.get(state.key[0], (0.0, 0))[0] > now:
+                continue  # the venue said slow down (429 / errors): leave it alone until the pause is over
             if (state.stale or not state.uses_feed) and now - state.last_rest >= every:
                 due.append(state)
         due.sort(key=lambda s: s.last_rest)
@@ -777,8 +815,13 @@ class LiveHub:
         try:
             view = await self._load_view(state.key[0], state.ident)
         except Exception as exc:
-            logger.info("live_rest_refresh_failed", venue=state.key[0], error=type(exc).__name__)
+            venue = state.key[0]
+            failures = self._rest_block.get(venue, (0.0, 0))[1] + 1
+            pause = _retry_after(exc) or min(30.0, 2.0 * 2 ** min(failures, 5))
+            self._rest_block[venue] = (self._clock() + pause, failures)
+            logger.info("live_rest_refresh_failed", venue=venue, error=type(exc).__name__, pause_s=round(pause, 1))
             return
+        self._rest_block.pop(state.key[0], None)
         if not view or state.key not in self._states:
             return
         for section in view.get("sections") or []:
@@ -852,3 +895,17 @@ class LiveHub:
 
 class _Limit(Exception):
     pass
+
+
+def _retry_after(exc: BaseException) -> float | None:
+    """Seconds the venue asked us to wait (``Retry-After`` on a 429/503), capped at two minutes; None if unknown."""
+
+    raw: Any = getattr(exc, "retry_after", None)
+    if raw is None:
+        headers = getattr(getattr(exc, "response", None), "headers", None)
+        raw = headers.get("Retry-After") if headers is not None else None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return min(120.0, seconds) if seconds > 0 else None
