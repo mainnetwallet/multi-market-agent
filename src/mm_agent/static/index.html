@@ -1,56 +1,162 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b0f14">
+<meta name="theme-color" content="#07090d">
+<meta name="color-scheme" content="dark light">
 <meta name="description" content="Human-supervised prediction market agent">
 <title>MM Agent</title>
 <link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<script>try{var t=localStorage.getItem("mm-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <style>
-:root{--bg:#0b0f14;--panel:#111821;--panel2:#0e141c;--line:#223040;--text:#e8eef6;--muted:#8ba0b5;--accent:#59d3a0;--accent2:#7aa7ff;--danger:#ff6b73;--warn:#f6c85f;--live:#ff4d5e;--radius:14px;--nav:64px}
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-a{color:var(--accent2)}button,input,select,textarea{font:inherit}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
-.app{display:flex;min-height:100vh}.sidebar{width:230px;flex:0 0 230px;background:var(--panel2);border-right:1px solid var(--line);padding:18px 12px;position:sticky;top:0;height:100vh}
-.brand{font-weight:800;letter-spacing:.5px;font-size:17px;padding:4px 10px}.sub{color:var(--muted);font-size:11px;padding:0 10px 16px}
-.navbtn{display:flex;gap:10px;align-items:center;width:100%;padding:11px 12px;margin:2px 0;border:0;border-radius:10px;background:transparent;color:var(--muted);text-align:left;cursor:pointer}
-.navbtn.active,.navbtn:hover{background:#182230;color:var(--text)}.navbtn .ico{width:20px;text-align:center}
-.main{flex:1;min-width:0}.header{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 18px;background:rgba(11,15,20,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
-.badge{font-weight:800;font-size:12px;letter-spacing:.7px;padding:7px 11px;border-radius:999px;border:1px solid var(--line);background:#101a14;color:var(--accent);white-space:nowrap}
-.badge.live{color:#fff;background:var(--live);border-color:var(--live);animation:pulse 2s infinite}@keyframes pulse{50%{box-shadow:0 0 0 5px rgba(255,77,94,.16)}}
-.content{padding:16px;max-width:1180px;margin:0 auto}.view{display:none}.view.active{display:block}
-h1{font-size:22px;margin:0 0 12px}h2{font-size:16px;margin:20px 0 10px}h3{font-size:14px;margin:14px 0 8px}
-.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;min-width:0}.span4{grid-column:span 4}.span6{grid-column:span 6}.span8{grid-column:span 8}.span12{grid-column:span 12}
-.k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.8px}.v{font-size:19px;font-weight:700;margin-top:3px;overflow-wrap:anywhere}
-.btn{border:1px solid var(--line);background:#18212c;color:var(--text);padding:9px 13px;border-radius:10px;cursor:pointer}.btn:hover{border-color:#3a536b}.btn.primary{background:var(--accent);color:#062016;border-color:var(--accent);font-weight:700}.btn.buy{background:#173527;border-color:#2d6f52;color:#9ff0c6}.btn.sell{background:#35191c;border-color:#6f2d34;color:#ffb3b8}.btn.danger{background:var(--danger);border-color:var(--danger);color:#210709;font-weight:800}.btn.small{padding:5px 9px;font-size:12px}.btn:disabled{opacity:.45;cursor:not-allowed}
-input,select,textarea{background:#0b121a;border:1px solid var(--line);color:var(--text);border-radius:9px;padding:9px 11px;width:100%}input:focus,textarea:focus,select:focus{outline:2px solid #28445e}
+:root{--bg:#07090d;--bg2:#0b1016;--card:#0f151d;--card2:#141c27;--line:#1b2634;--line2:#2a3b50;--text:#edf2f8;--muted:#8697ad;--accent:#34d399;--accent-ink:#04231a;--accent-soft:rgba(52,211,153,.12);--blue:#6ea3ff;--danger:#ff5d6c;--danger-soft:rgba(255,93,108,.12);--warn:#f5c451;--warn-soft:rgba(245,196,81,.12);--live:#ff4d5e;--radius:16px;--nav:68px;--shadow:0 10px 34px rgba(0,0,0,.4);color-scheme:dark}
+:root[data-theme=light]{--bg:#f3f5f9;--bg2:#fff;--card:#fff;--card2:#f4f6fa;--line:#e3e8ef;--line2:#cbd5e1;--text:#0d1520;--muted:#5b6b80;--accent:#0f9d6c;--accent-ink:#fff;--accent-soft:rgba(15,157,108,.1);--blue:#2563eb;--danger:#dc3545;--danger-soft:rgba(220,53,69,.09);--warn:#a86a00;--warn-soft:rgba(168,106,0,.1);--shadow:0 10px 34px rgba(20,35,60,.12);color-scheme:light}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+a{color:var(--blue)}button,input,select,textarea{font:inherit;color:inherit}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{display:flex;min-height:100vh;min-height:100dvh}
+.sidebar{width:236px;flex:0 0 236px;background:var(--bg2);border-right:1px solid var(--line);padding:20px 14px;position:sticky;top:0;height:100vh;height:100dvh;display:flex;flex-direction:column;gap:2px}
+.brandrow{display:flex;align-items:center;gap:11px;padding:2px 8px 20px}.logo{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,var(--accent),var(--blue));display:grid;place-items:center;color:#041018;flex:none}.logo svg.i{width:20px;height:20px;stroke-width:2.2}
+.brand{font-weight:800;font-size:16px;line-height:1.15;letter-spacing:.1px}.sub{color:var(--muted);font-size:11px;margin-top:2px}
+.navbtn{display:flex;gap:12px;align-items:center;width:100%;padding:11px 12px;border:0;border-radius:12px;background:transparent;color:var(--muted);text-align:left;cursor:pointer;font-weight:600;transition:background .15s,color .15s}
+.navbtn:hover{background:var(--card2);color:var(--text)}.navbtn.active{background:var(--accent-soft);color:var(--accent)}
+.sidefoot{margin-top:auto;padding:14px 8px 0;border-top:1px solid var(--line)}.sidefoot .vrow{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);padding:2px 0}
+.main{flex:1;min-width:0}
+.header{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:calc(10px + env(safe-area-inset-top,0px)) 24px 10px;background:color-mix(in srgb,var(--bg) 84%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.badge{display:inline-flex;align-items:center;gap:8px;font-weight:800;font-size:12px;letter-spacing:.6px;padding:7px 12px;border-radius:999px;border:1px solid var(--line2);background:var(--card);color:var(--muted);white-space:nowrap}
+.badge::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
+.badge.live{color:#fff;background:var(--live);border-color:var(--live);animation:pulse 2s infinite}@keyframes pulse{50%{box-shadow:0 0 0 6px rgba(255,77,94,.18)}}
+.iconbtn{width:38px;height:38px;display:grid;place-items:center;border-radius:11px;border:1px solid var(--line);background:var(--card);color:var(--muted);cursor:pointer;transition:all .15s}.iconbtn:hover{color:var(--text);border-color:var(--line2)}
+.content{padding:24px;max-width:1120px;margin:0 auto}.view{display:none}.view.active{display:block;animation:fade .2s ease}@keyframes fade{from{opacity:0;transform:translateY(4px)}}
+h1{font-size:25px;font-weight:800;letter-spacing:-.02em;margin:4px 0 18px}h2{font-size:15px;font-weight:700;margin:0 0 10px}h3{font-size:12px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.span4{grid-column:span 4}.span6{grid-column:span 6}.span8{grid-column:span 8}.span12{grid-column:span 12}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;min-width:0}
+.tile .v{font-size:27px;font-weight:800;margin-top:4px;letter-spacing:-.02em;text-transform:capitalize}
+.k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600}.v{font-size:19px;font-weight:700;margin-top:3px;overflow-wrap:anywhere}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--line2);background:var(--card2);color:var(--text);padding:10px 15px;border-radius:12px;cursor:pointer;font-weight:600;transition:all .15s}
+.btn:hover{border-color:var(--muted)}.btn:active{transform:scale(.98)}.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}.btn.primary:hover{filter:brightness(1.07)}
+.btn.buy{background:var(--accent-soft);border-color:transparent;color:var(--accent)}.btn.sell{background:var(--danger-soft);border-color:transparent;color:var(--danger)}.btn.danger{background:var(--danger);border-color:var(--danger);color:#fff;font-weight:800}
+.btn.small{padding:6px 11px;font-size:12px;border-radius:10px}.btn:disabled{opacity:.45;cursor:not-allowed}
+input,select,textarea{background:var(--bg2);border:1px solid var(--line2);border-radius:12px;padding:10px 13px;width:100%;transition:border-color .15s,box-shadow .15s}
+input:focus,textarea:focus,select:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}input::placeholder{color:var(--muted)}
+.search{position:relative;flex:1;min-width:180px}.search svg.i{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:17px;height:17px;color:var(--muted)}.search input{padding-left:38px}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>*{margin:0}.grow{flex:1;min-width:150px}
 .muted{color:var(--muted)}.small{font-size:12px}.tiny{font-size:11px}.pos{color:var(--accent)}.neg{color:var(--danger)}.warn{color:var(--warn)}
-.list{display:flex;flex-direction:column;gap:8px}.item{border:1px solid var(--line);background:var(--panel2);border-radius:11px;padding:11px}
-.split{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.tr{overflow-wrap:anywhere}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 5px;border-bottom:1px solid #1a2633;font-size:12px}th{color:var(--muted);font-weight:600}
-.pill{display:inline-block;padding:2px 7px;border-radius:999px;background:#1a2633;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px}.pill.good{color:var(--accent);background:#10261d}.pill.bad{color:var(--danger);background:#2b1215}.pill.warn{color:var(--warn);background:#2b2412}
-.buygrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.pricebox{border:1px solid var(--line);border-radius:10px;padding:10px}.pricebox .big{font-size:24px;font-weight:800}
-.toast{position:fixed;bottom:86px;left:50%;transform:translateX(-50%);z-index:60;background:#1b2836;border:1px solid #33485c;padding:10px 14px;border-radius:10px;max-width:92vw;display:none;box-shadow:0 10px 40px #0008}.toast.show{display:block}
-.login{position:fixed;inset:0;background:radial-gradient(circle at 50% 20%,#122333,#080b0f 60%);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}.login .card{width:100%;max-width:380px}.hidden{display:none!important}
-.chatlog{height:calc(100vh - 250px);min-height:280px;overflow:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px}.msg{padding:10px 12px;border-radius:11px;max-width:88%;white-space:pre-wrap;overflow-wrap:anywhere}.msg.user{align-self:flex-end;background:#1b2d42}.msg.bot{align-self:flex-start;background:#121d27;border:1px solid var(--line)}
-.bottomnav{display:none}.feedbox{font:11px ui-monospace,Consolas,monospace;white-space:pre-wrap;color:var(--muted);max-height:230px;overflow:auto}
-.sectionhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:14px 0 8px}.sectionhead h2{margin:0}
-.bar{height:6px;background:#172330;border-radius:999px;overflow:hidden}.bar>span{display:block;height:100%;background:var(--accent2)}
-@media(max-width:900px){.sidebar{display:none}.content{padding:12px 12px calc(var(--nav) + 20px)}.span4,.span6,.span8{grid-column:span 12}.bottomnav{display:flex;position:fixed;bottom:0;left:0;right:0;height:var(--nav);background:#0e151e;border-top:1px solid var(--line);z-index:40;padding-bottom:env(safe-area-inset-bottom)}.bottomnav button{flex:1;background:transparent;border:0;color:var(--muted);font-size:10px;display:flex;flex-direction:column;gap:2px;align-items:center;justify-content:center}.bottomnav button.active{color:var(--accent)}.bottomnav .ico{font-size:18px}.toast{bottom:calc(var(--nav) + 14px)}.chatlog{height:calc(100vh - 300px)}.brand{padding-left:4px}}
-@media(max-width:480px){h1{font-size:20px}.header{padding:10px 12px}.v{font-size:17px}}
+.list{display:flex;flex-direction:column;gap:10px}.list>.muted{padding:26px 14px;text-align:center;border:1px dashed var(--line2);border-radius:var(--radius);font-size:13px}
+.item{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:14px;transition:all .15s}.item[data-market]{cursor:pointer}.item[data-market]:hover{border-color:var(--line2);background:var(--card2);transform:translateY(-1px)}
+.split{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.tr{overflow-wrap:anywhere}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 4px;border-bottom:1px solid var(--line);font-size:12px}th{color:var(--muted);font-weight:600}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;background:var(--card2);border:1px solid var(--line);color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;vertical-align:middle}
+.pill.good{color:var(--accent);background:var(--accent-soft);border-color:transparent}.pill.bad{color:var(--danger);background:var(--danger-soft);border-color:transparent}.pill.warn{color:var(--warn);background:var(--warn-soft);border-color:transparent}
+.buygrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.pricebox{border:1px solid var(--line);border-radius:14px;padding:14px;background:var(--card2)}.pricebox .big{font-size:28px;font-weight:800;letter-spacing:-.02em}
+.pricebox.yes{background:var(--accent-soft);border-color:transparent}.pricebox.yes .big{color:var(--accent)}.pricebox.no{background:var(--danger-soft);border-color:transparent}.pricebox.no .big{color:var(--danger)}
+.toast{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);z-index:60;background:var(--text);color:var(--bg);font-weight:600;padding:11px 16px;border-radius:12px;max-width:92vw;display:none;box-shadow:var(--shadow)}.toast.show{display:block;animation:fade .2s ease}
+.login{position:fixed;inset:0;background:radial-gradient(900px 500px at 50% -10%,color-mix(in srgb,var(--accent) 16%,transparent),transparent),var(--bg);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}
+.login .card{width:100%;max-width:392px;padding:26px;box-shadow:var(--shadow)}.login .brandrow{padding-bottom:16px}.hidden{display:none!important}
+.chatcard{display:flex;flex-direction:column;padding:14px}.chatlog{height:calc(100dvh - 330px);min-height:280px;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:2px 4px 8px}
+.msg{padding:10px 14px;border-radius:16px;max-width:86%;white-space:pre-wrap;overflow-wrap:anywhere}.msg.user{align-self:flex-end;background:var(--accent);color:var(--accent-ink);border-bottom-right-radius:5px}.msg.bot{align-self:flex-start;background:var(--card2);border:1px solid var(--line);border-bottom-left-radius:5px}
+.msg.typing{color:var(--muted);animation:blink 1.1s infinite}@keyframes blink{50%{opacity:.4}}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 2px}.chip{border:1px solid var(--line2);background:transparent;color:var(--muted);padding:5px 11px;border-radius:999px;font-size:12px;cursor:pointer}.chip:hover{color:var(--text);border-color:var(--muted)}
+.composer{display:flex;gap:8px;margin-top:10px}.composer .btn{padding:10px 14px}
+.bottomnav{display:none}.feedbox{font:11px ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;color:var(--muted);max-height:240px;overflow:auto;margin-top:10px}
+details>summary{cursor:pointer;font-weight:700;font-size:15px;list-style:none;display:flex;justify-content:space-between;align-items:center}details>summary::-webkit-details-marker{display:none}details>summary::after{content:"+";color:var(--muted);font-size:18px}details[open]>summary::after{content:"–"}
+.sectionhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 0 12px}.sectionhead h2{margin:0}
+.bar{height:6px;background:var(--line);border-radius:999px;overflow:hidden}.bar>span{display:block;height:100%;background:var(--blue)}
+@media(max-width:900px){.sidebar{display:none}.header{padding:calc(10px + env(safe-area-inset-top,0px)) 14px 10px}.content{padding:14px 14px calc(var(--nav) + 28px)}.span4,.span6,.span8{grid-column:span 12}.grid{gap:12px}
+.bottomnav{display:flex;position:fixed;bottom:0;left:0;right:0;height:calc(var(--nav) + env(safe-area-inset-bottom,0px));background:color-mix(in srgb,var(--bg2) 92%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top:1px solid var(--line);z-index:40;padding:6px 6px env(safe-area-inset-bottom,0px)}
+.bottomnav button{flex:1;background:transparent;border:0;color:var(--muted);font-size:10.5px;font-weight:600;display:flex;flex-direction:column;gap:3px;align-items:center;justify-content:center;border-radius:12px;cursor:pointer}.bottomnav button.active{color:var(--accent);background:var(--accent-soft)}
+.toast{bottom:calc(var(--nav) + 18px + env(safe-area-inset-bottom,0px))}.chatlog{height:calc(100dvh - 360px)}.tile{display:flex;justify-content:space-between;align-items:center;gap:10px}.tile .v{font-size:23px}}
+@media(max-width:480px){h1{font-size:22px}.card{padding:15px}.buygrid{gap:10px}.btn.small{min-height:36px}.msg{max-width:92%}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+/* ---- v5: Discover, trade ticket, wallet, chat history, sheets ---- */
+.col{display:flex;flex-direction:column;gap:10px}.center{justify-content:center}.wide{width:100%}
+.seg{display:inline-flex;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:3px;gap:2px}
+.seg button{border:0;background:transparent;color:var(--muted);padding:7px 14px;border-radius:9px;font-weight:700;cursor:pointer}
+.seg button.on{background:var(--card);color:var(--text);box-shadow:0 0 0 1px var(--line2)}
+.seg.wide{display:flex}.seg.wide button{flex:1}
+.tabbar{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;margin-top:10px;scrollbar-width:none;-webkit-overflow-scrolling:touch}.tabbar::-webkit-scrollbar{display:none}
+.tab{flex:none;border:1px solid var(--line2);background:transparent;color:var(--muted);padding:6px 13px;border-radius:999px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap}
+.tab:hover{color:var(--text)}.tab.on{background:var(--text);color:var(--bg);border-color:var(--text)}.tab.hl{color:var(--danger);border-color:var(--danger)}.tab.on.hl{color:#fff;background:var(--danger)}.tab.sep{margin-left:10px}.tab:disabled{opacity:.4;cursor:not-allowed}
+.tabbar.sub{margin-top:0}.tabbar.sub .tab{padding:4px 11px;font-size:12px}.tabbar.sub .tab.on{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.dgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;align-items:start}
+.dcard{display:flex;flex-direction:column;gap:10px}.dcard .tags{display:flex;gap:6px;flex-wrap:wrap}.dcard .tags:empty{display:none}
+.mrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:8px;border-top:1px solid var(--line)}.mrow:first-of-type{border-top:0;padding-top:0}
+.mlabel{min-width:0;flex:1;cursor:pointer;overflow-wrap:anywhere;font-weight:600}.mlabel small{display:block;font-weight:500;color:var(--muted);font-size:11px}
+.mbtns{display:flex;gap:6px;flex:none}
+.qbtn{border:0;border-radius:10px;padding:8px 11px;min-width:84px;font-weight:700;cursor:pointer;font-size:13px;transition:filter .15s,transform .1s}.qbtn:hover{filter:brightness(1.12)}.qbtn:active{transform:scale(.97)}
+.qbtn.yes{background:var(--accent-soft);color:var(--accent)}.qbtn.no{background:var(--danger-soft);color:var(--danger)}
+.sentinel{height:1px}
+#marketDetail:not(.hidden){position:fixed;inset:0;z-index:70;overflow:auto;-webkit-overflow-scrolling:touch;background:color-mix(in srgb,var(--bg) 78%,transparent);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:calc(12px + env(safe-area-inset-top,0px)) 12px calc(24px + env(safe-area-inset-bottom,0px))}
+#marketDetail:not(.hidden)>.card{max-width:780px;margin:0 auto!important;box-shadow:var(--shadow)}
+.ticket{border-color:var(--line2)}.ticket .pricebox{text-align:left;cursor:pointer;width:100%;font:inherit;color:inherit}
+.pricebox.sel.yes{box-shadow:0 0 0 2px var(--accent)}.pricebox.sel.no{box-shadow:0 0 0 2px var(--danger)}
+.field{display:flex;flex-direction:column;gap:5px;flex:1;min-width:120px}.field>label,.lbl2{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.07em}
+.field .inwrap{position:relative}.field .inwrap .sfx{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:12px;pointer-events:none}
+.sumbox{background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;margin:12px 0}
+.kv>div{display:flex;justify-content:space-between;gap:14px;padding:5px 0;border-bottom:1px solid var(--line);font-size:13px}.kv>div:last-child{border-bottom:0}.kv b{text-align:right;overflow-wrap:anywhere}
+.ladder{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px}.ladder table td{cursor:pointer}.ladder tr:hover td{background:var(--card2)}
+.ck{display:flex;align-items:center;gap:8px;font-size:13px}.ck input{width:auto}
+.holdbtn{position:relative;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;padding:13px 16px;font-weight:800}
+.holdbtn .fill{position:absolute;inset:0 auto 0 0;width:0;background:rgba(255,255,255,.28);pointer-events:none;transition:width var(--hold,2s) linear}
+.holdbtn.holding .fill{width:100%}.holdbtn .lbl{position:relative}
+@media(prefers-reduced-motion:reduce){.holdbtn .fill{transition:width var(--hold,2s) linear!important}}
+.overlay{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;animation:fade .15s ease}
+.sheetbox{width:100%;max-width:460px;max-height:92dvh;overflow:auto;background:var(--card);border:1px solid var(--line2);border-radius:20px 20px 0 0;padding:20px 18px calc(20px + env(safe-area-inset-bottom,0px));box-shadow:var(--shadow)}
+.sheetbox h2{font-size:17px;margin-bottom:12px}
+@media(min-width:600px){.overlay{align-items:center}.sheetbox{border-radius:20px}}
+.toast{z-index:120}
+.balgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.bal .big{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:2px 0 8px}
+.addr{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;word-break:break-all;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:11px 12px}
+.notice{border:1px solid var(--line2);background:var(--warn-soft);color:var(--warn);border-radius:14px;padding:12px 14px;font-size:13px;margin-bottom:14px}
+.chip.on{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.chatwrap{display:block}
+.chathead{display:flex;align-items:center;gap:8px;margin-bottom:10px}.chathead .ttl{flex:1;min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chathist{position:fixed;top:0;bottom:0;left:0;width:min(88vw,330px);transform:translateX(-104%);transition:transform .2s ease;z-index:80;background:var(--bg2);border-right:1px solid var(--line2);padding:calc(14px + env(safe-area-inset-top,0px)) 12px calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:10px;box-shadow:var(--shadow)}
+.chathist.open{transform:none}
+.scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:75}.scrim.show{display:block}
+.histlist{flex:1;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.citem{position:relative;border:1px solid var(--line);border-radius:12px;padding:10px 64px 10px 12px;cursor:pointer;background:var(--card)}.citem:hover{border-color:var(--line2)}.citem.on{background:var(--accent-soft);border-color:transparent}
+.citem .ctitle{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.citem .cact{position:absolute;right:6px;top:6px;display:flex;gap:2px}.cact button{border:0;background:transparent;color:var(--muted);width:28px;height:28px;border-radius:8px;display:grid;place-items:center;cursor:pointer}.cact button:hover{color:var(--text);background:var(--card2)}.cact svg.i{width:15px;height:15px}
+.histonly{display:inline-grid}
+@media(min-width:1000px){.chatwrap{display:grid;grid-template-columns:272px minmax(0,1fr);gap:14px;align-items:start}.chathist{position:sticky;top:78px;transform:none;width:auto;max-height:calc(100dvh - 104px);height:calc(100dvh - 104px);border:1px solid var(--line);border-radius:var(--radius);box-shadow:none;background:var(--card);padding:14px 12px;z-index:1}.histonly{display:none}.scrim{display:none!important}.chatlog{height:calc(100dvh - 330px)}}
+.chatlog{height:calc(100dvh - 392px)}
+@media(max-width:900px){.chatlog{height:calc(100dvh - 420px)}.bottomnav button{font-size:10px;padding:0 1px}.dgrid{grid-template-columns:1fr}.mbtns .qbtn{min-width:72px;padding:8px 9px}}
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="i-brief" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
+<symbol id="i-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v18a9 9 0 0 0 0-18z" fill="currentColor"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></symbol>
+<symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+<symbol id="i-wallet" viewBox="0 0 24 24"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></symbol>
+<symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></symbol>
+<symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+</defs></svg>
+
 <div class="login" id="loginScreen">
   <div class="card">
-    <div class="brand">Multi-Market Agent</div><div class="sub">Polymarket · Kalshi · Limitless</div>
+    <div class="brandrow"><div class="logo"><svg class="i"><use href="#i-pulse"/></svg></div><div><div class="brand">Multi-Market Agent</div><div class="sub">Polymarket · Kalshi · Limitless</div></div></div>
     <div id="loginError" class="small neg"></div>
-    <form id="loginForm" style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
+    <form id="loginForm" style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
       <input id="username" autocomplete="username" placeholder="Admin username" required>
       <input id="password" type="password" autocomplete="current-password" placeholder="Admin password" required>
-      <button class="btn primary" type="submit">Sign in</button>
+      <button class="btn primary" type="submit" style="padding:12px">Sign in</button>
       <div class="tiny muted">Session is an HttpOnly signed cookie. Every order is real money.</div>
     </form>
   </div>
@@ -58,72 +164,121 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 5px;
 
 <div class="app hidden" id="app">
   <aside class="sidebar">
-    <div class="brand">MM Agent</div><div class="sub">human-supervised</div>
-    <button class="navbtn active" data-view="home"><span class="ico">◉</span>Home</button>
-    <button class="navbtn" data-view="markets"><span class="ico">▦</span>Markets</button>
-    <button class="navbtn" data-view="chat"><span class="ico">⌁</span>Chat</button>
-    <button class="navbtn" data-view="positions"><span class="ico">▤</span>Positions</button>
-    <button class="navbtn" data-view="settings"><span class="ico">⚙</span>Settings</button>
-    <div style="margin-top:24px" class="tiny muted">Times shown in Asia/Dhaka (UTC+6).</div>
-    <div class="tiny muted" id="sideVenues" style="margin-top:12px"></div>
+    <div class="brandrow"><div class="logo"><svg class="i"><use href="#i-pulse"/></svg></div><div><div class="brand">MM Agent</div><div class="sub">human-supervised</div></div></div>
+    <button class="navbtn active" data-view="home"><svg class="i"><use href="#i-home"/></svg>Home</button>
+    <button class="navbtn" data-view="markets"><svg class="i"><use href="#i-chart"/></svg>Markets</button>
+    <button class="navbtn" data-view="chat"><svg class="i"><use href="#i-chat"/></svg>Chat</button>
+    <button class="navbtn" data-view="positions"><svg class="i"><use href="#i-brief"/></svg>Positions</button>
+    <button class="navbtn" data-view="wallet"><svg class="i"><use href="#i-wallet"/></svg>Wallet</button>
+    <button class="navbtn" data-view="settings"><svg class="i"><use href="#i-sliders"/></svg>Settings</button>
+    <div class="sidefoot"><div class="k" style="margin-bottom:6px">Venues</div><div id="sideVenues"></div><div class="tiny muted" style="margin-top:10px">Times in Asia/Dhaka (UTC+6)</div></div>
   </aside>
   <main class="main">
     <header class="header">
       <div class="badge" id="badge">NO VENUE READY</div>
-      <div class="row">
+      <div class="row" style="flex-wrap:nowrap">
         <span class="pill" id="pausedPill">RUNNING</span>
-        <button class="btn small" id="refreshBtn">Refresh</button>
+        <button class="iconbtn js-theme" aria-label="Toggle theme" title="Theme"><svg class="i"><use href="#i-contrast"/></svg></button>
+        <button class="iconbtn" id="refreshBtn" aria-label="Refresh" title="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
       </div>
     </header>
     <div class="content">
       <section class="view active" id="view-home">
         <h1>Home</h1>
         <div class="grid">
-          <div class="card span4"><div class="k">Active venue</div><div class="v" id="homeVenue">—</div><div class="tiny muted" id="homeMode"></div></div>
-          <div class="card span4"><div class="k">Open positions</div><div class="v" id="homePositions">0</div><div class="tiny muted" id="homePnl"></div></div>
-          <div class="card span4"><div class="k">Pending proposals</div><div class="v" id="homePending">0</div><div class="tiny muted" id="homeUnknown">UNKNOWN: 0</div></div>
-          <div class="card span6"><div class="sectionhead"><h2>Status</h2><span class="pill" id="feedPill">feed</span></div><div id="homeStatus" class="small muted">Loading…</div><div style="margin-top:12px" class="row"><button class="btn small" id="pauseBtn">Pause entries</button><button class="btn small danger" id="panicBtn">PANIC</button></div></div>
-          <div class="card span6"><div class="sectionhead"><h2>Feed diagnostics</h2></div><div class="feedbox" id="feedDiag">—</div></div>
+          <div class="card tile span4"><div><div class="k">Active venue</div><div class="v" id="homeVenue">—</div><div class="tiny muted" id="homeMode"></div></div></div>
+          <div class="card tile span4"><div><div class="k">Open positions</div><div class="v" id="homePositions">0</div><div class="tiny muted" id="homePnl"></div></div></div>
+          <div class="card tile span4"><div><div class="k">Pending proposals</div><div class="v" id="homePending">0</div><div class="tiny muted" id="homeUnknown">UNKNOWN: 0</div></div></div>
+          <div class="card span8"><div class="sectionhead"><h2>Venue status</h2><span class="pill" id="feedPill">feed</span></div><div id="homeStatus" class="small muted list">Loading…</div></div>
+          <div class="card span4"><h2>Controls</h2><p class="small muted" style="margin:0 0 12px">Pause stops new entries; exits keep running. PANIC cancels every open order and rule.</p><div class="row"><button class="btn small" id="pauseBtn">Pause entries</button><button class="btn small danger" id="panicBtn">PANIC</button></div></div>
           <div class="card span12"><div class="sectionhead"><h2>Pending proposals</h2><span class="tiny muted">approve only after reading the reasons</span></div><div class="list" id="proposalList"></div></div>
+          <div class="card span12"><details><summary>Feed diagnostics</summary><div class="feedbox" id="feedDiag">—</div></details></div>
         </div>
       </section>
 
       <section class="view" id="view-markets">
         <h1>Markets</h1>
-        <div class="row" style="margin-bottom:12px"><input class="grow" id="marketSearch" placeholder="Search stored markets…"><button class="btn" id="marketSearchBtn">Search</button><select id="marketVenue" style="max-width:180px"><option value="">active venue</option><option value="polymarket">polymarket</option><option value="kalshi">kalshi</option><option value="limitless">limitless</option></select></div>
+        <div class="seg" id="mkMode" style="margin-bottom:12px"><button class="on" data-mode="discover">Discover</button><button data-mode="stored">Stored</button></div>
+        <div id="discoverPane">
+          <div class="row"><div class="search"><svg class="i"><use href="#i-search"/></svg><input id="dvSearch" placeholder="Search markets on this venue…" autocomplete="off"></div><select id="dvVenue" style="max-width:150px" aria-label="Venue"><option value="polymarket">polymarket</option><option value="kalshi">kalshi</option><option value="limitless">limitless</option></select></div>
+          <div class="tabbar" id="dvTabs"></div><div class="tabbar sub hidden" id="dvSubs"></div>
+          <div class="tiny muted" id="dvNote" style="margin:2px 0 8px"></div>
+          <div class="dgrid" id="dvList"><div class="muted">Loading…</div></div>
+          <div class="sentinel" id="dvSentinel"></div>
+          <div class="row center" style="margin-top:12px"><button class="btn hidden" id="dvMore">Load more</button></div>
+        </div>
+        <div id="storedPane" class="hidden">
+          <div class="row" style="margin-bottom:14px"><div class="search"><svg class="i"><use href="#i-search"/></svg><input id="marketSearch" placeholder="Search stored markets…"></div><select id="marketVenue" style="max-width:170px"><option value="">active venue</option><option value="polymarket">polymarket</option><option value="kalshi">kalshi</option><option value="limitless">limitless</option></select><button class="btn" id="marketSearchBtn">Search</button></div>
         <div class="list" id="marketList"><div class="muted">Loading…</div></div>
+        </div>
         <div id="marketDetail" class="hidden"></div>
       </section>
 
       <section class="view" id="view-chat">
         <h1>Chat</h1>
-        <div class="card"><div class="chatlog" id="chatlog"><div class="msg bot">Slash commands are handled server-side. Send /help. Real order statuses are reported verbatim.</div></div>
-          <div class="row" style="margin-top:10px"><input class="grow" id="chatInput" placeholder="/status or ask about a market"><button class="btn primary" id="sendBtn">Send</button></div>
-          <div class="tiny muted" style="margin-top:6px">The LLM sees structured data only, never keys or auth headers. Tool output is treated as data.</div>
+        <div class="chatwrap">
+        <div class="scrim" id="histScrim"></div>
+        <aside class="chathist" id="chatHist" aria-label="Chat history">
+          <div class="split" style="align-items:center"><h2 style="margin:0">Chats</h2><div class="row" style="flex-wrap:nowrap;gap:6px"><button class="btn small primary" id="histNew"><svg class="i" style="width:15px;height:15px"><use href="#i-plus"/></svg>New</button><button class="iconbtn histonly" id="histClose" aria-label="Close history"><svg class="i"><use href="#i-x"/></svg></button></div></div>
+          <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="histSearch" placeholder="Search chats…" autocomplete="off"></div>
+          <div class="histlist" id="histList"><div class="muted small" style="padding:10px">Loading…</div></div>
+        </aside>
+        <div class="card chatcard"><div class="chathead"><button class="iconbtn histonly" id="histBtn" aria-label="Chat history" title="History"><svg class="i"><use href="#i-history"/></svg></button><div class="ttl" id="chatTitle">New chat</div><button class="btn small" id="newChatBtn">New chat</button></div><div class="chatlog" id="chatlog"><div class="msg bot">Slash commands are handled server-side. Send /help. Real order statuses are reported verbatim.</div></div>
+          <div class="chips"><button class="chip" data-cmd="/status">/status</button><button class="chip" data-cmd="/positions">/positions</button><button class="chip" data-cmd="/orders">/orders</button><button class="chip" data-cmd="/limits">/limits</button><button class="chip" data-cmd="/help">/help</button></div>
+          <div class="composer"><input class="grow" id="chatInput" placeholder="/status or ask about a market" autocomplete="off"><button class="btn primary" id="sendBtn" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button></div>
+          <div class="tiny muted" style="margin-top:8px">The LLM sees structured data only, never keys or auth headers. Tool output is treated as data.</div>
+        </div>
         </div>
       </section>
 
       <section class="view" id="view-positions">
         <h1>Positions</h1><div class="list" id="positionList"><div class="muted">Loading…</div></div>
-        <h2>Exit rules</h2><div class="list" id="ruleList"></div>
+        <h1 style="margin-top:28px;font-size:19px">Open orders</h1>
+        <div class="row" style="margin-bottom:10px"><button class="btn small sell" id="cancelAllBtn" disabled>Cancel all orders</button><span class="tiny muted">Cancels never need approval and are never blocked by caps.</span></div>
+        <div class="list" id="orderList"><div class="muted">Loading…</div></div>
+        <details class="card" style="margin-top:12px"><summary>Recent orders</summary><div class="list" id="orderHist" style="margin-top:10px"></div></details>
+        <h1 style="margin-top:28px;font-size:19px">Exit rules</h1><div class="list" id="ruleList"></div>
+      </section>
+
+      <section class="view" id="view-wallet">
+        <h1>Wallet</h1>
+        <div class="notice hidden" id="fundsNote"></div>
+        <div class="balgrid" id="balList"><div class="muted">Loading…</div></div>
+        <div class="grid" style="margin-top:14px">
+          <div class="card span6"><h2>Deposit</h2><div class="col"><select id="depVenue" aria-label="Venue"></select><div class="row hidden" id="depChainRow" style="flex-wrap:nowrap"><select id="depChain" class="grow" aria-label="Chain"></select><select id="depToken" class="grow" aria-label="Token"></select></div><div id="depOut"></div></div></div>
+          <div class="card span6"><h2>Withdraw</h2><div class="col"><select id="wdVenue" aria-label="Venue"></select><div class="small muted" id="wdOff"></div>
+            <div id="wdForm" class="col">
+              <div class="field"><label for="wdAmt">Amount</label><div class="inwrap"><input id="wdAmt" type="number" inputmode="decimal" min="0" step="any" placeholder="0.00"><span class="sfx">USD</span></div></div>
+              <div class="field"><label>Send to</label><div class="chips" id="wdSaved" style="margin:0"></div><div class="tiny muted tr" id="wdPicked"></div></div>
+              <div id="wdNew" class="col"><input id="wdAddr" placeholder="0x… receiver address" autocomplete="off" spellcheck="false"><div class="row" style="flex-wrap:nowrap"><select id="wdChain" class="grow" aria-label="Chain"></select><select id="wdToken" class="grow" aria-label="Token"></select></div></div>
+              <div id="wdQuote"></div>
+              <button class="btn danger holdbtn wide" id="wdGo" disabled><span class="fill"></span><span class="lbl">Hold 5 s to withdraw</span></button>
+              <div class="tiny muted">No password is needed here: the 5-second hold and a short, cancel-able server hold protect it. A daily limit applies.</div>
+            </div></div></div>
+          <div class="card span12"><div class="sectionhead"><h2>Saved addresses</h2><button class="btn small" id="alAddBtn"><svg class="i" style="width:15px;height:15px"><use href="#i-plus"/></svg>Add address</button></div><div class="list" id="alList"></div></div>
+          <div class="card span12"><h2>Withdrawals</h2><div class="list" id="wdList"><div class="muted">Loading…</div></div></div>
+          <div class="card span12"><details><summary>Deposit and withdrawal history from the venue</summary><div class="list" id="fhList" style="margin-top:10px"></div></details></div>
+        </div>
       </section>
 
       <section class="view" id="view-settings">
         <h1>Settings</h1>
         <div class="grid">
-          <div class="card span6"><h2>Venue</h2><p class="small muted">Only a ready venue can be made active. Positions, orders and rules remain live on every venue.</p><div class="row"><select id="venueSelect" class="grow"></select><button class="btn" id="switchBtn">Switch</button></div><div class="list" id="venueList" style="margin-top:12px"></div></div>
+          <div class="card span6"><h2>Venue</h2><p class="small muted">Only a ready venue can be made active. Positions, orders and rules remain live on every venue.</p><div class="row"><select id="venueSelect" class="grow"></select><button class="btn" id="switchBtn">Switch</button></div><div class="list" id="venueList" style="margin-top:14px"></div></div>
           <div class="card span6"><h2>Limits</h2><div id="limitBox" class="small"></div><p class="tiny muted">Runtime lowering only. Hard ceilings are in code and cannot be raised from chat, UI, Telegram or the LLM.</p></div>
-          <div class="card span12"><div class="sectionhead"><h2>Session</h2><button class="btn small" id="logoutBtn">Sign out</button></div><div class="small muted">Every order is real money. Rotate secrets per the README.</div></div>
+          <div class="card span6"><div class="sectionhead"><h2>Appearance</h2><button class="btn small js-theme">Toggle dark / light</button></div><div class="small muted">Your choice is remembered on this device.</div></div>
+          <div class="card span6"><div class="sectionhead"><h2>Session</h2><button class="btn small" id="logoutBtn">Sign out</button></div><div class="small muted">Every order is real money. Rotate secrets per the README.</div></div>
         </div>
       </section>
     </div>
   </main>
   <nav class="bottomnav">
-    <button class="active" data-view="home"><span class="ico">◉</span>Home</button>
-    <button data-view="markets"><span class="ico">▦</span>Markets</button>
-    <button data-view="chat"><span class="ico">⌁</span>Chat</button>
-    <button data-view="positions"><span class="ico">▤</span>Positions</button>
-    <button data-view="settings"><span class="ico">⚙</span>Settings</button>
+    <button class="active" data-view="home"><svg class="i"><use href="#i-home"/></svg>Home</button>
+    <button data-view="markets"><svg class="i"><use href="#i-chart"/></svg>Markets</button>
+    <button data-view="chat"><svg class="i"><use href="#i-chat"/></svg>Chat</button>
+    <button data-view="positions"><svg class="i"><use href="#i-brief"/></svg>Positions</button>
+    <button data-view="wallet"><svg class="i"><use href="#i-wallet"/></svg>Wallet</button>
+    <button data-view="settings"><svg class="i"><use href="#i-sliders"/></svg>Settings</button>
   </nav>
 </div>
 <div class="toast" id="toast"></div>
@@ -139,25 +294,26 @@ function toast(msg,ms=3800){const t=$("#toast");t.textContent=msg;t.classList.ad
 async function api(path,opts={}){const r=await fetch(path,{credentials:"same-origin",headers:{...(opts.body?{"Content-Type":"application/json"}:{})},...opts});let data={};try{data=await r.json()}catch(e){}if(!r.ok){const d=data.detail||data.error||("HTTP "+r.status);throw new Error(typeof d==="string"?d:JSON.stringify(d))}return data}
 function showLogin(show){$("#loginScreen").classList.toggle("hidden",!show);$("#app").classList.toggle("hidden",show)}
 $("#loginForm").addEventListener("submit",async(e)=>{e.preventDefault();$("#loginError").textContent="";try{await api("/v1/auth/login",{method:"POST",body:JSON.stringify({username:$("#username").value,password:$("#password").value})});showLogin(false);await boot()}catch(err){$("#loginError").textContent=err.message}});
-function setView(name){$$(".view").forEach(v=>v.classList.toggle("active",v.id==="view-"+name));$$("[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===name));if(name==="home")loadStatus();if(name==="markets")loadMarkets();if(name==="positions")loadPositions();if(name==="settings")loadSettings();}
+function setView(name){window.scrollTo(0,0);$$(".view").forEach(v=>v.classList.toggle("active",v.id==="view-"+name));$$("[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===name));if(name==="home")loadStatus();if(name==="markets"){if(MK_MODE==="discover")dvInit();else loadMarkets()}if(name==="positions"){loadPositions();loadOrders()}if(name==="wallet")loadWallet();if(name==="chat")chatRestore();if(name==="settings")loadSettings();}
 $$("[data-view]").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.view)));
 async function boot(){try{const me=await api("/v1/auth/me");showLogin(false);await loadStatus();await loadMarkets();connectWs()}catch(e){showLogin(true)}}
-async function loadStatus(){try{const s=await api("/v1/status");STATE=s;$("#badge").textContent=s.badge;$("#badge").classList.toggle("live",s.badge.includes("LIVE"));$("#pausedPill").textContent=s.paused?"PAUSED":"RUNNING";$("#pausedPill").className="pill "+(s.paused?"warn":"good");$("#homeVenue").textContent=s.active_venue||"none";$("#homeMode").textContent=s.unit_guard.ok?"Unit check OK · "+s.server_time_dhaka:"HALTED: "+s.unit_guard.reason;$("#homePositions").textContent=s.counts.open_positions;$("#homePnl").textContent="Today PnL "+money(s.today_pnl_usd);$("#homePending").textContent=s.counts.pending_proposals;$("#homeUnknown").textContent="UNKNOWN orders: "+s.counts.unknown_orders;$("#homeStatus").innerHTML=(s.research?.available?"":`<div class="warn small" style="margin-bottom:8px">Research disabled: ${esc(s.research?.reason||"configure LLM + web search")}. No new proposals; guardrails stay active.</div>`)+s.venues.map(v=>`<div>${esc(v.venue)} · <span class="pill ${v.ready?"good":"bad"}">${v.ready?"LIVE":"UNAVAILABLE"}</span> ${v.credentialed?"":'<span class="pill warn">PUBLIC</span> '}${esc(v.reason||"")}</div>`).join("")||"No venues enabled";$("#feedDiag").textContent=JSON.stringify({scanner:s.feed_diag,book_feed:s.book_feed},null,2);$("#sideVenues").innerHTML=s.venues.map(v=>`<div>${esc(v.venue)} ${v.ready?"●":"○"}</div>`).join("");$("#feedPill").textContent=Object.values(s.feed_diag.venues||{}).some(v=>v.error)?"feed error":"feed ok";$("#feedPill").className="pill "+ (Object.values(s.feed_diag.venues||{}).some(v=>v.error)?"bad":"good");await loadProposals();await loadPositions();if(!$("#venueSelect").options.length)fillVenueSelect(s.venues);renderLimits(s.limits)}catch(e){toast(e.message)}}
+async function loadStatus(){try{const s=await api("/v1/status");STATE=s;$("#badge").textContent=s.badge;$("#badge").classList.toggle("live",s.badge.includes("LIVE"));$("#pausedPill").textContent=s.paused?"PAUSED":"RUNNING";$("#pauseBtn").textContent=s.paused?"Resume entries":"Pause entries";$("#pausedPill").className="pill "+(s.paused?"warn":"good");$("#homeVenue").textContent=s.active_venue||"none";$("#homeMode").textContent=s.unit_guard.ok?"Unit check OK · "+s.server_time_dhaka:"HALTED: "+s.unit_guard.reason;$("#homePositions").textContent=s.counts.open_positions;$("#homePnl").innerHTML="Today PnL <b class=\""+(Number(s.today_pnl_usd)>=0?"pos":"neg")+"\">"+money(s.today_pnl_usd)+"</b>";$("#homePending").textContent=s.counts.pending_proposals;$("#homeUnknown").textContent="UNKNOWN orders: "+s.counts.unknown_orders;$("#homeStatus").innerHTML=(s.research?.available?"":`<div class="warn small" style="margin-bottom:8px">Research disabled: ${esc(s.research?.reason||"configure LLM + web search")}. No new proposals; guardrails stay active.</div>`)+s.venues.map(v=>`<div>${esc(v.venue)} · <span class="pill ${v.ready?"good":"bad"}">${v.ready?"LIVE":"UNAVAILABLE"}</span> ${v.credentialed?"":'<span class="pill warn">PUBLIC</span> '}${esc(v.reason||"")}</div>`).join("")||"No venues enabled";$("#feedDiag").textContent=JSON.stringify({scanner:s.feed_diag,book_feed:s.book_feed},null,2);$("#sideVenues").innerHTML=s.venues.map(v=>`<div>${esc(v.venue)} ${v.ready?"●":"○"}</div>`).join("");$("#feedPill").textContent=Object.values(s.feed_diag.venues||{}).some(v=>v.error)?"feed error":"feed ok";$("#feedPill").className="pill "+ (Object.values(s.feed_diag.venues||{}).some(v=>v.error)?"bad":"good");await loadProposals();await loadPositions();if(!$("#venueSelect").options.length)fillVenueSelect(s.venues);renderLimits(s.limits)}catch(e){toast(e.message)}}
 async function loadProposals(){try{const d=await api("/v1/proposals?limit=30");const p=d.proposals.filter(x=>x.status==="PENDING");$("#proposalList").innerHTML=p.length?p.map(x=>proposalCard(x)).join(""):'<div class="muted">No pending proposals. Proposals expire after 5 minutes and require sourced research.</div>';$$("[data-approve]").forEach(b=>b.addEventListener("click",()=>approveProposal(b.dataset.approve)));$$("[data-reject]").forEach(b=>b.addEventListener("click",()=>rejectProposal(b.dataset.reject)));$("#homePending").textContent=p.length}catch(e){}}
 function proposalCard(p){return `<div class="item"><div class="split"><div><b>${esc(p.venue.toUpperCase())} · ${esc(p.outcome)}</b><div class="tr">${esc(p.market_title)}</div><div class="small muted">${esc(p.size)} shares @ ${cents(p.price)} = ${money(p.amount_usd)} · edge ${pct(p.edge)} · p_fair ${pct(p.p_fair)} · cap ${esc(p.binding_cap)}</div><div class="tiny muted">Expires ${dhaka(p.expires_at)} · id ${esc(p.id.slice(0,8))}</div></div><div class="row"><button class="btn small primary" data-approve="${esc(p.id)}">Approve</button><button class="btn small" data-reject="${esc(p.id)}">Reject</button></div></div><details class="small" style="margin-top:8px"><summary>reasons & risks</summary><div class="muted">${(p.reasons||[]).map(esc).join("<br>")}<br>${(p.risks||[]).map(esc).join("<br>")}</div></details></div>`}
 async function approveProposal(id){try{const r=await api("/v1/proposals/"+encodeURIComponent(id)+"/approve",{method:"POST",body:"{}"});toast(`Order ${r.status}. filled ${r.filled}, remaining ${r.remaining}`);loadStatus()}catch(e){toast("Approval failed: "+e.message)}}
 async function rejectProposal(id){try{await api("/v1/proposals/"+encodeURIComponent(id)+"/reject",{method:"POST",body:"{}"});toast("Proposal rejected");loadStatus()}catch(e){toast(e.message)}}
 async function loadMarkets(){try{const q=$("#marketSearch").value.trim();const v=$("#marketVenue").value;const d=await api("/v1/markets?limit=80"+ (q?"&q="+encodeURIComponent(q):"")+(v?"&venue="+encodeURIComponent(v):""));$("#marketList").innerHTML=d.markets.length?d.markets.map(m=>`<div class="item" data-market="${esc(m.venue)}:${esc(m.native_id)}" style="cursor:pointer"><div class="split"><div><span class="pill">${esc(m.venue)}</span> <b>${esc(m.title)}</b><div class="tiny muted">${esc(m.category)} · ends ${dhaka(m.end_time)} · ${esc(m.native_id)}</div></div><div class="small">${esc(m.status)}</div></div></div>`).join(""):'<div class="muted">No markets stored yet. Check feed_diag on Home.</div>';$$("[data-market]").forEach(x=>x.addEventListener("click",()=>openMarket(x.dataset.market)))}catch(e){toast(e.message)}}
 async function openMarket(ref){const [venue,id]=ref.split(":");try{const d=await api("/v1/market?venue="+encodeURIComponent(venue)+"&market_id="+encodeURIComponent(id));CURRENT_MARKET=d.market;const m=d.market,b=d.books;const yes=b.YES||{},no=b.NO||{};const research=d.research;const box=$("#marketDetail");box.classList.remove("hidden");box.innerHTML=`<div class="card" style="margin-top:16px"><div class="split"><div><span class="pill">${esc(m.venue)}</span> <span class="pill">${esc(m.status)}</span><h2 style="margin:8px 0">${esc(m.title)}</h2><div class="small muted">Ends ${dhaka(m.end_time)} · tick ${m.tick_size} · event ${esc(m.event_id||"—")} · ${esc(m.url||"")}</div></div><button class="btn small" onclick="document.getElementById('marketDetail').classList.add('hidden')">Close</button></div>
-<div class="buygrid" style="margin-top:14px"><div class="pricebox"><div class="k">YES</div><div class="big">${cents(yes.best_ask)}</div><div class="tiny muted">bid ${cents(yes.best_bid)} · spread ${cents(yes.spread)}</div></div><div class="pricebox"><div class="k">NO</div><div class="big">${cents(no.best_ask)}</div><div class="tiny muted">bid ${cents(no.best_bid)} · spread ${cents(no.spread)}</div></div></div>
-<div class="row" style="margin-top:12px"><input id="buyAmount" type="number" min="0.1" step="0.1" value="${Math.min(2,Number(STATE?.limits?.max_trade_usd||2))}" style="max-width:150px"><button class="btn buy" id="buyYes">Buy YES → proposal</button><button class="btn buy" id="buyNo">Buy NO → proposal</button></div>
+<div class="buygrid" style="margin-top:14px"><div class="pricebox yes"><div class="k">YES</div><div class="big">${cents(yes.best_ask)}</div><div class="tiny muted">bid ${cents(yes.best_bid)} · spread ${cents(yes.spread)}</div></div><div class="pricebox no"><div class="k">NO</div><div class="big">${cents(no.best_ask)}</div><div class="tiny muted">bid ${cents(no.best_bid)} · spread ${cents(no.spread)}</div></div></div>
+<div id="ticketBox" style="margin-top:14px"></div>
+<h3>Agent proposal</h3><div class="row"><input id="buyAmount" type="number" min="0.1" step="0.1" value="${Math.min(2,Number(STATE?.limits?.max_trade_usd||2))}" style="max-width:150px"><button class="btn buy" id="buyYes">Buy YES → proposal</button><button class="btn buy" id="buyNo">Buy NO → proposal</button></div>
 <h3>Book</h3><div class="grid"><div class="card span6"><b class="small">YES asks</b><table><tr><th>price</th><th>size</th></tr>${(yes.asks||[]).slice(0,10).map(x=>`<tr><td>${cents(x.price)}</td><td>${x.size}</td></tr>`).join("")}</table></div><div class="card span6"><b class="small">NO asks</b><table><tr><th>price</th><th>size</th></tr>${(no.asks||[]).slice(0,10).map(x=>`<tr><td>${cents(x.price)}</td><td>${x.size}</td></tr>`).join("")}</table></div></div>
 <h3>Research</h3>${research?`<div class="small"><b>p = ${pct(research.probability)}</b> · ${esc(research.model)} · ${dhaka(research.created_at)}<p>${esc(research.summary)}</p><div class="muted">${(research.sources||[]).map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title||s.url)}</a>`).join("<br>")}</div></div>`:'<div class="small muted">No usable sourced research stored. No proposal will be created. Configure LLM and web search, then analyze.</div>'}
 <h3>Exit rules</h3><div class="row"><input id="ruleTP" type="number" min="0.001" max="0.999" step="0.001" placeholder="TP price e.g. 0.70" style="max-width:180px"><input id="ruleSL" type="number" min="0.001" max="0.999" step="0.001" placeholder="SL price e.g. 0.30" style="max-width:180px"><button class="btn small" id="saveRules">Arm rules on held outcome</button></div><div class="tiny muted" style="margin-top:4px">Rules only apply to positions you already hold. Exits are reduce-only.</div></div>`;
-$("#buyYes").onclick=()=>createProposal("YES");$("#buyNo").onclick=()=>createProposal("NO");$("#saveRules").onclick=()=>saveRules(m);box.scrollIntoView({behavior:"smooth"})}catch(e){toast(e.message)}}
+renderTicket(m,b);$("#buyYes").onclick=()=>createProposal("YES");$("#buyNo").onclick=()=>createProposal("NO");$("#saveRules").onclick=()=>saveRules(m);box.scrollIntoView({behavior:"smooth"})}catch(e){toast(e.message)}}
 async function createProposal(outcome){if(!CURRENT_MARKET)return;try{const amount=Number($("#buyAmount").value);const r=await api("/v1/proposals/analyze",{method:"POST",body:JSON.stringify({venue:CURRENT_MARKET.venue,market_id:CURRENT_MARKET.native_id,outcome,amount_usd:amount})});if(!r.ok){toast("No trade: "+(r.reasons||[]).join(", "));return}toast(`Proposal ${r.proposal.id.slice(0,8)} created. Review and approve on Home.`);loadStatus()}catch(e){toast(e.message)}}
 async function saveRules(market){try{const tp=Number($("#ruleTP").value),sl=Number($("#ruleSL").value);let held=(STATE?.positions||[]).filter(p=>p.market_id===market.native_id);if(!held.length){toast("No local position on this market.");return}const p=held[0];for(const [kind,val] of [["TAKE_PROFIT",tp],["STOP_LOSS",sl]]){if(val>0)await api("/v1/rules",{method:"POST",body:JSON.stringify({market_id:p.market_id,outcome:p.outcome,kind,trigger_price:val})})}toast("Rules armed");loadPositions()}catch(e){toast(e.message)}}
-async function loadPositions(){try{const d=await api("/v1/positions");STATE=STATE||{};STATE.positions=d.positions;$("#positionList").innerHTML=d.positions.length?d.positions.map(p=>`<div class="item"><div class="split"><div><span class="pill">${esc(p.venue)}</span> <b>${esc(p.outcome)} ${esc(p.shares)}</b> @ ${cents(p.avg_price)}<div class="small muted">${esc(p.market_title||p.market_id)}</div><div class="tiny muted">uPnL ${money(p.unrealized_pnl)} · current ${cents(p.current_price)}</div></div><button class="btn small sell" data-close="${esc(p.market_id)}|${esc(p.outcome)}">Close</button></div></div>`).join(""):'<div class="muted">No open positions.</div>';$$("[data-close]").forEach(b=>b.addEventListener("click",()=>closePos(b.dataset.close)));const r=await api("/v1/rules");$("#ruleList").innerHTML=r.rules.length?r.rules.map(x=>`<div class="item small"><span class="pill">${esc(x.status)}</span> ${esc(x.venue)} · ${esc(x.kind)} · ${esc(x.market_id)} · trigger ${esc(x.trigger_price||x.trigger_at)} <button class="btn small" data-cancelrule="${esc(x.id)}">Cancel</button></div>`).join(""):'<div class="muted">No rules.</div>';$$("[data-cancelrule]").forEach(b=>b.addEventListener("click",async()=>{try{await api("/v1/rules/"+encodeURIComponent(b.dataset.cancelrule),{method:"DELETE"});toast("Rule cancelled");loadPositions()}catch(e){toast(e.message)}}))}catch(e){}}
+async function loadPositions(){try{const d=await api("/v1/positions");STATE=STATE||{};STATE.positions=d.positions;$("#positionList").innerHTML=d.positions.length?d.positions.map(p=>`<div class="item"><div class="split"><div><span class="pill">${esc(p.venue)}</span> <b>${esc(p.outcome)} ${esc(p.shares)}</b> @ ${cents(p.avg_price)}<div class="small muted">${esc(p.market_title||p.market_id)}</div><div class="tiny muted">uPnL <b class="${Number(p.unrealized_pnl)>=0?"pos":"neg"}">${money(p.unrealized_pnl)}</b> · current ${cents(p.current_price)}</div></div><div class="row" style="flex-wrap:nowrap"><button class="btn small" data-sell="${esc(p.venue)}:${esc(p.market_id)}|${esc(p.outcome)}">Sell…</button><button class="btn small sell" data-close="${esc(p.market_id)}|${esc(p.outcome)}">Close</button></div></div></div>`).join(""):'<div class="muted">No open positions.</div>';$$("[data-close]").forEach(b=>b.addEventListener("click",()=>closePos(b.dataset.close)));$$("[data-sell]").forEach(b=>b.addEventListener("click",()=>{const [ref,out]=b.dataset.sell.split("|");TPREF={side:"SELL",outcome:out};openMarket(ref)}));const r=await api("/v1/rules");$("#ruleList").innerHTML=r.rules.length?r.rules.map(x=>`<div class="item small"><span class="pill">${esc(x.status)}</span> ${esc(x.venue)} · ${esc(x.kind)} · ${esc(x.market_id)} · trigger ${esc(x.trigger_price||x.trigger_at)} <button class="btn small" data-cancelrule="${esc(x.id)}">Cancel</button></div>`).join(""):'<div class="muted">No rules.</div>';$$("[data-cancelrule]").forEach(b=>b.addEventListener("click",async()=>{try{await api("/v1/rules/"+encodeURIComponent(b.dataset.cancelrule),{method:"DELETE"});toast("Rule cancelled");loadPositions()}catch(e){toast(e.message)}}))}catch(e){}}
 async function closePos(ref){const [id,outcome]=ref.split("|");if(!confirm(`Close ${outcome} position on ${id}?`))return;try{const r=await api("/v1/positions/close",{method:"POST",body:JSON.stringify({market_id:id,outcome})});toast("Exit submitted: "+(r.results||[]).map(x=>x.status).join(", "));loadStatus()}catch(e){toast(e.message)}}
 function fillVenueSelect(venues){const s=$("#venueSelect");s.innerHTML=venues.map(v=>`<option value="${esc(v.venue)}">${esc(v.venue)} — ${v.ready?"LIVE":"unavailable"}</option>`).join("")}
 async function loadSettings(){try{const d=await api("/v1/venues");fillVenueSelect(d.venues);$("#venueList").innerHTML=d.venues.map(v=>`<div class="small"><b>${esc(v.display_name)}</b> <span class="pill ${v.ready?"good":"bad"}">${v.ready?"READY":"UNAVAILABLE"}</span> <span class="pill bad">LIVE</span><div class="tiny muted">${esc(v.reason||"doctor passed")}</div></div>`).join("");renderLimits((await api("/v1/status")).limits)}catch(e){toast(e.message)}}
@@ -167,11 +323,453 @@ $("#pauseBtn").onclick=async()=>{try{await api(STATE?.paused?"/v1/resume":"/v1/p
 $("#panicBtn").onclick=async()=>{if(!confirm("PANIC pauses entries, cancels ALL open orders on every venue and cancels all rules. Continue?"))return;try{const r=await api("/v1/panic",{method:"POST",body:JSON.stringify({confirm:true})});toast("PANIC complete. Positions are not auto-sold.");loadStatus()}catch(e){toast(e.message)}};
 $("#switchBtn").onclick=async()=>{try{const v=$("#venueSelect").value;await api("/v1/venues/active",{method:"POST",body:JSON.stringify({venue:v})});toast("Active venue: "+v);loadStatus();loadSettings()}catch(e){toast(e.message)}};
 $("#logoutBtn").onclick=async()=>{try{await api("/v1/auth/logout",{method:"POST",body:"{}"})}catch(e){}showLogin(true)};
-async function sendChat(){const input=$("#chatInput"),text=input.value.trim();if(!text)return;input.value="";addMsg(text,"user");try{const r=await api("/v1/chat",{method:"POST",body:JSON.stringify({message:text})});addMsg(r.reply||"(no reply)","bot");if(r.data&&r.data.status)loadStatus()}catch(e){addMsg("Error: "+e.message,"bot")}}
-function addMsg(text,who){const log=$("#chatlog"),d=document.createElement("div");d.className="msg "+who;d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight}
+async function sendChat(){if(CHAT.busy)return;const input=$("#chatInput"),text=input.value.trim();if(!text)return;CHAT.busy=true;$("#sendBtn").disabled=true;input.value="";addMsg(text,"user");const wait=addMsg("Thinking…","bot");wait.classList.add("typing");try{if(!CHAT.id){const c=await api("/v1/conversations",{method:"POST",body:JSON.stringify({title:""})});CHAT.id=c.conversation.id;chatSaveId()}const r=await api("/v1/chat",{method:"POST",body:JSON.stringify({message:text,conversation_id:CHAT.id})});wait.remove();addMsg(r.reply||"(no reply)","bot");if(r.data&&r.data.status)loadStatus();chatList()}catch(e){wait.remove();addMsg("Error: "+e.message,"bot");if(/conversation not found/i.test(e.message)){CHAT.id=null;chatSaveId()}}finally{CHAT.busy=false;$("#sendBtn").disabled=false}}
+function addMsg(text,who){const log=$("#chatlog"),d=document.createElement("div");d.className="msg "+who;d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
 $("#sendBtn").onclick=sendChat;$("#chatInput").addEventListener("keydown",e=>{if(e.key==="Enter")sendChat()});
 function connectWs(){if(ws)try{ws.close()}catch(e){};const proto=location.protocol==="https:"?"wss:":"ws:";ws=new WebSocket(proto+"//"+location.host+"/v1/ws");ws.onmessage=(ev)=>{try{const m=JSON.parse(ev.data);if(m.topic==="hello"&&m.payload?.badge){$("#badge").textContent=m.payload.badge}if(["proposal.created","proposal.executed","order.updated","account.updated","rule.triggered","agent.panic"].includes(m.topic)){if(m.topic==="order.updated"&&m.payload?.order?.status)toast("Order "+m.payload.order.status);clearTimeout(window.__liveT);window.__liveT=setTimeout(loadStatus,150)}}catch(e){}};ws.onclose=()=>setTimeout(connectWs,5000)}
 $("#loginScreen").classList.remove("hidden");if("serviceWorker" in navigator)navigator.serviceWorker.register("/static/sw.js").catch(()=>{});
+</script>
+<script>
+(function(){const root=document.documentElement,meta=document.querySelector('meta[name=theme-color]');
+function apply(t){root.dataset.theme=t;meta.content=t==="light"?"#f3f5f9":"#07090d";try{localStorage.setItem("mm-theme",t)}catch(e){}}
+apply(root.dataset.theme==="light"?"light":"dark");
+document.querySelectorAll(".js-theme").forEach(b=>b.addEventListener("click",()=>apply(root.dataset.theme==="light"?"dark":"light")));
+document.querySelectorAll(".chip[data-cmd]").forEach(c=>c.addEventListener("click",()=>{document.getElementById("chatInput").value=c.dataset.cmd;sendChat()}));})();
+</script>
+<script>
+/* ===== v5 additions: Discover, trade ticket, open orders, wallet, chat history ===== */
+const uid=()=>(window.crypto&&crypto.randomUUID)?crypto.randomUUID():"k"+Date.now().toString(36)+Math.random().toString(36).slice(2,10);
+const enc=encodeURIComponent;
+const num=(v)=>{if(v===null||v===undefined||v==="")return NaN;const n=Number(v);return Number.isFinite(n)?n:NaN};
+const c0=(v)=>{const n=num(v);return Number.isNaN(n)?"—":Math.round(n*100)+"¢"};
+const endShort=(v)=>{if(!v)return"—";const d=new Date(v);return isNaN(d)?"—":d.toLocaleDateString("en-GB",{timeZone:"Asia/Dhaka",day:"numeric",month:"short"})};
+const compact=(v,venue)=>{const n=num(v);if(Number.isNaN(n))return"—";const unit=venue==="kalshi"?"":"$";const s=n>=1e9?(n/1e9).toFixed(1)+"B":n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"K":n.toFixed(0);return unit+s+(venue==="kalshi"?" contracts":"")};
+const trimDec=(n,p=4)=>String(Number(Number(n).toFixed(p)));
+
+/* money-moving and error-aware requests: Idempotency-Key, step-up token, clear errors */
+async function apiW(path,o={}){
+  const headers={};
+  if(o.body!==undefined)headers["Content-Type"]="application/json";
+  if(o.key)headers["Idempotency-Key"]=o.key;
+  if(o.stepup)headers["X-Stepup-Token"]=o.stepup;
+  let r;
+  try{r=await fetch(path,{method:o.method||"POST",credentials:"same-origin",headers,body:o.body===undefined?undefined:JSON.stringify(o.body)})}
+  catch(e){const err=new Error("Network error: "+e.message);err.network=true;throw err}
+  let data={};try{data=await r.json()}catch(e){}
+  if(!r.ok||data.ok===false){
+    const code=data.error&&data.error.code;
+    const d=(data.error&&data.error.message)||data.detail||data.error||("HTTP "+r.status);
+    const err=new Error(typeof d==="string"?d:JSON.stringify(d));
+    err.status=r.status;err.code=code;err.network=r.status>=500;
+    if(r.status===401&&code!=="bad_password")showLogin(true);
+    throw err}
+  return data}
+
+/* ---------- sheets and hold-to-confirm ---------- */
+function sheet(html,opts={}){
+  const o=document.createElement("div");o.className="overlay";
+  o.innerHTML='<div class="sheetbox" role="dialog" aria-modal="true">'+html+'</div>';
+  document.body.appendChild(o);
+  let closed=false;
+  function close(v){if(closed)return;closed=true;o.remove();document.removeEventListener("keydown",onKey,true);if(opts.onClose)opts.onClose(v)}
+  function onKey(e){if(e.key==="Escape"){e.stopPropagation();close()}}
+  document.addEventListener("keydown",onKey,true);
+  o.addEventListener("pointerdown",(e)=>{if(e.target===o)close()});
+  const box=o.firstChild;
+  box.querySelectorAll("[data-x]").forEach(b=>b.addEventListener("click",()=>close()));
+  return{el:o,box,close}}
+function holdify(btn,sec,cb){
+  const fill=btn.querySelector(".fill");let t=null;
+  const start=()=>{if(t||btn.disabled)return;btn.style.setProperty("--hold",sec+"s");btn.classList.add("holding");t=setTimeout(()=>{t=null;btn.classList.remove("holding");btn.style.setProperty("--hold",".1s");cb()},sec*1000)};
+  const stop=()=>{if(t){clearTimeout(t);t=null}btn.style.setProperty("--hold",".15s");btn.classList.remove("holding")};
+  btn.addEventListener("pointerdown",(e)=>{e.preventDefault();start()});
+  ["pointerup","pointerleave","pointercancel","blur"].forEach(ev=>btn.addEventListener(ev,stop));
+  btn.addEventListener("keydown",(e)=>{if((e.key===" "||e.key==="Enter")&&!e.repeat){e.preventDefault();start()}});
+  btn.addEventListener("keyup",(e)=>{if(e.key===" "||e.key==="Enter")stop()});
+  btn.addEventListener("contextmenu",(e)=>e.preventDefault());
+  return{stop}}
+function confirmHold({title,rows,label,seconds=2,tone="primary",note=""}){
+  return new Promise((res)=>{
+    let done=false;
+    const s=sheet('<h2>'+esc(title)+'</h2><div class="kv">'+rows.map(([k,v])=>'<div><span class="muted">'+esc(k)+'</span><b>'+esc(v)+'</b></div>').join("")+'</div>'+(note?'<p class="tiny muted" style="margin:10px 0 0">'+esc(note)+'</p>':"")+'<div class="row" style="margin-top:16px;flex-wrap:nowrap"><button class="btn grow" data-x>Cancel</button><button class="btn '+tone+' holdbtn grow" data-hold><span class="fill"></span><span class="lbl">'+esc(label)+'</span></button></div>',{onClose:()=>{if(!done){done=true;res(false)}}});
+    holdify(s.box.querySelector("[data-hold]"),seconds,()=>{done=true;s.close();res(true)})})}
+function askText(title,value="",placeholder=""){
+  return new Promise((res)=>{
+    let done=false;
+    const s=sheet('<h2>'+esc(title)+'</h2><form class="col"><input id="askIn" maxlength="120" placeholder="'+esc(placeholder)+'" value="'+esc(value)+'" required><div class="row" style="flex-wrap:nowrap"><button type="button" class="btn grow" data-x>Cancel</button><button class="btn primary grow" type="submit">Save</button></div></form>',{onClose:()=>{if(!done){done=true;res(null)}}});
+    const f=s.box.querySelector("form"),inp=s.box.querySelector("#askIn");setTimeout(()=>{inp.focus();inp.select()},30);
+    f.addEventListener("submit",(e)=>{e.preventDefault();const v=inp.value.trim();if(!v)return;done=true;s.close();res(v)})})}
+async function copyText(text){try{await navigator.clipboard.writeText(text);toast("Copied")}catch(e){const t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();try{document.execCommand("copy");toast("Copied")}catch(_){toast("Copy failed")}t.remove()}}
+
+/* the market sheet: lock page scroll while open, Esc closes */
+(function(){const md=$("#marketDetail");new MutationObserver(()=>{document.body.style.overflow=md.classList.contains("hidden")?"":"hidden"}).observe(md,{attributes:true,attributeFilter:["class"]})})();
+document.addEventListener("keydown",(e)=>{if(e.key!=="Escape")return;const md=$("#marketDetail");if(md&&!md.classList.contains("hidden"))md.classList.add("hidden");chatHistClose()});
+
+/* ---------- Markets: Discover / Stored ---------- */
+let MK_MODE="discover";
+function setMkMode(m){MK_MODE=m;$$("#mkMode button").forEach(b=>b.classList.toggle("on",b.dataset.mode===m));$("#discoverPane").classList.toggle("hidden",m!=="discover");$("#storedPane").classList.toggle("hidden",m!=="stored");if(m==="discover")dvInit();else loadMarkets()}
+$$("#mkMode button").forEach(b=>b.addEventListener("click",()=>setMkMode(b.dataset.mode)));
+const DV={venue:"",tabs:[],tab:"",sub:"",q:"",next:null,seq:0,loading:false,items:[],inited:false,timer:null};
+async function dvInit(){
+  if(DV.inited)return;DV.inited=true;
+  const sel=$("#dvVenue"),v=(STATE&&STATE.active_venue)||"polymarket";
+  sel.value=["polymarket","kalshi","limitless"].includes(v)?v:"polymarket";DV.venue=sel.value;
+  if("IntersectionObserver" in window){new IntersectionObserver((en)=>{if(en.some(x=>x.isIntersecting)&&DV.next!=null&&!DV.loading&&MK_MODE==="discover")dvPage(false)},{rootMargin:"500px"}).observe($("#dvSentinel"))}
+  await dvTabs()}
+$("#dvVenue").addEventListener("change",()=>{DV.venue=$("#dvVenue").value;DV.q="";$("#dvSearch").value="";dvTabs()});
+$("#dvSearch").addEventListener("input",()=>{clearTimeout(DV.timer);DV.timer=setTimeout(()=>{DV.q=$("#dvSearch").value.trim();dvPage(true)},450)});
+$("#dvMore").addEventListener("click",()=>dvPage(false));
+async function dvTabs(){
+  $("#dvList").innerHTML='<div class="muted">Loading…</div>';
+  try{const d=await api("/v1/discover/tabs?venue="+enc(DV.venue));DV.tabs=d.tabs||[];$("#dvNote").textContent=d.note||"";
+    const first=DV.tabs.find(t=>t.supported!==false)||DV.tabs[0];DV.tab=first?first.id:"trending";DV.sub="";dvDrawTabs();await dvPage(true)}
+  catch(e){$("#dvList").innerHTML='<div class="muted">'+esc(e.message)+' <button class="btn small" id="dvRetry">Retry</button></div>';const r=$("#dvRetry");if(r)r.onclick=dvTabs}}
+function dvDrawTabs(){
+  $("#dvTabs").innerHTML=DV.tabs.map(t=>'<button class="tab'+(t.id===DV.tab?" on":"")+(t.highlight?" hl":"")+(t.separator_before?" sep":"")+'" data-tab="'+esc(t.id)+'"'+(t.supported===false?' disabled title="'+esc(t.note||"Not available")+'"':"")+'>'+esc(t.label)+'</button>').join("");
+  const cur=DV.tabs.find(t=>t.id===DV.tab),subs=(cur&&cur.subtabs)||[];
+  $("#dvSubs").innerHTML=subs.length?'<button class="tab'+(DV.sub?"":" on")+'" data-sub="">All</button>'+subs.map(s=>'<button class="tab'+(s.id===DV.sub?" on":"")+(s.separator_before?" sep":"")+'" data-sub="'+esc(s.id)+'">'+esc(s.label)+'</button>').join(""):"";
+  $("#dvSubs").classList.toggle("hidden",!subs.length)}
+$("#dvTabs").addEventListener("click",(e)=>{const b=e.target.closest("[data-tab]");if(!b||b.disabled)return;DV.tab=b.dataset.tab;DV.sub="";dvDrawTabs();dvPage(true)});
+$("#dvSubs").addEventListener("click",(e)=>{const b=e.target.closest("[data-sub]");if(!b)return;DV.sub=b.dataset.sub;dvDrawTabs();dvPage(true)});
+async function dvPage(reset){
+  if(DV.loading&&!reset)return;
+  const seq=++DV.seq;DV.loading=true;
+  if(reset){DV.items=[];DV.expanded={};DV.next=0;$("#dvList").innerHTML='<div class="muted">Loading…</div>';$("#dvMore").classList.add("hidden")}
+  try{
+    const qs="?venue="+enc(DV.venue)+"&tab="+enc(DV.sub||DV.tab)+"&limit=30&offset="+(DV.next||0)+(DV.q?"&q="+enc(DV.q):"");
+    const d=await api("/v1/discover"+qs);
+    if(seq!==DV.seq)return;
+    DV.items=DV.items.concat(d.items||[]);DV.next=d.next_offset==null?null:d.next_offset;
+    $("#dvNote").textContent=d.note||"";dvRender()}
+  catch(e){if(seq!==DV.seq)return;if(reset)$("#dvList").innerHTML='<div class="muted">'+esc(e.message)+'</div>';else toast(e.message)}
+  finally{if(seq===DV.seq)DV.loading=false}}
+function dvMarketRow(ev,m,single,i){
+  const ref=esc(DV.venue+":"+m.market_id),ch=num(m.change_1d);
+  const chg=Number.isNaN(ch)||ch===0?"":'<small class="'+(ch>0?"pos":"neg")+'">'+(ch>0?"+":"")+(ch*100).toFixed(1)+' pp today</small>';
+  return '<div class="mrow"><div class="mlabel" data-open="'+ref+'">'+(single?"":esc(m.label))+chg+'</div><div class="mbtns"><button class="qbtn yes" data-open="'+ref+'" data-out="YES">'+esc(m.yes_label||"Yes")+" "+c0(m.yes_price)+'</button><button class="qbtn no" data-open="'+ref+'" data-out="NO">'+esc(m.no_label||"No")+" "+c0(m.no_price)+'</button></div></div>'}
+function dvCard(ev,i){
+  const ms=ev.markets||[],single=ms.length===1,open=DV.expanded&&DV.expanded[i],shown=(single||open)?ms:ms.slice(0,3);
+  return '<div class="item dcard"><div><b class="tr">'+esc(ev.title)+'</b><div class="tiny muted">'+compact(ev.volume,DV.venue)+' vol · ends '+endShort(ev.end_time)+(ev.market_count>1?" · "+ev.market_count+" markets":"")+'</div></div>'
+   +'<div class="tags">'+(ev.tags||[]).slice(0,3).map(t=>'<span class="pill">'+esc(t)+'</span>').join("")+'</div>'
+   +shown.map(m=>dvMarketRow(ev,m,single,i)).join("")
+   +((!single&&!open&&ms.length>3)?'<button class="btn small" data-more="'+i+'">Show '+(ms.length-3)+' more</button>':"")+'</div>'}
+function dvRender(){
+  DV.expanded=DV.expanded||{};
+  $("#dvList").innerHTML=DV.items.length?DV.items.map(dvCard).join(""):'<div class="muted" style="grid-column:1/-1">'+(DV.q?'No markets match “'+esc(DV.q)+'”.':'Nothing to show in this tab right now.')+'</div>';
+  $("#dvMore").classList.toggle("hidden",DV.next==null)}
+$("#dvList").addEventListener("click",(e)=>{
+  const more=e.target.closest("[data-more]");if(more){DV.expanded[more.dataset.more]=true;dvRender();return}
+  const o=e.target.closest("[data-open]");if(!o)return;
+  TPREF=o.dataset.out?{outcome:o.dataset.out}:null;openMarket(o.dataset.open)});
+
+/* ---------- Trade ticket (manual orders) ---------- */
+let CAPS=null,TPREF=null,TK=null;
+async function ensureCaps(){if(CAPS)return CAPS;try{CAPS=await api("/v1/capabilities")}catch(e){CAPS={venues:{}}}return CAPS}
+async function renderTicket(m,books){
+  const box=$("#ticketBox");if(!box)return;
+  const caps=await ensureCaps(),vc=(caps.venues||{})[m.venue]||{};
+  const pref=TPREF||{};TPREF=null;
+  const types=vc.order_types||["GTC","FAK"],canMarket=types.some(t=>["FOK","FAK","IOC"].includes(t)),tifs=["GTC","GTD"].filter(t=>types.includes(t));
+  const cap=num(STATE&&STATE.limits&&STATE.limits.max_trade_usd);
+  TK={venue:m.venue,id:m.native_id,title:m.title,books:books||{},vc,canMarket,tifs:tifs.length?tifs:["GTC"],side:pref.side||"BUY",outcome:pref.outcome||"YES",type:canMarket?"market":"limit",amount:String(Number.isNaN(cap)?2:Math.min(2,cap)),shares:"",price:"",tif:"GTC",post:false,expires:"",slip:"2",last:null};
+  if(pref.side==="SELL"){const h=tkHeld();if(h>0)TK.shares=trimDec(h,4)}
+  tkDraw()}
+function tkBook(){const bk=(TK.books&&TK.books[TK.outcome])||{};const lv=(a)=>(a||[]).map(x=>({p:num(x.price),s:num(x.size)})).filter(x=>x.p>0&&x.s>0);return{asks:lv(bk.asks).sort((a,b)=>a.p-b.p),bids:lv(bk.bids).sort((a,b)=>b.p-a.p),bk}}
+function tkHeld(){const ps=(STATE&&STATE.positions)||[];const p=ps.find(x=>x.venue===TK.venue&&x.market_id===TK.id&&x.outcome===TK.outcome);return p?num(p.shares):0}
+function tkDraw(){
+  const box=$("#ticketBox");if(!box||!TK)return;
+  const vc=TK.vc,buy=TK.side==="BUY",ready=vc.ready!==false,held=tkHeld();
+  const px=(o)=>{const b=(TK.books&&TK.books[o])||{};return buy?b.best_ask:b.best_bid};
+  const {asks,bids}=tkBook();
+  let fields="";
+  if(TK.type==="market"){
+    fields=buy?'<div class="field"><label for="tkAmt">Amount</label><div class="inwrap"><input id="tkAmt" type="number" inputmode="decimal" min="0.1" step="0.1" value="'+esc(TK.amount)+'"><span class="sfx">USD</span></div></div>'
+      :'<div class="field"><label for="tkShr">Shares to sell</label><div class="inwrap"><input id="tkShr" type="number" inputmode="decimal" min="0" step="any" value="'+esc(TK.shares)+'"><span class="sfx">shares</span></div></div>';
+    fields+='<div class="field" style="max-width:150px"><label for="tkSlip">Max slippage</label><div class="inwrap"><input id="tkSlip" type="number" inputmode="decimal" min="0" step="0.5" value="'+esc(TK.slip)+'"><span class="sfx">¢</span></div></div>'}
+  else{
+    fields='<div class="field"><label for="tkPrc">Limit price</label><div class="inwrap"><input id="tkPrc" type="number" inputmode="decimal" min="0.1" max="99.9" step="any" value="'+esc(TK.price)+'" placeholder="e.g. 57"><span class="sfx">¢</span></div></div>'
+      +'<div class="field"><label for="tkShr">Shares</label><div class="inwrap"><input id="tkShr" type="number" inputmode="decimal" min="0" step="any" value="'+esc(TK.shares)+'"><span class="sfx">shares</span></div></div>'}
+  const tifRow=TK.type==="limit"&&TK.side==="BUY"?'<div class="row" style="margin-top:10px;align-items:flex-end"><div class="field" style="max-width:170px"><label for="tkTif">Time in force</label><select id="tkTif">'+TK.tifs.map(t=>'<option'+(t===TK.tif?" selected":"")+'>'+t+'</option>').join("")+'</select></div>'
+    +(TK.tif==="GTD"?'<div class="field"><label for="tkExp">Expires</label><input id="tkExp" type="datetime-local" value="'+esc(TK.expires)+'"></div>':"")
+    +(vc.post_only?'<label class="ck"><input id="tkPost" type="checkbox"'+(TK.post?" checked":"")+'> Post only</label>':"")+'</div>':"";
+  box.innerHTML='<div class="card ticket"><div class="sectionhead"><h2>Trade by hand</h2><span class="pill bad">real money</span></div>'
+   +(ready?'':'<div class="notice">'+esc(vc.reason||"This venue is not ready; orders are blocked.")+'</div>')
+   +'<div class="seg wide" id="tkSide"><button data-v="BUY" class="'+(buy?"on":"")+'">Buy</button><button data-v="SELL" class="'+(!buy?"on":"")+'">Sell</button></div>'
+   +'<div class="buygrid" style="margin:12px 0" id="tkOut"><button class="pricebox yes'+(TK.outcome==="YES"?" sel":"")+'" data-v="YES"><div class="k">YES</div><div class="big">'+cents(px("YES"))+'</div><div class="tiny muted">'+(buy?"best ask":"best bid")+'</div></button><button class="pricebox no'+(TK.outcome==="NO"?" sel":"")+'" data-v="NO"><div class="k">NO</div><div class="big">'+cents(px("NO"))+'</div><div class="tiny muted">'+(buy?"best ask":"best bid")+'</div></button></div>'
+   +(TK.canMarket?'<div class="seg wide" id="tkType" style="margin-bottom:12px"><button data-v="market" class="'+(TK.type==="market"?"on":"")+'">Market</button><button data-v="limit" class="'+(TK.type==="limit"?"on":"")+'">Limit</button></div>':'<div class="tiny muted" style="margin-bottom:10px">This venue takes limit orders only here.</div>')
+   +'<div class="row" style="align-items:flex-end">'+fields+'</div>'+tifRow
+   +(!buy?'<div class="tiny muted" style="margin-top:8px">You hold <b>'+(held>0?trimDec(held,4):"0")+'</b> '+esc(TK.outcome)+' shares'+(held>0?' · <a href="#" id="tkMax">use all</a>':"")+'</div>':"")
+   +'<div class="sumbox" id="tkSum"></div><div id="tkMsg" class="small" role="status" style="margin-bottom:10px"></div>'
+   +'<button class="btn '+(buy?"primary":"danger")+' wide" id="tkGo"'+(ready?"":" disabled")+'>Review '+(buy?"buy ":"sell ")+esc(TK.outcome)+' order</button>'
+   +'<div class="tiny muted" style="margin-top:8px">Passes the same risk caps, pause state and audit trail as an agent proposal. Min order '+esc(vc.min_order_shares||"?")+' shares / $'+esc(vc.min_notional_usd||"?")+'.</div>'
+   +'<h3>Order book · '+esc(TK.outcome)+' <span class="tiny" style="text-transform:none;letter-spacing:0">(tap a price to use it as a limit)</span></h3><div class="ladder" id="tkLadder">'+tkLadder(bids,asks)+'</div></div>';
+  tkWire();tkSum()}
+function tkLadder(bids,asks){
+  const t=(rows,l)=>'<div><b class="small">'+l+'</b><table><tr><th>price</th><th>size</th></tr>'+(rows.slice(0,6).map(x=>'<tr data-lp="'+x.p+'"><td>'+cents(x.p)+'</td><td>'+trimDec(x.s,2)+'</td></tr>').join("")||'<tr><td colspan="2" class="muted">empty</td></tr>')+'</table></div>';
+  return t(bids,"Bids")+t(asks,"Asks")}
+function tkWire(){
+  const q=(s)=>$(s,$("#ticketBox"));
+  q("#tkSide").addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.side=b.dataset.v;if(TK.side==="SELL"&&!TK.shares){const h=tkHeld();if(h>0)TK.shares=trimDec(h,4)}tkDraw()});
+  q("#tkOut").addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.outcome=b.dataset.v;if(TK.side==="SELL"){const h=tkHeld();TK.shares=h>0?trimDec(h,4):""}tkDraw()});
+  const ty=q("#tkType");if(ty)ty.addEventListener("click",(e)=>{const b=e.target.closest("button");if(!b)return;TK.type=b.dataset.v;tkDraw()});
+  const bind=(id,key)=>{const el=q(id);if(el)el.addEventListener("input",()=>{TK[key]=el.value;tkSum()})};
+  bind("#tkAmt","amount");bind("#tkShr","shares");bind("#tkPrc","price");bind("#tkSlip","slip");bind("#tkExp","expires");
+  const tif=q("#tkTif");if(tif)tif.addEventListener("change",()=>{TK.tif=tif.value;tkDraw()});
+  const post=q("#tkPost");if(post)post.addEventListener("change",()=>{TK.post=post.checked;tkSum()});
+  const mx=q("#tkMax");if(mx)mx.addEventListener("click",(e)=>{e.preventDefault();TK.shares=trimDec(tkHeld(),4);tkDraw()});
+  q("#tkLadder").addEventListener("click",(e)=>{const r=e.target.closest("[data-lp]");if(!r)return;TK.type="limit";TK.price=trimDec(Number(r.dataset.lp)*100,2);if(TK.side==="BUY"&&!TK.shares)TK.shares="";tkDraw();const p=q("#tkPrc");if(p)p.focus()});
+  q("#tkGo").addEventListener("click",tkSubmit)}
+function tkCalc(){
+  const {asks,bids}=tkBook(),buy=TK.side==="BUY",out={rows:[],err:"",warn:"",req:null};
+  const base={venue:TK.venue,market_id:TK.id,outcome:TK.outcome};
+  if(TK.type==="market"){
+    if(buy){
+      const A=num(TK.amount);if(!(A>0)){out.err="Enter an amount in USD.";return out}
+      if(!asks.length){out.err="There are no asks in the book.";return out}
+      let rem=A,sh=0,spent=0;for(const l of asks){if(rem<=1e-9)break;const cost=Math.min(rem,l.p*l.s);sh+=cost/l.p;spent+=cost;rem-=cost}
+      out.rows=[["Spend",money(A)],["Est. shares",sh.toFixed(2)],["Avg price",cents(spent/sh)],["If it wins",money(sh)+" (profit "+money(sh-spent)+")"]];
+      if(rem>0.01)out.warn="The visible book covers only "+money(spent)+" of this amount.";
+      const cap=num(STATE&&STATE.limits&&STATE.limits.max_trade_usd);if(!Number.isNaN(cap)&&A>cap)out.warn=(out.warn?out.warn+" ":"")+"Above the per-trade cap of "+money(cap)+"; the server will refuse it.";
+      out.req={path:"/v1/orders/market",body:{...base,side:"BUY",amount_usd:String(TK.amount),max_slippage_cents:String(TK.slip||"2")}}}
+    else{
+      const S=num(TK.shares);if(!(S>0)){out.err="Enter how many shares to sell.";return out}
+      if(S>tkHeld()+1e-9){out.err="You hold only "+trimDec(tkHeld(),4)+" "+TK.outcome+" shares.";return out}
+      if(!bids.length){out.err="There are no bids in the book.";return out}
+      let rem=S,got=0;for(const l of bids){if(rem<=1e-9)break;const q=Math.min(rem,l.s);got+=q*l.p;rem-=q}
+      out.rows=[["Sell",trimDec(S,4)+" shares"],["Est. proceeds",money(got)],["Avg price",cents(got/(S-rem||1))]];
+      if(rem>1e-6)out.warn="The visible book covers only "+trimDec(S-rem,4)+" shares.";
+      out.req={path:"/v1/positions/sell",body:{...base,shares:String(TK.shares)}}}}
+  else{
+    const P=num(TK.price)/100,S=num(TK.shares);
+    if(!(P>0&&P<1)){out.err="Enter a limit price between 0 and 100¢.";return out}
+    if(!(S>0)){out.err="Enter how many shares.";return out}
+    if(!buy&&S>tkHeld()+1e-9){out.err="You hold only "+trimDec(tkHeld(),4)+" "+TK.outcome+" shares.";return out}
+    const total=P*S;
+    out.rows=buy?[["Price",cents(P)],["Shares",trimDec(S,4)],["Cost",money(total)],["If it wins",money(S)+" (profit "+money(S-total)+")"]]:[["Price",cents(P)],["Shares",trimDec(S,4)],["Proceeds",money(total)]];
+    if(buy){
+      const body={...base,side:"BUY",price:trimDec(P,4),shares:String(TK.shares),tif:TK.tif,post_only:!!TK.post};
+      if(TK.tif==="GTD"){if(!TK.expires){out.err="Pick an expiry time for a GTD order.";return out}const d=new Date(TK.expires);if(isNaN(d)||d<=new Date()){out.err="The expiry must be in the future.";return out}body.expires_at=d.toISOString()}
+      out.req={path:"/v1/orders/limit",body}}
+    else out.req={path:"/v1/positions/sell",body:{...base,shares:String(TK.shares),price:trimDec(P,4)}}}
+  return out}
+function tkSum(){
+  const c=tkCalc(),el=$("#tkSum");if(!el)return;
+  el.innerHTML=c.err?'<span class="muted small">'+esc(c.err)+'</span>':c.rows.map(([k,v])=>'<div class="split small"><span class="muted">'+esc(k)+'</span><b>'+esc(v)+'</b></div>').join("")+(c.warn?'<div class="small warn">'+esc(c.warn)+'</div>':"")}
+async function tkSubmit(){
+  const c=tkCalc(),msg=$("#tkMsg");msg.className="small";msg.textContent="";
+  if(c.err){msg.textContent=c.err;msg.classList.add("neg");return}
+  const sig=JSON.stringify(c.req),key=(TK.last&&TK.last.sig===sig)?TK.last.key:uid();
+  const rows=[["Market",TK.title],["Venue",TK.venue],["Action",TK.side+" "+TK.outcome],["Type",TK.type==="market"?"Market (fill or kill)":"Limit "+(TK.side==="BUY"?TK.tif:"")]].concat(c.rows);
+  const go=await confirmHold({title:"Place a real order",rows,label:"Hold 2 s to place order",seconds:2,tone:TK.side==="BUY"?"primary":"danger",note:"This sends a real order. If the connection drops, check Positions › Open orders before trying again."+(c.warn?" "+c.warn:"")});
+  if(!go)return;
+  TK.last={sig,key};const btn=$("#tkGo");btn.disabled=true;
+  try{
+    const r=await apiW(c.req.path,{body:c.req.body,key});TK.last=null;
+    const st=String(r.status||"submitted").toUpperCase(),cls=st==="FILLED"?"good":(st==="PARTIAL"||st==="RESTING"||st==="OPEN")?"warn":"bad";
+    msg.innerHTML='<span class="pill '+cls+'">'+esc(st)+'</span> filled '+esc(r.filled??"—")+', remaining '+esc(r.remaining??"—")+(r.average_price?' · avg '+cents(r.average_price):"")+(r.message?' · '+esc(r.message):"")+(st==="UNKNOWN"?'<div class="warn">UNKNOWN is never resent. Check the venue and Positions › Open orders before doing anything else.</div>':"")+(r.replayed?'<div class="muted">Replayed from an earlier identical request.</div>':"");
+    toast("Order "+st);loadStatus();loadOrders();tkRefreshBook()}
+  catch(e){if(!e.network)TK.last=null;msg.classList.add("neg");msg.textContent=(e.network?"Not confirmed: "+e.message+". The order may have gone through; check Open orders before retrying (a retry of the same order reuses its key).":e.message)}
+  finally{btn.disabled=false}}
+async function tkRefreshBook(){
+  if(!TK)return;try{const d=await api("/v1/market?venue="+enc(TK.venue)+"&market_id="+enc(TK.id));TK.books=d.books||TK.books;
+    const l=$("#tkLadder");if(l){const {asks,bids}=tkBook();l.innerHTML=tkLadder(bids,asks)}tkSum()}catch(e){}}
+
+/* ---------- Open orders ---------- */
+async function loadOrders(){
+  const box=$("#orderList");if(!box)return;
+  try{
+    const d=await api("/v1/orders?status=open&limit=50");
+    box.innerHTML=(d.orders||[]).length?d.orders.map(orderRow).join(""):'<div class="muted">No open orders.</div>';
+    $$("[data-cancel]",box).forEach(b=>b.addEventListener("click",()=>cancelOrder(b.dataset.cancel)));
+    $("#cancelAllBtn").disabled=!(d.orders||[]).length;
+    const h=await api("/v1/orders?limit=30");
+    $("#orderHist").innerHTML=(h.orders||[]).length?h.orders.map(orderRow).join(""):'<div class="muted">No orders yet.</div>';
+    $$("#orderHist [data-cancel]").forEach(b=>b.addEventListener("click",()=>cancelOrder(b.dataset.cancel)));
+  }catch(e){box.innerHTML='<div class="muted">'+esc(e.message)+'</div>'}}
+function orderRow(o){
+  const st=String(o.state||"").toUpperCase(),cls=st==="FILLED"?"good":(st==="OPEN"||st==="PARTIAL")?"warn":(st==="UNKNOWN"||st==="ERROR"||st==="REJECTED")?"bad":"",live=st==="OPEN"||st==="PARTIAL";
+  return '<div class="item"><div class="split"><div><span class="pill">'+esc(o.venue)+'</span> <span class="pill '+cls+'">'+esc(st)+'</span> <b>'+esc(o.side)+" "+esc(o.outcome)+'</b> '+esc(o.size)+' @ '+cents(o.price)+'<div class="tiny muted tr">'+esc(o.market_id)+' · filled '+esc(o.filled)+' · '+dhaka(o.created_at)+' · '+esc(o.short_id||"")+'</div>'+(st==="UNKNOWN"?'<div class="tiny warn">UNKNOWN: never resent. Reconcile on the venue.</div>':"")+(o.error?'<div class="tiny neg">'+esc(o.error)+'</div>':"")+'</div>'+(live?'<button class="btn small sell" data-cancel="'+esc(o.id)+'">Cancel</button>':"")+'</div></div>'}
+async function cancelOrder(id){try{await apiW("/v1/orders/"+enc(id)+"/cancel",{body:{}});toast("Cancel sent");loadOrders();loadStatus()}catch(e){toast("Cancel failed: "+e.message)}}
+$("#cancelAllBtn").addEventListener("click",async()=>{
+  if(!confirm("Cancel ALL open orders on every venue? Positions are not sold."))return;
+  try{const r=await apiW("/v1/orders/cancel-all",{body:{},key:uid()});toast("Cancel-all sent");loadOrders();loadStatus()}catch(e){toast(e.message)}});
+
+/* ---------- Wallet ---------- */
+const WL={wdOpts:null,depOpts:null,allow:[],wd:{addressId:null,quoteSig:null,key:null,body:null},timer:null,live:false,inited:false};
+const VENUES=["polymarket","kalshi","limitless"];
+function fundsNote(){
+  const vs=(CAPS&&CAPS.venues)||{},any=Object.values(vs)[0],off=any&&any.funds&&!any.funds.enabled;
+  $("#fundsNote").classList.toggle("hidden",!off);if(off)$("#fundsNote").textContent=(any.funds.reason||"The funds module is off.")+" Balances still work; deposit and withdraw are locked."}
+async function loadWallet(){
+  await ensureCaps();fundsNote();
+  if(!WL.inited){WL.inited=true;
+    const known=Object.keys(CAPS.venues||{}),vlist=known.length?VENUES.filter(v=>known.includes(v)):VENUES;
+    ["#depVenue","#wdVenue"].forEach(id=>{$(id).innerHTML=vlist.map(v=>'<option value="'+v+'">'+v+'</option>').join("")});
+    $("#depVenue").addEventListener("change",depLoad);$("#depChain").addEventListener("change",()=>{depTokens();depLookup()});$("#depToken").addEventListener("change",depLookup);
+    $("#wdVenue").addEventListener("change",wdInit);
+    ["#wdAmt","#wdAddr"].forEach(id=>$(id).addEventListener("input",wdDirty));["#wdChain"].forEach(id=>$(id).addEventListener("change",()=>{wdTokens();wdDirty()}));$("#wdToken").addEventListener("change",wdDirty);
+    $("#wdSaved").addEventListener("click",(e)=>{const b=e.target.closest("[data-aid]");if(!b)return;WL.wd.addressId=b.dataset.aid||null;wdDrawSaved();wdDirty()});
+    holdify($("#wdGo"),5,wdSubmit);
+    $("#alAddBtn").addEventListener("click",alAdd);
+    $("#depOut").addEventListener("click",(e)=>{const b=e.target.closest("[data-copy]");if(b)copyText(b.dataset.copy)});
+    $("#alList").addEventListener("click",alClick);$("#wdList").addEventListener("click",wdListClick)}
+  loadBalances();loadAllowlist();loadWithdrawals();loadFundsHistory();depLoad();wdInit();
+  if(!WL.timer)WL.timer=setInterval(()=>{if(!$("#view-wallet").classList.contains("active")){clearInterval(WL.timer);WL.timer=null;return}if(WL.live)loadWithdrawals()},5000)}
+async function loadBalances(){
+  const box=$("#balList");
+  try{const d=await api("/v1/balance"),rows=d.balances||(d.venue?[d]:[]);
+    box.innerHTML=rows.length?rows.map(b=>'<div class="card bal"><div class="split"><b>'+esc(b.display_name||b.venue)+'</b><span class="pill">'+esc(b.collateral_asset||"")+'</span></div><div class="big">'+(b.total==null?"—":money(b.total))+'</div>'
+      +'<div class="split small"><span class="muted">Available</span><b>'+(b.available==null?"—":money(b.available))+'</b></div><div class="split small"><span class="muted">In open orders</span><b>'+(b.in_orders==null?"—":money(b.in_orders))+'</b></div><div class="split small"><span class="muted">Positions</span><b>'+(b.positions_value==null?"—":money(b.positions_value))+'</b></div>'
+      +(b.reason?'<div class="tiny warn" style="margin-top:6px">'+esc(b.reason)+'</div>':'')+(b.as_of?'<div class="tiny muted" style="margin-top:6px">as of '+dhaka(b.as_of)+'</div>':'')+'</div>').join(""):'<div class="muted">No venues enabled.</div>'}
+  catch(e){box.innerHTML='<div class="muted">'+esc(e.message)+'</div>'}}
+/* deposit */
+async function depLoad(){
+  const v=$("#depVenue").value;if(!v)return;$("#depOut").innerHTML='<div class="muted small">Loading…</div>';$("#depChainRow").classList.add("hidden");
+  try{const o=await api("/v1/funds/"+v+"/deposit/options");WL.depOpts=o;
+    if(o.supported&&(o.chains||[]).length){
+      $("#depChain").innerHTML=o.chains.map(c=>'<option value="'+esc(c.chain_id)+'">'+esc(c.chain_name)+(c.min_usd?" (min $"+esc(c.min_usd)+")":"")+'</option>').join("");
+      if(o.default)$("#depChain").value=String(o.default.chain_id);
+      depTokens(o.default&&o.default.token);$("#depChainRow").classList.remove("hidden");await depLookup()}
+    else await depLookup(true)}
+  catch(e){$("#depOut").innerHTML='<div class="small neg">'+esc(e.message)+'</div>'}}
+function depTokens(pick){const c=((WL.depOpts&&WL.depOpts.chains)||[]).find(x=>String(x.chain_id)===$("#depChain").value);
+  $("#depToken").innerHTML=((c&&c.tokens)||[]).map(t=>'<option value="'+esc(t.address)+'">'+esc(t.symbol)+'</option>').join("");if(pick)$("#depToken").value=pick}
+async function depLookup(plain){
+  const v=$("#depVenue").value;$("#depOut").innerHTML='<div class="muted small">Loading…</div>';
+  try{const q=plain?"":"?network="+enc($("#depChain").value)+"&token="+enc($("#depToken").value);
+    const i=await api("/v1/funds/"+v+"/deposit"+q);
+    if(!i.supported){$("#depOut").innerHTML='<div class="small muted">'+esc(i.reason||"Not available through the API.")+'</div>'+(i.official_url?'<a class="small" href="'+esc(i.official_url)+'" target="_blank" rel="noopener noreferrer">Open the venue’s page</a>':"");return}
+    $("#depOut").innerHTML='<div class="lbl2" style="margin-bottom:6px">Send '+esc(i.asset||"")+' on '+esc(i.network||"")+' to</div><div class="addr" id="depAddr">'+esc(i.address)+'</div>'
+     +'<div class="row" style="margin-top:8px"><button class="btn small" data-copy="'+esc(i.address)+'"><svg class="i" style="width:15px;height:15px"><use href="#i-copy"/></svg>Copy address</button>'+(i.min_amount?'<span class="tiny muted">Minimum '+esc(i.min_amount)+'</span>':"")+'</div>'
+     +(i.memo?'<div class="small" style="margin-top:8px">Memo / tag: <b>'+esc(i.memo)+'</b></div>':"")
+     +((i.warnings||[]).length?'<div class="notice" style="margin:10px 0 0">'+i.warnings.map(esc).join("<br>")+'</div>':"")
+     +'<div class="tiny muted" style="margin-top:8px">Send only this asset on this network. Anything else can be lost.</div>'}
+  catch(e){$("#depOut").innerHTML='<div class="small neg">'+esc(e.message)+'</div>'}}
+/* withdraw */
+async function wdInit(){
+  const v=$("#wdVenue").value;WL.wd={addressId:null,quoteSig:null,key:null,body:null};$("#wdQuote").innerHTML="";$("#wdGo").disabled=true;
+  const vcap=(CAPS&&CAPS.venues&&CAPS.venues[v])||{},fe=vcap.funds||{};
+  $("#wdOff").textContent=(!fe.enabled)?(fe.reason||"Funds are off."):(!fe.withdraw?"This venue has no withdrawal API."+(vcap.unsupported&&vcap.unsupported.withdraw?" "+vcap.unsupported.withdraw:""):"");
+  $("#wdForm").classList.toggle("hidden",!!$("#wdOff").textContent);
+  if($("#wdOff").textContent)return;
+  try{const o=await api("/v1/funds/"+v+"/withdraw/options");WL.wdOpts=o;
+    $("#wdChain").innerHTML=(o.chains||[]).map(c=>'<option value="'+esc(c.chain_id)+'">'+esc(c.chain_name)+(c.min_usd?" (min $"+esc(c.min_usd)+")":"")+'</option>').join("");wdTokens();
+    WL.requireAllow=!!o.require_allowlist;
+    if(!o.supported)$("#wdQuote").innerHTML='<div class="small warn">'+esc(o.reason||"No chains available.")+'</div>'}
+  catch(e){$("#wdQuote").innerHTML='<div class="small neg">'+esc(e.message)+'</div>'}
+  wdDrawSaved()}
+function wdTokens(){const c=((WL.wdOpts&&WL.wdOpts.chains)||[]).find(x=>String(x.chain_id)===$("#wdChain").value);$("#wdToken").innerHTML=((c&&c.tokens)||[]).map(t=>'<option value="'+esc(t.symbol)+'">'+esc(t.symbol)+'</option>').join("")}
+function wdDrawSaved(){
+  const usable=WL.allow.filter(a=>!a.usable_at||new Date(a.usable_at)<=new Date());
+  const chips=usable.map(a=>'<button type="button" class="chip'+(WL.wd.addressId===a.id?" on":"")+'" data-aid="'+esc(a.id)+'">'+esc(a.label)+'</button>').join("");
+  $("#wdSaved").innerHTML=chips+(WL.requireAllow?"":'<button type="button" class="chip'+(!WL.wd.addressId?" on":"")+'" data-aid="">New address</button>');
+  if(WL.requireAllow&&!WL.wd.addressId&&usable.length)WL.wd.addressId=usable[0].id;
+  $("#wdNew").classList.toggle("hidden",!!WL.wd.addressId);
+  const a=WL.allow.find(x=>x.id===WL.wd.addressId);
+  $("#wdPicked").textContent=a?a.address+" · "+a.asset+" on "+a.network:"";
+  if(WL.requireAllow&&!usable.length)$("#wdQuote").innerHTML='<div class="small warn">This server only allows saved addresses. Add one below; new ones can need a cooling period.</div>'}
+function wdBody(){
+  const v=$("#wdVenue").value,amt=$("#wdAmt").value.trim();if(!(num(amt)>0))return null;
+  const b={venue:v,amount:amt};
+  if(WL.wd.addressId)b.address_id=WL.wd.addressId;
+  else{const a=$("#wdAddr").value.trim();if(!a)return null;b.recipient=a;b.network=$("#wdChain").value;b.asset=$("#wdToken").value;if(!b.network||!b.asset)return null}
+  return b}
+function wdDirty(){WL.wd.quoteSig=null;WL.wd.key=null;$("#wdGo").disabled=true;clearTimeout(WL.wd.t);WL.wd.t=setTimeout(wdQuote,500)}
+async function wdQuote(){
+  const body=wdBody(),box=$("#wdQuote");
+  if(!body){box.innerHTML='<div class="small muted">Enter an amount and a receiver to see the fee.</div>';return}
+  box.innerHTML='<div class="small muted">Getting a quote…</div>';
+  try{const q=await apiW("/v1/funds/withdraw/preview",{body});
+    if(JSON.stringify(wdBody())!==JSON.stringify(body))return;
+    WL.wd.quoteSig=JSON.stringify(body);WL.wd.key=uid();WL.wd.body=body;
+    box.innerHTML='<div class="sumbox"><div class="split small"><span class="muted">To</span><b class="tr" style="text-align:right">'+esc(q.label||"")+' '+esc((q.recipient||"").slice(0,8))+'…'+esc((q.recipient||"").slice(-6))+'</b></div>'
+     +'<div class="split small"><span class="muted">Route</span><b>'+esc(q.asset)+' on '+esc(q.network)+'</b></div><div class="split small"><span class="muted">Fee</span><b>'+money(q.fee_usd)+'</b></div><div class="split small"><span class="muted">You receive ≈</span><b>'+money(q.est_output_usd)+'</b></div>'
+     +'<div class="split small"><span class="muted">Arrives in</span><b>'+(q.eta_seconds?Math.round(q.eta_seconds/60)+" min":"—")+'</b></div><div class="split small"><span class="muted">Server hold</span><b>'+esc(q.hold_seconds)+' s (cancel-able)</b></div><div class="split small"><span class="muted">Daily limit left</span><b>'+money(q.daily_remaining_usd)+'</b></div></div>';
+    $("#wdGo").disabled=false}
+  catch(e){box.innerHTML='<div class="small neg">'+esc(e.message)+'</div>'}}
+async function wdSubmit(){
+  const body=wdBody();
+  if(!body||JSON.stringify(body)!==WL.wd.quoteSig){toast("Wait for the quote to refresh first.");return}
+  const key=WL.wd.key||uid();$("#wdGo").disabled=true;
+  try{const r=await apiW("/v1/funds/withdraw",{body,key});WL.wd.key=null;
+    toast("Withdrawal created. It is held for "+(r.hold_seconds??"a few")+" s; you can cancel it below.");
+    $("#wdAmt").value="";$("#wdQuote").innerHTML="";WL.wd.quoteSig=null;loadWithdrawals();loadBalances()}
+  catch(e){if(!e.network)WL.wd.key=null;$("#wdQuote").insertAdjacentHTML("beforeend",'<div class="small neg" style="margin-top:8px">'+esc(e.network?"Not confirmed: "+e.message+". Check the list below before trying again.":e.message)+'</div>');if(e.network)$("#wdGo").disabled=false;else wdDirty()}}
+async function loadWithdrawals(){
+  try{const d=await api("/v1/funds/withdrawals"),rows=(d.withdrawals||[]).slice().reverse();
+    WL.live=rows.some(w=>w.status==="PENDING_HOLD"||w.status==="SUBMITTED");
+    $("#wdList").innerHTML=rows.length?rows.slice(0,20).map(w=>{const cls=w.status==="CONFIRMED"?"good":(w.status==="FAILED"||w.status==="UNKNOWN"||w.status==="CANCELLED")?"bad":"warn";
+      return '<div class="item"><div class="split"><div><span class="pill '+cls+'">'+esc(w.status)+'</span> <b>'+money(w.amount_usd)+'</b> <span class="muted small">'+esc(w.asset)+' on '+esc(w.network)+'</span><div class="tiny muted tr">to '+esc(w.recipient)+' · '+dhaka(w.created_at)+'</div>'+(w.status==="PENDING_HOLD"?'<div class="tiny warn">Held until '+dhaka(w.hold_until)+'</div>':"")+(w.tx_hash?'<div class="tiny muted tr">tx '+esc(w.tx_hash)+'</div>':"")+(w.error?'<div class="tiny neg">'+esc(w.error)+'</div>':"")+(w.status==="UNKNOWN"?'<div class="tiny warn">UNKNOWN is never resent. Check the transaction hash on the chain.</div>':"")+'</div>'+(w.status==="PENDING_HOLD"?'<button class="btn small sell" data-wcancel="'+esc(w.id)+'">Cancel</button>':"")+'</div></div>'}).join(""):'<div class="muted">No withdrawals yet.</div>'}
+  catch(e){$("#wdList").innerHTML='<div class="muted">'+esc(e.message)+'</div>'}}
+async function wdListClick(e){const b=e.target.closest("[data-wcancel]");if(!b)return;try{await apiW("/v1/funds/withdrawals/"+enc(b.dataset.wcancel)+"/cancel",{body:{}});toast("Withdrawal cancelled");loadWithdrawals();loadBalances()}catch(err){toast(err.message)}}
+/* saved addresses */
+async function loadAllowlist(){
+  try{const d=await api("/v1/funds/allowlist");WL.allow=d.entries||[];
+    $("#alList").innerHTML=WL.allow.length?WL.allow.map(a=>{const cool=a.usable_at&&new Date(a.usable_at)>new Date();return '<div class="item"><div class="split"><div><b>'+esc(a.label)+'</b> '+(cool?'<span class="pill warn">cooling until '+esc(dhaka(a.usable_at))+'</span>':'<span class="pill good">ready</span>')+'<div class="tiny muted tr">'+esc(a.address)+'</div><div class="tiny muted">'+esc(a.asset)+' on '+esc(a.network)+'</div></div><button class="btn small" data-aldel="'+esc(a.id)+'" aria-label="Remove '+esc(a.label)+'">Remove</button></div></div>'}).join(""):'<div class="muted">No saved addresses. Add one to withdraw with a single tap.</div>';
+    if($("#wdSaved"))wdDrawSaved()}
+  catch(e){$("#alList").innerHTML='<div class="muted">'+esc(e.message)+'</div>'}}
+async function alClick(e){const b=e.target.closest("[data-aldel]");if(!b)return;if(!confirm("Remove this saved address?"))return;try{await apiW("/v1/funds/allowlist/"+enc(b.dataset.aldel),{method:"DELETE"});toast("Address removed");if(WL.wd.addressId===b.dataset.aldel)WL.wd.addressId=null;loadAllowlist()}catch(err){toast(err.message)}}
+async function alAdd(){
+  let o=WL.wdOpts;
+  if(!o||!(o.chains||[]).length){try{o=await api("/v1/funds/polymarket/withdraw/options");WL.wdOpts=o}catch(e){toast(e.message);return}}
+  const chains=o.chains||[];if(!chains.length){toast(o.reason||"No chains available");return}
+  const s=sheet('<h2>Add a saved address</h2><form class="col" id="alForm"><input id="alLabel" placeholder="Label, e.g. Ledger" maxlength="40" required><input id="alAddr" placeholder="0x… receiver address" required autocomplete="off" spellcheck="false"><select id="alChain" aria-label="Chain">'+chains.map(c=>'<option value="'+esc(c.chain_id)+'">'+esc(c.chain_name)+'</option>').join("")+'</select><select id="alTok" aria-label="Token"></select><input id="alPw" type="password" placeholder="Admin password (checked once)" autocomplete="current-password" required><div class="tiny muted">A new address can need a cooling period before its first use. The password is exchanged for a single-use token and never stored.</div><div id="alErr" class="small neg"></div><div class="row" style="flex-wrap:nowrap"><button type="button" class="btn grow" data-x>Cancel</button><button class="btn primary grow" type="submit">Save address</button></div></form>');
+  const fillTok=()=>{const c=chains.find(x=>String(x.chain_id)===$("#alChain",s.box).value);$("#alTok",s.box).innerHTML=((c&&c.tokens)||[]).map(t=>'<option value="'+esc(t.symbol)+'">'+esc(t.symbol)+'</option>').join("")};
+  fillTok();$("#alChain",s.box).addEventListener("change",fillTok);
+  $("#alForm",s.box).addEventListener("submit",async(ev)=>{ev.preventDefault();const err=$("#alErr",s.box);err.textContent="";const pw=$("#alPw",s.box);
+    try{const t=await apiW("/v1/auth/stepup",{body:{password:pw.value,action:"allowlist_add"}});pw.value="";
+      await apiW("/v1/funds/allowlist",{body:{label:$("#alLabel",s.box).value.trim(),address:$("#alAddr",s.box).value.trim(),network:$("#alChain",s.box).value,asset:$("#alTok",s.box).value},stepup:t.stepup_token});
+      s.close();toast("Address saved");loadAllowlist()}
+    catch(e){pw.value="";err.textContent=e.message}})}
+async function loadFundsHistory(){
+  const box=$("#fhList");
+  try{const d=await api("/v1/funds/history");const rows=d.history||[];
+    box.innerHTML=rows.length?rows.slice(0,30).map(r=>'<div class="item small"><span class="pill">'+esc(r.venue||"")+'</span> '+Object.entries(r).filter(([k,v])=>k!=="venue"&&v!==null&&typeof v!=="object").slice(0,6).map(([k,v])=>'<span class="muted">'+esc(k)+'</span> '+esc(v)).join(" · ")+'</div>').join(""):'<div class="muted">'+esc(d.reason||"No venue-reported deposits or withdrawals.")+'</div>'}
+  catch(e){box.innerHTML='<div class="muted">'+esc(e.message)+'</div>'}}
+
+/* ---------- Chat history ---------- */
+const CHAT={id:null,list:[],q:"",restored:false,busy:false,oldest:null,timer:null};
+try{CHAT.id=localStorage.getItem("mm-chat-id")||null}catch(e){}
+const CHAT_GREETING="Slash commands are handled server-side. Send /help. Real order statuses are reported verbatim.";
+function chatSaveId(){try{if(CHAT.id)localStorage.setItem("mm-chat-id",CHAT.id);else localStorage.removeItem("mm-chat-id")}catch(e){}}
+function chatHistOpen(){$("#chatHist").classList.add("open");$("#histScrim").classList.add("show")}
+function chatHistClose(){const h=$("#chatHist");if(h)h.classList.remove("open");const s=$("#histScrim");if(s)s.classList.remove("show")}
+$("#histBtn").addEventListener("click",chatHistOpen);$("#histClose").addEventListener("click",chatHistClose);$("#histScrim").addEventListener("click",chatHistClose);
+$("#newChatBtn").addEventListener("click",()=>{chatNew();chatHistClose();$("#chatInput").focus()});$("#histNew").addEventListener("click",()=>{chatNew();chatHistClose();$("#chatInput").focus()});
+$("#histSearch").addEventListener("input",()=>{clearTimeout(CHAT.timer);CHAT.timer=setTimeout(()=>{CHAT.q=$("#histSearch").value.trim();chatList()},350)});
+function chatNew(){CHAT.id=null;chatSaveId();$("#chatlog").innerHTML='<div class="msg bot">'+esc(CHAT_GREETING)+'</div>';$("#chatTitle").textContent="New chat";chatMark()}
+async function chatRestore(){if(CHAT.restored)return;CHAT.restored=true;await chatList();if(CHAT.id)await chatOpen(CHAT.id)}
+async function chatList(){
+  try{const d=await api("/v1/conversations?limit=100"+(CHAT.q?"&q="+enc(CHAT.q):""));CHAT.list=d.conversations||[];
+    $("#histList").innerHTML=CHAT.list.length?CHAT.list.map(c=>'<div class="citem'+(c.id===CHAT.id?" on":"")+'" data-cid="'+esc(c.id)+'" tabindex="0"><div class="ctitle">'+esc(c.title||"Untitled chat")+'</div><div class="tiny muted">'+esc(dhaka(c.updated_at))+' · '+esc(c.message_count)+' msgs'+(c.status==="running"?' · answering':c.status==="interrupted"?' · interrupted':"")+'</div><div class="cact"><button data-ren="'+esc(c.id)+'" aria-label="Rename chat"><svg class="i"><use href="#i-edit"/></svg></button><button data-del="'+esc(c.id)+'" aria-label="Delete chat"><svg class="i"><use href="#i-trash"/></svg></button></div></div>').join(""):'<div class="muted small" style="padding:10px">'+(CHAT.q?"No chats match.":"No saved chats yet. Send a message to start one.")+'</div>';
+    chatMark()}
+  catch(e){$("#histList").innerHTML='<div class="muted small" style="padding:10px">'+esc(e.message)+'</div>'}}
+function chatMark(){const c=CHAT.list.find(x=>x.id===CHAT.id);if(c)$("#chatTitle").textContent=c.title||"Untitled chat";$$("#histList .citem").forEach(el=>el.classList.toggle("on",el.dataset.cid===CHAT.id))}
+$("#histList").addEventListener("click",async(e)=>{
+  const ren=e.target.closest("[data-ren]"),del=e.target.closest("[data-del]"),it=e.target.closest("[data-cid]");
+  if(ren){e.stopPropagation();const c=CHAT.list.find(x=>x.id===ren.dataset.ren);const t=await askText("Rename chat",(c&&c.title)||"","Chat title");if(!t)return;try{await api("/v1/conversations/"+enc(ren.dataset.ren)+"/rename",{method:"POST",body:JSON.stringify({title:t})});chatList()}catch(err){toast(err.message)}return}
+  if(del){e.stopPropagation();if(!confirm("Delete this chat and all its messages?"))return;try{await api("/v1/conversations/"+enc(del.dataset.del),{method:"DELETE"});if(CHAT.id===del.dataset.del)chatNew();chatList()}catch(err){toast(err.message)}return}
+  if(it){await chatOpen(it.dataset.cid);chatHistClose()}});
+$("#histList").addEventListener("keydown",(e)=>{if(e.key==="Enter"){const it=e.target.closest&&e.target.closest("[data-cid]");if(it&&e.target===it){chatOpen(it.dataset.cid);chatHistClose()}}});
+async function chatOpen(id){
+  try{const d=await api("/v1/conversations/"+enc(id));CHAT.id=id;chatSaveId();
+    const log=$("#chatlog");log.innerHTML="";
+    if(d.has_more)log.insertAdjacentHTML("afterbegin",'<button class="btn small" id="chatOlder">Load older messages</button>');
+    const ms=d.messages||[];CHAT.oldest=ms.length?ms[0].seq:null;
+    if(!ms.length)log.insertAdjacentHTML("beforeend",'<div class="msg bot">'+esc(CHAT_GREETING)+'</div>');
+    ms.forEach(m=>addMsg(m.text,m.role==="user"?"user":"bot"));
+    const o=$("#chatOlder");if(o)o.addEventListener("click",chatOlder);
+    if(d.conversation&&d.conversation.status==="interrupted")addMsg("The last answer in this chat was interrupted when the server stopped. Any order it started is listed under Positions › Open orders.","bot");
+    if(d.conversation&&d.conversation.status==="running")addMsg("This chat is still answering its previous message.","bot");
+    chatMark()}
+  catch(e){if(/not found|404/i.test(e.message)){CHAT.id=null;chatSaveId();chatNew()}toast(e.message)}}
+async function chatOlder(){
+  if(!CHAT.id||CHAT.oldest==null)return;
+  try{const d=await api("/v1/conversations/"+enc(CHAT.id)+"/messages?before="+CHAT.oldest+"&limit=50"),ms=d.messages||[],log=$("#chatlog"),btn=$("#chatOlder");
+    const frag=document.createDocumentFragment();ms.forEach(m=>{const el=document.createElement("div");el.className="msg "+(m.role==="user"?"user":"bot");el.textContent=m.text;frag.appendChild(el)});
+    const h0=log.scrollHeight;(btn?btn.after(frag):log.prepend(frag));log.scrollTop+=log.scrollHeight-h0;
+    if(ms.length)CHAT.oldest=ms[0].seq;if(!d.has_more&&btn)btn.remove()}
+  catch(e){toast(e.message)}}
 </script>
 </body>
 </html>
