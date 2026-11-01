@@ -1,7 +1,7 @@
 # WORKLOG - live category views (branch feat/live-category-views)
 
 ## Baseline (before P0)
-ruff check, ruff format --check, mypy src: clean. pytest: all pass (88 tests). Python 3.12.3.
+ruff check, ruff format --check, mypy src: clean. pytest: all pass (161 tests). Python 3.12.3.
 
 ## Handoff - P0 (probe)
 Done:
