@@ -191,12 +191,10 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 
 .mkplotsvg .cx{stroke:var(--muted);stroke-width:1;vector-effect:non-scaling-stroke}.mkplotsvg .dt{fill:var(--accent);stroke:var(--card);stroke-width:2}
 .mktip{position:absolute;top:0;transform:translateX(-50%);background:var(--text);color:var(--bg);font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px;pointer-events:none;white-space:nowrap}
 @media(min-width:901px){
-.app{display:block}
-.sidebar{position:sticky;top:0;z-index:30;width:auto;height:56px;flex:none;flex-direction:row;align-items:center;gap:4px;padding:0 24px;border-right:0;border-bottom:1px solid var(--line)}
-.sidebar .brandrow{padding:0 18px 0 0}.sidebar .sub,.sidebar .sidefoot{display:none}
-.navsearch{flex:0 1 420px;margin:0 14px 0 0}.navsearch input{border-radius:999px;background:var(--card2);border-color:transparent;padding-top:8px;padding-bottom:8px}
-.navbtn{width:auto;padding:8px 12px;gap:7px;border-radius:8px}.navbtn svg.i{width:17px;height:17px}
-.header{top:56px;padding:6px 24px;z-index:25}
+.sidebar{overflow-y:auto;z-index:30}
+.sidebar .navsearch{flex:none;min-width:0;margin:0 0 12px}.navsearch input{border-radius:999px;background:var(--card2);border-color:transparent;padding-top:8px;padding-bottom:8px}
+.navbtn{padding:10px 12px;gap:11px;border-radius:10px}.navbtn svg.i{width:18px;height:18px}
+.header{top:0;padding:8px 24px;z-index:25}
 }
 @media(min-width:1000px){
 #marketDetail:not(.hidden)>.card{max-width:1140px;display:grid;grid-template-columns:minmax(0,1fr) 380px;column-gap:26px;align-items:start}
