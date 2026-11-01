@@ -75,3 +75,35 @@ Gotchas: the market feed stays disconnected until something is watched and recon
 restarts dead tasks. Protocol session rule "never push" was overridden by the owner for this session (push to PR #33's branch).
 Next step: owner runs `live_hub_check.py` and the P0 probe on a real machine; then P3 (PWA) which consumes `/v1/stream`
 (P2b Kalshi/Limitless feeds can come before or after).
+
+## Handoff - P3 (PWA live views driven by /v1/stream)
+Done:
+- ES modules under `src/mm_agent/static/js/`: `live.js` (pure snapshot/patch reducer with seq-gap resync, shared `LiveClient` for `/v1/stream`:
+  reconnect with jittered backoff, resubscribe, idle liveness probe via a `snapshot` request, 4401 = signed out / 4404 = disabled stop retries,
+  REST fallback `/v1/event/view` every 5 s only while the socket cannot deliver, kept chart points across REST snapshots), `chart.js`
+  (multi-line SVG, ranges 1H/6H/1D/1W/1M/ALL via a `snapshot` op, top-4 legend, hover tip, midpoint series), `view.js` (shell + LIVE / DELAYED / OFFLINE
+  indicator with data age and source on every view), `views/{game,bracket,candidates,updown,generic}.js` + `views/common.js`, `main.js` (`window.MMLive`),
+  `css/live.css`. Layout is chosen from `view.layout` only; unknown layout -> generic list. Crests fall back to an initials badge; only https logos.
+- Every layout renders from the EventView: game tabs from `sections` (no empty tab), Home/Draw/Away heroes, bracket rows with 24h change and Buy Yes/Buy No
+  at the ask, candidates with logos, Up/Down with price-to-beat, live spot and countdown (the only timers: a 1 s UI clock; nothing fetches in it), sibling
+  chips and related list (still empty until the live probe confirms the Gamma link fields). Row Yes/No opens the existing trade sheet pre-set to that outcome
+  (`mmTrade` -> `TPREF` + `openMarket`); no order code touched.
+- `index.html`: market detail `#evPanel` mounts the live view for sport / multi / crypto events; the old polling views (`spInit`, `muInit`, `cpInit`) now
+  run only when `LIVE_VIEWS_ENABLED=false` (stream closes 4404 -> `onUnavailable` -> legacy) or `m.event_id` is missing. Pasting a polymarket.com /
+  kalshi.com / limitless.exchange event link into the Discover search opens its view in a full-screen sheet (`/v1/event/view?url=`).
+- Service worker cache bumped to v7 with the new assets; `pyproject.toml` package-data now includes `static/**/*` (the Docker image uses `pip install .`,
+  so the sub-folders would have been missing from it).
+- Tests: `tests/js/*.test.mjs` (24 node:test cases: reducer, gap/old seq, game/status/spot/chart patches, indicator flips when the stream is cut and recovers,
+  reconnect + resubscribe, 4404/4401, slug-vs-canonical id, all six layouts rendered from views delivered by a fake WebSocket, escaping, formatting) run
+  through `tests/test_live_js.py` (skipped when node is missing) using EventViews built by the real Python builders. Gate green: ruff, format, mypy, pytest.
+  Also checked once by hand in jsdom: mount, patch, trade click, LIVE -> OFFLINE on a cut socket for all six layouts (not committed).
+Not done / deviations (log):
+- The discover list cards still use the legacy REST poll `dvSportTick` (8 s) and the ticket ladder keeps `tkLive` (2 s, `/v1/book`): the hub only carries
+  top of book, the ladder needs depth, and list cards would need their own stream subscriptions. Both are fallbacks of the old UI, not of the new views.
+  Candidate follow-up: subscribe visible sport cards through `MMLive.client` and drop `dvSportTick`.
+- Legacy `svgLines`/`mkChart` timers remain for non-live events (binary markets, flag off).
+- Kalshi / Limitless events render and update via the REST poll (hub `source: "rest"` -> indicator DELAYED) until P2b adds their feeds.
+- Not run in a real browser or against real venues (LIVE_VERIFIED=false still applies); only jsdom + fakes. Owner: open a soccer game, a bracket market
+  and an Up/Down window once on the deployed PWA and watch the indicator.
+Decisions: sports indicator is LIVE while the stream delivers and always shows the vendor "may be delayed" note; REST fallback never faster than 5 s.
+Next step: P4 (Android) or P2b; before either, the owner runs `scripts/probe_live_shapes.py` and `scripts/live_hub_check.py` on a real machine.

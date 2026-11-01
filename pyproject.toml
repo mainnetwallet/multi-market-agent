@@ -48,7 +48,7 @@ mm-doctor = "mm_agent.doctor:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-mm_agent = ["static/*"]
+mm_agent = ["static/*", "static/**/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

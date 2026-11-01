@@ -1,5 +1,5 @@
-const CACHE = "mm-agent-v6";
-const SHELL = ["/", "/static/index.html", "/static/manifest.webmanifest", "/static/icon.svg"];
+const CACHE = "mm-agent-v7";
+const SHELL = ["/", "/static/index.html", "/static/manifest.webmanifest", "/static/icon.svg", "/static/css/live.css", "/static/js/main.js", "/static/js/live.js", "/static/js/view.js", "/static/js/chart.js", "/static/js/views/common.js", "/static/js/views/game.js", "/static/js/views/bracket.js", "/static/js/views/candidates.js", "/static/js/views/updown.js", "/static/js/views/generic.js"];
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 });
