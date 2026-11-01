@@ -8,6 +8,7 @@ from .. import eventview_source
 from ..domain import VenueId
 from .history import fetch_history, fetch_kalshi_history, fetch_limitless_history
 from .hub import LiveHub
+from .kalshi_sports import KalshiLiveDataFeed
 from .kalshi_ws import KalshiMarketFeed
 from .limitless_ws import LimitlessMarketFeed
 from .polybolt import CryptoPrices
@@ -85,12 +86,23 @@ def build_hub(registry: Any, *, run_feeds: bool) -> LiveHub:
             on_state=hub.on_feed_state,
             on_settled=lambda slug, won: hub.on_settled("limitless", slug, won),
         )
+    kalshi_sports = None
+    if kalshi is not None and hasattr(kalshi, "base_url"):
+
+        async def live_data(milestone_ids: list[str]) -> Any:
+            # public REST read, at most 100 ids per call; the poller chunks
+            return await kalshi.get_json(
+                kalshi.base_url + "/live_data/batch", params={"milestone_ids": ",".join(milestone_ids)}
+            )
+
+        kalshi_sports = KalshiLiveDataFeed(live_data, on_game=hub.on_kalshi_game)
     hub.attach(
         market=market,
         sports=sports,
         crypto=crypto,
         kalshi=kalshi_feed,
         limitless=limitless_feed,
+        kalshi_sports=kalshi_sports,
         unavailable=unavailable,
     )
     return hub

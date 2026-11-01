@@ -538,8 +538,14 @@ def _kalshi_row(m: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def build_kalshi_view(raw: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
-    """EventView of a Kalshi event with nested markets. Strike markets become a ladder; volume is contracts."""
+def build_kalshi_view(
+    raw: dict[str, Any], *, now: datetime | None = None, milestone_ids: list[str] | None = None
+) -> dict[str, Any]:
+    """EventView of a Kalshi event with nested markets. Strike markets become a ladder; volume is contracts.
+
+    ``milestone_ids`` are the Kalshi milestones whose live data (scores) belong to this event; they ride along in
+    ``raw_extra`` for the live hub and change nothing else.
+    """
 
     now = now or datetime.now(UTC)
     rows = [r for r in (_kalshi_row(m) for m in raw.get("markets") or [] if isinstance(m, dict)) if r]
@@ -558,7 +564,10 @@ def build_kalshi_view(raw: dict[str, Any], *, now: datetime | None = None) -> di
         volume_unit="contracts",
         url=f"https://kalshi.com/markets/{ticker.lower()}" if ticker else None,
         category_path=[category] if category else [],
-        extra={"volume_note": "Kalshi volume is in contracts"},
+        extra={
+            "volume_note": "Kalshi volume is in contracts",
+            **({"milestone_ids": milestone_ids} if milestone_ids else {}),
+        },
     )
 
 

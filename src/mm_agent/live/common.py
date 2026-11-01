@@ -73,3 +73,17 @@ class FeedStats:
             "subs": self.subs,
             "dropped": self.dropped,
         }
+
+
+def retry_after(exc: BaseException) -> float | None:
+    """Seconds the venue asked us to wait (``Retry-After`` on a 429/503), capped at two minutes; None if unknown."""
+
+    raw: Any = getattr(exc, "retry_after", None)
+    if raw is None:
+        headers = getattr(getattr(exc, "response", None), "headers", None)
+        raw = headers.get("Retry-After") if headers is not None else None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return min(120.0, seconds) if seconds > 0 else None

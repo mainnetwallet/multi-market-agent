@@ -30,7 +30,10 @@ from typing import Any
 
 from ..util import get_logger
 from .common import Quote
+from .common import retry_after as _retry_after
 from .history import RANGE_INTERVAL
+from .kalshi_sports import SOURCE as KALSHI_GAME_SOURCE
+from .kalshi_sports import KalshiGame
 from .polymarket_sports_ws import GameState, norm_name
 
 logger = get_logger(__name__)
@@ -205,11 +208,13 @@ class LiveHub:
         self.crypto: Any = None  # CryptoPrices
         self.kalshi: Any = None  # KalshiMarketFeed
         self.limitless: Any = None  # LimitlessMarketFeed
+        self.kalshi_sports: Any = None  # KalshiLiveDataFeed (REST-polled scores)
         self.unavailable: dict[str, str] = {}  # feed name -> why it is not running (shown in /status)
         self._feed_up: dict[str, bool] = {}
         self._states: dict[Key, _State] = {}
         self._alias: dict[Key, Key] = {}
         self._asset_index: dict[Key, set[Key]] = {}  # (venue, asset) -> the events that follow it
+        self._milestone_index: dict[str, set[Key]] = {}  # Kalshi milestone id -> the events that follow it
         self._clients: set[ClientSink] = set()
         self._rest_block: dict[str, tuple[float, int]] = {}  # venue -> (no REST refresh before, failures in a row)
         self._locks: dict[Key, tuple[asyncio.Lock, int]] = {}  # lock + number of tasks using it
@@ -225,10 +230,12 @@ class LiveHub:
         crypto: Any = None,
         kalshi: Any = None,
         limitless: Any = None,
+        kalshi_sports: Any = None,
         unavailable: dict[str, str] | None = None,
     ) -> None:
         self.market, self.sports, self.crypto = market, sports, crypto
         self.kalshi, self.limitless = kalshi, limitless
+        self.kalshi_sports = kalshi_sports
         self.unavailable = dict(unavailable or {})
         self._feed_up = {f.name: bool(f.stats.connected) for f in self._market_feeds()}
 
@@ -236,6 +243,11 @@ class LiveHub:
         """The feeds that carry prices (the sports feed carries scores and is not tied to any one venue)."""
 
         return [f for f in (self.market, self.kalshi, self.limitless) if f is not None]
+
+    def _all_feeds(self) -> list[Any]:
+        """Everything with a lifecycle and ``/status`` numbers: price feeds, sports feed, Kalshi score poller."""
+
+        return [*self._market_feeds(), *(f for f in (self.sports, self.kalshi_sports) if f is not None)]
 
     def _feed_for(self, venue: str) -> Any:
         return {"polymarket": self.market, "kalshi": self.kalshi, "limitless": self.limitless}.get(venue)
@@ -252,18 +264,16 @@ class LiveHub:
             asyncio.create_task(self._loop(self.flush, self.flush_interval), name="live-flush"),
             asyncio.create_task(self._loop(self.housekeeping, 1.0), name="live-housekeeping"),
         ]
-        for feed in (*self._market_feeds(), self.sports):
-            if feed is not None:
-                feed.start()
+        for feed in self._all_feeds():
+            feed.start()
 
     async def stop(self) -> None:
         tasks, self._tasks = self._tasks, []
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        for feed in (*self._market_feeds(), self.sports):
-            if feed is not None:
-                await feed.stop()
+        for feed in self._all_feeds():
+            await feed.stop()
         for sink in list(self._clients):
             self.disconnect(sink)
 
@@ -426,6 +436,15 @@ class LiveHub:
         feed = self._feed_for(venue)
         if fresh and feed is not None:
             feed.watch(fresh)
+        if venue == "kalshi" and self.kalshi_sports is not None:
+            new_games: list[str] = []
+            for milestone in _milestone_ids(state.view):
+                owners = self._milestone_index.setdefault(milestone, set())
+                if not owners:
+                    new_games.append(milestone)
+                owners.add(state.key)
+            if new_games:
+                self.kalshi_sports.watch(new_games)
 
     def _unwatch(self, state: _State) -> None:
         gone: list[str] = []
@@ -441,6 +460,18 @@ class LiveHub:
         feed = self._feed_for(venue)
         if gone and feed is not None:
             feed.unwatch(gone)
+        if venue == "kalshi" and self.kalshi_sports is not None:
+            over: list[str] = []
+            for milestone in _milestone_ids(state.view):
+                owners = self._milestone_index.get(milestone)
+                if owners is None:
+                    continue
+                owners.discard(state.key)
+                if not owners:
+                    del self._milestone_index[milestone]
+                    over.append(milestone)
+            if over:
+                self.kalshi_sports.unwatch(over)
 
     def _leave(self, sink: ClientSink, key: Key) -> None:
         sink.keys.discard(key)
@@ -648,7 +679,7 @@ class LiveHub:
     # ------------------------------------------------------------------ sports
     def _link_game(self, state: _State) -> None:
         game = state.view.get("game")
-        if not game or self.sports is None:
+        if not game or self.sports is None or state.key[0] != "polymarket":
             return
         found = self.sports.find(
             game.get("game_id"), (game.get("home") or {}).get("name", ""), (game.get("away") or {}).get("name", "")
@@ -659,7 +690,7 @@ class LiveHub:
     def on_game(self, gs: GameState) -> None:
         for state in self._states.values():
             game = state.view.get("game")
-            if not game:
+            if not game or state.key[0] != "polymarket":
                 continue
             same_id = game.get("game_id") not in (None, "") and str(game["game_id"]) == gs.game_id
             names = {
@@ -715,6 +746,66 @@ class LiveHub:
                     merged.setdefault(k, {}).update(v)
                 else:
                     merged[k] = v
+
+    def on_kalshi_game(self, gs: KalshiGame) -> None:
+        """A polled Kalshi score. The first one gives the event a ``game`` block (clients get a fresh snapshot)."""
+
+        for key in tuple(self._milestone_index.get(gs.milestone_id, ())):
+            state = self._states.get(key)
+            if state is not None:
+                self._apply_kalshi_game(state, gs)
+
+    def _apply_kalshi_game(self, state: _State, gs: KalshiGame) -> None:
+        view = state.view
+        existing = view.get("game")
+        created = not isinstance(existing, dict)
+        game: dict[str, Any]
+        if isinstance(existing, dict):
+            game = existing
+        else:
+            game = {
+                "game_id": None,
+                "league": "",
+                "period": "",
+                "elapsed": "",
+                "live": False,
+                "ended": False,
+                "home": {"name": "", "abbr": "", "logo": None, "score": None},
+                "away": {"name": "", "abbr": "", "logo": None, "score": None},
+            }
+        patch: dict[str, Any] = {}
+        for label, name, score in (("home", gs.home, gs.home_score), ("away", gs.away, gs.away_score)):
+            team = game[label]
+            if name and team.get("name") != name:
+                team["name"] = patch.setdefault(label, {})["name"] = name
+            if score is not None and team.get("score") != score:
+                team["score"] = patch.setdefault(label, {})["score"] = score
+        for field_name, value in (("period", gs.period or None), ("live", gs.live), ("ended", gs.ended)):
+            if game.get(field_name) != value:
+                game[field_name] = patch[field_name] = value
+        if game.get("status_text") != gs.status:
+            game["status_text"] = patch["status_text"] = gs.status
+        game["source"] = patch["source"] = KALSHI_GAME_SOURCE
+        game["source_ts"] = patch["source_ts"] = gs.source_ts or self._now()
+        status = "ended" if gs.ended else ("live" if gs.live else None)
+        if status and view.get("status") != status:
+            view["status"] = status
+            state.pending["status"] = status
+        if created:
+            # a game patch is ignored by a client that has no game block yet, so everyone gets a fresh snapshot
+            view["game"] = game
+            state.pending.clear()
+            state.seq += 1
+            rng = str((view.get("chart") or {}).get("range") or "1D")
+            for sink in state.sinks:
+                sink.put(self._snapshot(state, rng, state.ident))
+            return
+        merged = state.pending.setdefault("game", {})
+        for k, v in patch.items():
+            if isinstance(v, dict):
+                merged.setdefault(k, {}).update(v)
+            else:
+                merged[k] = v
 
     # ------------------------------------------------------------------ freshness
     def _set_stale(self, state: _State, stale: bool) -> None:
@@ -880,7 +971,7 @@ class LiveHub:
 
     # ------------------------------------------------------------------ metrics
     def metrics(self) -> dict[str, Any]:
-        feeds = {f.name: f.stats.as_dict() for f in (*self._market_feeds(), self.sports) if f is not None}
+        feeds = {f.name: f.stats.as_dict() for f in self._all_feeds()}
         for name, reason in self.unavailable.items():
             feeds[name] = {"connected": False, "available": False, "reason": reason}
         dropped = self.dropped_total + sum(s.dropped for s in self._clients)
@@ -893,19 +984,13 @@ class LiveHub:
         }
 
 
+def _milestone_ids(view: dict[str, Any]) -> list[str]:
+    """The Kalshi milestones whose live data belongs to this event (put there by the view source, if it found any)."""
+
+    extra = view.get("raw_extra")
+    ids = extra.get("milestone_ids") if isinstance(extra, dict) else None
+    return [i for i in ids if isinstance(i, str)] if isinstance(ids, list) else []
+
+
 class _Limit(Exception):
     pass
-
-
-def _retry_after(exc: BaseException) -> float | None:
-    """Seconds the venue asked us to wait (``Retry-After`` on a 429/503), capped at two minutes; None if unknown."""
-
-    raw: Any = getattr(exc, "retry_after", None)
-    if raw is None:
-        headers = getattr(getattr(exc, "response", None), "headers", None)
-        raw = headers.get("Retry-After") if headers is not None else None
-    try:
-        seconds = float(raw)
-    except (TypeError, ValueError):
-        return None
-    return min(120.0, seconds) if seconds > 0 else None

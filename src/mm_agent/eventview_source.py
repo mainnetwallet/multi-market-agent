@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from .eventview import build_kalshi_view, build_limitless_view, build_polymarket_view
@@ -51,6 +52,41 @@ def _eid(event: dict[str, Any]) -> str:
     return str(event.get("id") or event.get("slug") or "")
 
 
+_MILESTONE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
+_MILESTONES: dict[str, tuple[float, list[str]]] = {}  # event ticker -> (valid until, milestone ids)
+MILESTONE_TTL = 600.0  # a game's milestone does not change; do not look it up on every REST refresh
+MILESTONE_RETRY = 120.0  # after a failed or empty lookup, wait this long before asking again
+
+
+async def _kalshi_milestones(adapter: Any, ticker: str, category: str) -> list[str]:
+    """Milestone ids for a Kalshi Sports event (``GET /milestones?related_event_ticker=``; docs only, unverified).
+
+    Best effort: any failure means "no live score", never a failed view. Public read, cached per ticker.
+    """
+
+    if category.strip().lower() != "sports":
+        return []
+    now = time.monotonic()
+    hit = _MILESTONES.get(ticker)
+    if hit is not None and hit[0] > now:
+        return hit[1]
+    ids: list[str] = []
+    try:
+        data = await adapter.get_json(
+            adapter.base_url + "/milestones", params={"related_event_ticker": ticker, "limit": 10}
+        )
+        rows = data.get("milestones") if isinstance(data, dict) else None
+        ids = [str(m["id"]) for m in rows or [] if isinstance(m, dict) and _MILESTONE_ID.match(str(m.get("id") or ""))][
+            :5
+        ]
+    except Exception as exc:  # the event still renders without a score
+        log.info("kalshi milestones unavailable: %s", type(exc).__name__)
+    if len(_MILESTONES) >= 256:
+        _MILESTONES.clear()
+    _MILESTONES[ticker] = (now + (MILESTONE_TTL if ids else MILESTONE_RETRY), ids)
+    return ids
+
+
 async def kalshi_view(adapter: Any, *, ticker: str) -> dict[str, Any] | None:
     if not _KALSHI_TICKER.match(ticker):
         raise ValueError("bad event ticker")
@@ -63,7 +99,8 @@ async def kalshi_view(adapter: Any, *, ticker: str) -> dict[str, Any] | None:
         event = {**event, "markets": data["markets"]}
     if not event.get("event_ticker") and not event.get("markets"):
         return None
-    return build_kalshi_view(event)
+    milestones = await _kalshi_milestones(adapter, ticker, str(event.get("category") or ""))
+    return build_kalshi_view(event, milestone_ids=milestones)
 
 
 async def limitless_view(adapter: Any, *, slug: str) -> dict[str, Any] | None:

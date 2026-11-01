@@ -144,6 +144,17 @@ async def probe_kalshi(p: Prober) -> None:
         "kalshi", "events_open", f"{KALSHI}/events", {"with_nested_markets": "true", "status": "open", "limit": 20}
     )
     await p.get("kalshi", "milestones", f"{KALSHI}/milestones", {"limit": 20})
+    events = p.root / "kalshi" / "events_open.json"
+    if events.exists():  # the lookup the live hub makes for a Sports event: milestones linked to an event ticker
+        data = json.loads(events.read_text(encoding="utf-8"))
+        sports = [e for e in _events(data) if str(e.get("category", "")).lower() == "sports" and e.get("event_ticker")]
+        if sports:
+            await p.get(
+                "kalshi",
+                "milestones_for_event",
+                f"{KALSHI}/milestones",
+                {"related_event_ticker": sports[0]["event_ticker"], "limit": 10},
+            )
     miles = p.findings.get("kalshi/milestones", {})
     if miles.get("ok"):
         data = json.loads((p.root / "kalshi" / "milestones.json").read_text(encoding="utf-8"))
