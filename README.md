@@ -490,6 +490,20 @@ actions rather than hiding a combined call.
 
 ---
 
+## Live event stream (`WS /v1/stream`)
+
+Display-only push updates for event views (`GET /v1/event/view`). Same auth as `/v1/ws` (session cookie or Bearer).
+Send `{"op": "subscribe", "topic": "event", "venue": "polymarket", "id": "<event id or slug>", "range": "1D"}`; the server
+answers with a `snapshot` (the full EventView) and then `patch` frames (changed rows, game score/period, chart tail, freshness).
+Every frame has `seq` (per event), `source`, `source_ts`, `server_ts`. A gap in `seq` means send `{"op": "snapshot", ...}`.
+Patches are merged and sent at most 4 times a second per event, the chance is the midpoint and the buttons carry the ask.
+A feed that is down or silent sets `stale: true` and the hub polls REST until it is back. Polymarket events are pushed from the
+public market and sports WebSockets; Kalshi and Limitless events are REST-polled for now. `/status` reports `live` metrics.
+`LIVE_VIEWS_ENABLED=false` turns the stream off. The feed protocols are tested against fakes only; see
+`scripts/live_hub_check.py` and `WORKLOG.md`.
+
+---
+
 ## Polymarket public data (Data API v2 and CLOB prices)
 
 Read-only, no credentials, Polymarket only. This is the part of the official API that the trading

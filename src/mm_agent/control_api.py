@@ -42,6 +42,8 @@ from .domain import OrderType, Outcome, Side, VenueId, utcnow
 from .events import EventBus
 from .full_control import FullControlError, FullControlService
 from .funds import FundsError, FundsService
+from .live.hub import LiveHub
+from .live.service import build_hub
 from .polymarket_data import DataAPIError
 from .scanner import Scanner
 from .store import ConversationBusy, ConversationNotFound
@@ -234,8 +236,11 @@ def create_app(
     *,
     started_at: datetime | None = None,
     lifespan: Any = None,
+    hub: LiveHub | None = None,
 ) -> FastAPI:
     serializer = URLSafeTimedSerializer(settings.session_secret or "unset-secret", salt="mm-session")
+    own_hub = hub is None  # a hub the caller did not start is started on the first stream connection
+    live_hub = hub if hub is not None else build_hub(registry, run_feeds=False)
     login_attempts: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=10))
     full = FullControlService(settings, agent.store, registry, agent, agent.execution)
     full.restore_ceilings()
@@ -404,13 +409,19 @@ def create_app(
             "active_venue": registry.active_or_none.value if registry.active_or_none else None,
         }
 
+    def _status_payload() -> dict[str, Any]:
+        payload = agent.status()
+        if settings.live_views_enabled:
+            payload["live"] = live_hub.metrics()
+        return payload
+
     @app.get("/v1/status")
     async def get_status(_: str = Depends(require_auth)) -> dict[str, Any]:
-        return agent.status()
+        return _status_payload()
 
     @app.get("/status")
     async def get_status_short(_: str = Depends(require_auth)) -> dict[str, Any]:
-        return agent.status()
+        return _status_payload()
 
     @app.get("/v1/venues")
     async def venues(_: str = Depends(require_auth)) -> dict[str, Any]:
@@ -1457,6 +1468,53 @@ def create_app(
             return
         except Exception:
             return
+
+    @app.websocket("/v1/stream")
+    async def stream(ws: WebSocket) -> None:
+        """Push updates for event views. Same auth as ``/v1/ws``. Client frames: ``{"op": "subscribe" |
+        "unsubscribe" | "snapshot", "topic": "event", "venue", "id", "range"}``. Server frames: ``snapshot``,
+        ``patch``, ``status``, ``error``. A gap in ``seq`` means ask for a snapshot. Display data only."""
+
+        token = ws.cookies.get(SESSION_COOKIE)
+        if not token:
+            header = ws.headers.get("authorization", "")
+            if header.lower().startswith("bearer "):
+                token = header.split(" ", 1)[1].strip()
+        user = _username_from_token(token) if token else None
+        if user is None:
+            await ws.close(code=4401)
+            return
+        if not settings.live_views_enabled:
+            await ws.close(code=4404)
+            return
+        await ws.accept()
+        if own_hub:
+            live_hub.start()
+        sink = live_hub.connect(user)
+        await ws.send_json({"type": "hello", "topic": "event", "server_ts": utcnow().isoformat()})
+
+        async def pump() -> None:
+            while (frame := await sink.get()) is not None:
+                await ws.send_json(frame)
+            await ws.close(code=4408)  # the hub dropped this client (it stopped reading)
+
+        sender = asyncio.create_task(pump())
+        try:
+            async for raw in ws.iter_text():
+                try:
+                    msg = json.loads(raw) if len(raw) <= 2048 else None
+                except ValueError:
+                    msg = None
+                if not isinstance(msg, dict):
+                    sink.put({"type": "error", "code": "bad_frame", "detail": "send a small JSON object"})
+                    continue
+                await live_hub.handle(sink, msg)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            live_hub.disconnect(sink)
+            sender.cancel()
+            await asyncio.gather(sender, return_exceptions=True)
 
     @app.head("/", include_in_schema=False)
     async def index_head() -> Response:

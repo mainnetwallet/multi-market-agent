@@ -108,6 +108,7 @@ def _pm_row(raw: dict[str, Any], *, kind: str = "") -> dict[str, Any] | None:
         "status": status,
         "line": _s(dec(raw.get("line"))),
         "market_type": _text(raw.get("sportsMarketType")) or kind or None,
+        "token_ids": [str(t) for t in json_list(raw.get("clobTokenIds"))[:2]],
         "_threshold": dec(raw.get("groupItemThreshold")),
         "_labels": labels,
     }
