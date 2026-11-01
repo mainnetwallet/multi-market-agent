@@ -424,3 +424,55 @@ credential was available, so no real order and no authenticated read was made.
 8. Polymarket's heartbeat has no disarm, so it cannot be used "safely" — it
    actively contradicts the requirement that a backend restart never silently
    wipes resting orders.
+
+---
+
+## 6. Polymarket public data recon (2026-11-01)
+
+What the official docs list that the build did not yet use. Read from the venue's own pages; nothing
+here was called live (the sandbox that wrote it could not reach `data-api.polymarket.com`).
+
+### Sources
+
+- Data API v2 overview: https://docs.polymarket.com/api-reference/data-api/overview
+- Data API v2 contract: https://data-api.polymarket.com/v2/openapi.json (read in full)
+- v1 to v2 migration: https://docs.polymarket.com/migrate/data-api-v1-to-v2
+- Rate limits: https://docs.polymarket.com/api-reference/rate-limits
+- CLOB OpenAPI pages for `/midpoint`, `/midpoints`, `/spread`, `/last-trades-prices`
+
+### What changed vs earlier recon
+
+- **Data API v2 exists** at `https://data-api.polymarket.com/v2`. Public, no key. It replaces the original
+  per-route contracts; the old routes keep working. Every response is `{"data": ..., "pagination": ...}`.
+- **Pagination is cursor-only.** Sending `offset` is a 400. `pagination.next_cursor` is opaque and signed;
+  `has_more` is exact. On `positions` a bare `?cursor=` is a 400: send the same `user` or `condition`
+  anchor and filters again. `holders` wants `condition` again, the feeds want identical filters on every
+  page, and the boards pin the window and category the cursor was minted on.
+- **Units.** Bare `volume`/`size` are shares; `_usdc` fields are dollars; `null` means unavailable.
+  `outcome_index: 999` means the outcome could not be labelled.
+- **Errors** carry `error`, a stable `code`, `retryable` and `trace_id`; a 429 or 503 has `Retry-After`.
+- **Windows.** `/v2/trades?user=` and `/v2/activity` floor an omitted `start` to three years back
+  (`start=1` is full history). `/v2/prices-history` rejects a `0` bound.
+- **Price history.** Graded store: 1-minute data for at least 7 days, 5-minute for 60, 30-minute for 90,
+  3-hour and 12-hour permanently (back to 2022-11-18). Sending `bucket_seconds` is served exactly as asked,
+  which can mean an empty page; omitting it lets the server pick a width that covers the window.
+- **CLOB `/midpoint` answers `{"mid_price": "0.45"}`** in the official OpenAPI. Some SDKs name the field
+  `mid`. The build passes the body through unchanged and does not read either name.
+- **Last trade prices** have a batch route, `POST /last-trades-prices`, capped at 500 token ids; `/midpoints`
+  takes `token_ids` as a comma list on GET or `[{token_id}]` on POST.
+- The Data API's v1 `accounting/snapshot` has no v2 counterpart.
+
+### Routes added to the build
+
+`/v2/positions`, `/v2/value`, `/v2/approvals`, `/v2/user-stats`, `/v2/user-pnl`, `/v2/user-volume`,
+`/v2/trades`, `/v2/activity`, `/v2/holders`, `/v2/oi`, `/v2/live-volume`, `/v2/resolutions`, `/v2/tokens`,
+`/v2/prices-history`, `/v2/leaderboard`, `/v2/biggest-winners`, `/v2/status`; CLOB `/midpoint`,
+`/midpoints`, `/spread`, `/last-trade-price`, `/price`, `/last-trades-prices`.
+Served as `/v1/polymarket/data/{name}` and `/v1/polymarket/price/{kind}`; see the README.
+
+### Listed by the venue, not added
+
+Perps API (`api.perpetuals.polymarket.com`, HTTP and WebSocket, a separate product), Data API combo
+routes (`/v2/positions/combos`, `/v2/activity/combos`), builder boards (`/v2/builders/leaderboard`,
+`/v2/builders/volume`), Gamma series/comments/sports, CLOB batch `/books` and `/spreads`, sports and RFQ
+WebSocket channels.

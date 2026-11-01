@@ -490,6 +490,62 @@ actions rather than hiding a combined call.
 
 ---
 
+## Polymarket public data (Data API v2 and CLOB prices)
+
+Read-only, no credentials, Polymarket only. This is the part of the official API that the trading
+adapter does not cover: other wallets' positions and trades, who holds a market, open interest,
+leaderboards, resolution state, token lookup, deep price history, midpoints and spreads. The code is
+`src/mm_agent/polymarket_data.py`; the routes need a signed-in session like every other `/v1` route.
+
+```text
+GET /v1/polymarket/data                  list the routes and the parameters each accepts
+GET /v1/polymarket/data/{name}?...       Data API v2 (https://data-api.polymarket.com/v2/...)
+GET /v1/polymarket/price/{kind}?...      CLOB public prices
+```
+
+| `{name}` | Answers |
+|---|---|
+| `positions` | A wallet's positions across the whole lifecycle (`status=OPEN, REDEEMABLE, REDEEMABLE_LOST, MERGEABLE, CLOSED`), with entry cost, realized and unrealized PnL; with `condition` alone, a market's holders |
+| `value`, `approvals`, `user-stats`, `user-pnl`, `user-volume` | Portfolio value, on-chain approval state, profile card, PnL series, trading volume |
+| `trades`, `activity` | Keyset-paged feeds for a wallet, market, event or everyone (`activity` also covers split, merge, redeem, rebates, rewards) |
+| `holders` | Top holders per outcome token; `include_pnl=true` adds each holder's entry price and PnL |
+| `oi`, `live-volume` | Open interest per market (or the global figure); taker volume per market of an event |
+| `resolutions`, `tokens` | Resolution lifecycle by question, condition or event; token id or condition to market, outcome and neg-risk structure |
+| `prices-history` | Price history by token id from 1-minute to 12-hour grain, back to 2022 with `interval=max` |
+| `leaderboard`, `biggest-winners` | Trader PnL/volume board (or one wallet's rank with `user=`), biggest single wins |
+| `status` | How far behind chain head the Data API is |
+
+| `{kind}` | Answers |
+|---|---|
+| `midpoint`, `spread`, `last-trade` | One token (`token_id=`) |
+| `price` | Best price on one side (`token_id=`, `side=BUY\|SELL`) |
+| `midpoints`, `last-trades` | Batch (`token_ids=` comma-separated; up to 50 for midpoints, 500 for last trades) |
+
+Rules that matter:
+
+- **Every parameter is checked before a request leaves the process.** Wallets must be 40 hex digits,
+  condition ids 64, event ids digits, enums are whitelisted, and an unknown parameter is refused rather
+  than forwarded. The routes enforce what the OpenAPI text states, e.g. `holders` with `include_pnl`
+  takes exactly one condition and `limit <= 100`; `prices-history` takes exactly one of `start`,
+  `interval` or `as_of`; `positions` without `user` takes exactly one condition.
+- **Paging is cursor-only** (v2 has no `offset`). Read `pagination.next_cursor` and send it back as
+  `cursor`, together with the same anchor (`user` or `condition`) and filters you used on page one.
+- **Units:** bare `volume` and `size` are outcome shares; fields ending `_usdc` are dollars. A `null`
+  number means unavailable, never zero. Amounts are returned exactly as sent.
+- **Errors:** a bad parameter is HTTP 400. The venue's own 429 comes back as 429 with `Retry-After`,
+  and nothing is retried silently, so a polling screen cannot hammer the venue. An unreachable venue is 502.
+- The response is `{"ok": true, "result": <venue body>}`; the venue body keeps its `data` / `pagination` envelope.
+
+```bash
+# a wallet's open positions, then the next page
+curl -s -H "Authorization: Bearer $TOKEN" "https://<service>/v1/polymarket/data/positions?user=0x...&limit=50"
+curl -s -H "Authorization: Bearer $TOKEN" "https://<service>/v1/polymarket/data/positions?user=0x...&cursor=<next_cursor>"
+# who holds a market, with their PnL
+curl -s -H "Authorization: Bearer $TOKEN" "https://<service>/v1/polymarket/data/holders?condition=0x...&include_pnl=true&limit=20"
+```
+
+---
+
 ## Funds (off by default)
 
 The funds module lives in `src/mm_agent/funds/` and every route refuses with a
@@ -601,6 +657,15 @@ idempotency key, hold window, daily limit and audit trail apply either way; no p
   need an on-chain allowance; `POST /v1/approvals` refuses rather than guessing a
   spender or an amount. The approval detail per venue is not verified for
   Limitless, so nothing is automated there.
+- **Parts of the official Polymarket API that are not wired.** The Perps API (a separate product at
+  `api.perpetuals.polymarket.com`), the Data API's combo routes (`/v2/positions/combos`,
+  `/v2/activity/combos`) and builder boards, Gamma's series, comments and sports routes, CLOB batch
+  `/books` and `/spreads`, and the sports and RFQ WebSocket channels. The Data API v2 routes above were
+  written from the official OpenAPI file and unit-tested against a mock transport; the build sandbox had
+  no route to `data-api.polymarket.com`, so **no live response has been seen**. Run one `positions` and one
+  `holders` call against a real wallet and market before relying on the field names.
+- **Price charts still use the CLOB `/prices-history`** (`fidelity` buckets). The Data API v2
+  `prices-history` route is available through the new endpoint but the app's chart is not switched to it.
 - **Limitless price history has no documented endpoint**, so the market chart is
   not available for that venue.
 - **The withdraw flow signs and sends the on-chain transfer, but the whole path
@@ -621,7 +686,7 @@ idempotency key, hold window, daily limit and audit trail apply either way; no p
 
 ```text
 src/mm_agent/
-  config.py domain.py events.py locks.py books.py scanner.py
+  config.py domain.py events.py locks.py books.py scanner.py polymarket_data.py
   research.py llm.py probability.py strategy.py risk.py agent.py
   execution.py proposals in agent.py rules.py reports.py chat.py
   control_api.py telegram.py doctor.py main.py static/
