@@ -1,0 +1,16 @@
+{
+  "data": {
+    "category": "Climate and Weather",
+    "event_ticker": "KXRAIN-26NOV02",
+    "markets": [
+      {
+        "status": "active",
+        "ticker": "KXRAIN-26NOV02-Y",
+        "yes_ask_dollars": "0.33",
+        "yes_bid_dollars": "0.30"
+      }
+    ],
+    "title": "Will it rain in NYC on Nov 2?"
+  },
+  "synthetic": true
+}

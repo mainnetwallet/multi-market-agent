@@ -1,0 +1,61 @@
+{
+  "data": {
+    "id": "3001",
+    "markets": [
+      {
+        "bestAsk": "0.31",
+        "bestBid": "0.30",
+        "clobTokenIds": "[\"b41\", \"b42\"]",
+        "groupItemTitle": "$600B",
+        "id": "b4",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.30\", \"0.70\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": ">$600B"
+      },
+      {
+        "bestAsk": "0.46",
+        "bestBid": "0.45",
+        "clobTokenIds": "[\"b31\", \"b32\"]",
+        "groupItemTitle": "$500B",
+        "id": "b3",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.45\", \"0.55\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": ">$500B"
+      },
+      {
+        "bestAsk": "0.63",
+        "bestBid": "0.62",
+        "clobTokenIds": "[\"b21\", \"b22\"]",
+        "groupItemTitle": "$400B",
+        "id": "b2",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.62\", \"0.38\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": ">$400B"
+      },
+      {
+        "bestAsk": "0.81",
+        "bestBid": "0.80",
+        "clobTokenIds": "[\"b11\", \"b12\"]",
+        "groupItemTitle": "$300B",
+        "id": "b1",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.80\", \"0.20\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": ">$300B"
+      }
+    ],
+    "slug": "anthropic-ipo-closing-market-cap-higher-strikes",
+    "tags": [
+      {
+        "id": "10",
+        "label": "IPOs",
+        "slug": "ipos"
+      }
+    ],
+    "title": "Anthropic IPO Closing Market Cap"
+  },
+  "synthetic": true
+}

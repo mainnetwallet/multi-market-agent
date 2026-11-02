@@ -1,0 +1,67 @@
+{
+  "data": {
+    "gameId": 9002,
+    "id": "2001",
+    "live": true,
+    "markets": [
+      {
+        "bestAsk": "0.43",
+        "bestBid": "0.42",
+        "clobTokenIds": "[\"n11\", \"n12\"]",
+        "gameId": 9002,
+        "groupItemTitle": "Lakers vs. Celtics",
+        "id": "n1",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.42\", \"0.58\"]",
+        "outcomes": "[\"Lakers\", \"Celtics\"]",
+        "question": "Lakers vs. Celtics",
+        "sportsMarketType": "moneyline"
+      },
+      {
+        "bestAsk": "0.51",
+        "bestBid": "0.50",
+        "clobTokenIds": "[\"n21\", \"n22\"]",
+        "gameId": 9002,
+        "groupItemTitle": "Spread: Celtics (-3.5)",
+        "id": "n2",
+        "line": -3.5,
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.50\", \"0.50\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Spread: Celtics (-3.5)",
+        "sportsMarketType": "spreads"
+      },
+      {
+        "bestAsk": "0.53",
+        "bestBid": "0.52",
+        "clobTokenIds": "[\"n31\", \"n32\"]",
+        "gameId": 9002,
+        "groupItemTitle": "Lakers vs. Celtics: O/U 214.5",
+        "id": "n3",
+        "line": 214.5,
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.52\", \"0.48\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Lakers vs. Celtics: O/U 214.5",
+        "sportsMarketType": "totals"
+      }
+    ],
+    "period": "Q3",
+    "score": "88-91",
+    "slug": "nba-lal-bos-2026-11-01",
+    "teams": [
+      {
+        "abbreviation": "LAL",
+        "name": "Lakers",
+        "ordering": "away"
+      },
+      {
+        "abbreviation": "BOS",
+        "name": "Celtics",
+        "ordering": "home"
+      }
+    ],
+    "title": "Lakers vs. Celtics"
+  },
+  "synthetic": true
+}

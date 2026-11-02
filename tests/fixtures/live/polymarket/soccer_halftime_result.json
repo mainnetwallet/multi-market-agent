@@ -1,0 +1,24 @@
+{
+  "data": {
+    "gameId": 9001,
+    "id": "1003",
+    "markets": [
+      {
+        "bestAsk": "0.41",
+        "bestBid": "0.40",
+        "clobTokenIds": "[\"m61\", \"m62\"]",
+        "gameId": 9001,
+        "groupItemTitle": "Arsenal leads at half",
+        "id": "m6",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.40\", \"0.60\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Arsenal leads at half",
+        "sportsMarketType": "first_half_moneyline"
+      }
+    ],
+    "slug": "epl-ars-che-2026-11-01-halftime-result",
+    "title": "Arsenal vs. Chelsea - Halftime Result"
+  },
+  "synthetic": true
+}

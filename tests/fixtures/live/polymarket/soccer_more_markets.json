@@ -1,0 +1,38 @@
+{
+  "data": {
+    "gameId": 9001,
+    "id": "1002",
+    "markets": [
+      {
+        "bestAsk": "0.61",
+        "bestBid": "0.60",
+        "clobTokenIds": "[\"m41\", \"m42\"]",
+        "gameId": 9001,
+        "groupItemTitle": "Total goals 2.5",
+        "id": "m4",
+        "line": 2.5,
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.60\", \"0.40\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Total goals 2.5",
+        "sportsMarketType": "totals"
+      },
+      {
+        "bestAsk": "0.59",
+        "bestBid": "0.58",
+        "clobTokenIds": "[\"m51\", \"m52\"]",
+        "gameId": 9001,
+        "groupItemTitle": "Both teams to score",
+        "id": "m5",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.58\", \"0.42\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Both teams to score",
+        "sportsMarketType": "both_teams_to_score"
+      }
+    ],
+    "slug": "epl-ars-che-2026-11-01-more-markets",
+    "title": "Arsenal vs. Chelsea - More Markets"
+  },
+  "synthetic": true
+}

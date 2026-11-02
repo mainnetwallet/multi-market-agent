@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     advisory_mode: bool = False
 
     chat_autopilot: bool = False
+    live_views_enabled: bool = True
 
     polymarket_wallet_address: str = ""
     polymarket_signature_type: int = 3

@@ -246,6 +246,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 
 #marketDetail:not(.hidden)>.card>#ticketBox{grid-column:2;grid-row:1/span 30;position:sticky;top:8px;margin-top:14px}
 }
 </style>
+<link rel="stylesheet" href="/static/css/live.css">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
@@ -536,7 +537,7 @@ async function dvInit(){
   if("IntersectionObserver" in window){new IntersectionObserver((en)=>{if(en.some(x=>x.isIntersecting)&&DV.next!=null&&!DV.loading&&MK_MODE==="discover")dvPage(false)},{rootMargin:"500px"}).observe($("#dvSentinel"))}
   await dvTabs()}
 $("#dvVenue").addEventListener("change",()=>{DV.venue=$("#dvVenue").value;DV.q="";$("#dvSearch").value="";dvTabs()});
-$("#dvSearch").addEventListener("input",()=>{clearTimeout(DV.timer);DV.timer=setTimeout(()=>{DV.q=$("#dvSearch").value.trim();dvPage(true)},450)});
+$("#dvSearch").addEventListener("input",()=>{clearTimeout(DV.timer);DV.timer=setTimeout(()=>{const q=$("#dvSearch").value.trim();if(window.MMLive&&MMLive.isEventUrl(q)){mmOpenUrl(q);return}DV.q=q;dvPage(true)},450)});
 $("#dvMore").addEventListener("click",()=>dvPage(false));
 async function dvTabs(){
   $("#dvList").innerHTML='<div class="muted">Loading…</div>';
@@ -662,15 +663,18 @@ function svgLines(box,series,o){
   svg.addEventListener("pointerleave",()=>{vx.style.display="none";tip.classList.add("hidden")})}
 /* the detail sheet: a game (teams, score, one line per team) or an Up/Down window (price to beat, live price) */
 let EVP=null;
-function evStop(){if(EVP){EVP.timers.forEach(clearInterval);EVP.timers=[]}}
+function evStop(){if(EVP){EVP.timers.forEach(clearInterval);EVP.timers=[];if(EVP.live){EVP.live.destroy();EVP.live=null}}}
 function evAlive(){const b=$("#evPanel");return !!(EVP&&b&&String(b.dataset.tok)===String(EVP.tok)&&!$("#marketDetail").classList.contains("hidden"))}
 function evPanelInit(ev,m){
   evStop();const box=$("#evPanel");
   const ok=ev&&box&&((ev.kind==="sport"&&ev.sport)||(ev.kind==="crypto_updown"&&ev.crypto)||(ev.kind==="multi"&&(ev.markets||[]).length>1));
   if(!ok){EVP=null;if(box)box.remove();mkChart(m.venue,m.native_id,MKC.range);return}
   const mk=$("#mkChart");if(mk)mk.remove();
-  const tok=Date.now();EVP={ev,m,tok,range:"6h",timers:[]};box.dataset.tok=tok;
-  if(ev.kind==="sport")spInit();else if(ev.kind==="multi")muInit();else cpInit()}
+  const tok=Date.now();EVP={ev,m,tok,range:"6h",timers:[],live:null};box.dataset.tok=tok;
+  const legacy=()=>{if(!EVP||EVP.tok!==tok)return;if(EVP.live){EVP.live.destroy();EVP.live=null}box.dataset.tok=tok;if(ev.kind==="sport")spInit();else if(ev.kind==="multi")muInit();else cpInit()};
+  /* live views (push via /v1/stream); the polling views below only run when LIVE_VIEWS_ENABLED is off or live.js is missing */
+  if(window.MMLive&&m.event_id){EVP.live=MMLive.mount(box,{venue:m.venue,id:String(m.event_id),onTrade:mmTrade,onOpenEvent:mmLiveSheet,onUnavailable:legacy});return}
+  legacy()}
 /* any other event (politics, finance, weather, mentions, culture, esports...): several outcomes, top lines, live list */
 const MU_COLORS=["var(--blue)","var(--danger)","var(--accent)","var(--warn)"];
 function muRows(){
@@ -1141,5 +1145,20 @@ async function chatOlder(){
     if(ms.length)CHAT.oldest=ms[0].seq;if(!d.has_more&&btn)btn.remove()}
   catch(e){toast(e.message)}}
 </script>
+<script>
+/* glue between the classic script and /static/js (ES modules): trade sheet, link sheet */
+function mmTrade(venue,marketId,outcome){const sh=document.getElementById("lvSheet");if(sh)mmCloseSheet();TPREF=outcome?{outcome}:null;openMarket(venue+":"+marketId)}
+let LVS=null;
+function mmCloseSheet(){if(LVS){LVS.destroy();LVS=null}const sh=document.getElementById("lvSheet");if(sh)sh.remove()}
+function mmLiveSheet(venue,id){
+  if(!window.MMLive){toast("Live views are still loading");return}
+  mmCloseSheet();evStop();
+  const sh=document.createElement("div");sh.id="lvSheet";sh.className="lv-sheet";
+  sh.innerHTML='<button class="btn small lv-close" id="lvClose">Close</button><div id="lvRoot"></div>';document.body.appendChild(sh);
+  $("#lvClose").onclick=mmCloseSheet;
+  LVS=MMLive.mount($("#lvRoot"),{venue,id,onTrade:mmTrade,onOpenEvent:mmLiveSheet,onUnavailable:()=>toast("Live views are disabled on this server")})}
+async function mmOpenUrl(url){try{const r=await MMLive.resolveUrl(url);$("#dvSearch").value="";mmLiveSheet(r.venue,r.id)}catch(e){toast(e.message)}}
+</script>
+<script type="module" src="/static/js/main.js"></script>
 </body>
 </html>

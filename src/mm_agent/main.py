@@ -19,6 +19,7 @@ from .config import Settings, get_settings
 from .control_api import create_app
 from .domain import VenueId
 from .events import EventBus
+from .live.service import build_hub
 from .rules import RulesEngine
 from .scanner import Scanner
 from .store import Store
@@ -83,6 +84,8 @@ def build_runtime(
     rules = RulesEngine(settings, store, registry, books, agent, bus)
     chat = ChatService(settings, agent)
     telegram = TelegramBot(settings, store, agent, chat, bus)
+    # Real WebSocket feeds only for a real Polymarket adapter; the REST-only hub is used otherwise.
+    hub = build_hub(registry, run_feeds=settings.live_views_enabled)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> Any:
@@ -149,6 +152,8 @@ def build_runtime(
         rules.start()
         await telegram.start()
         warm_task = asyncio.create_task(warm_discover_tabs())  # best effort; never delays startup
+        if settings.live_views_enabled:
+            hub.start()
         status = agent.status()
         logger.info(
             "agent_ready",
@@ -163,6 +168,7 @@ def build_runtime(
         logger.info("shutdown_begin")
         if warm_task is not None and not warm_task.done():
             warm_task.cancel()
+        await hub.stop()
         await telegram.stop()
         await rules.stop()
         await agent.stop()
@@ -171,7 +177,7 @@ def build_runtime(
         store.close()
         logger.info("shutdown_complete")
 
-    app = create_app(settings, agent, scanner, registry, chat, bus, lifespan=lifespan)
+    app = create_app(settings, agent, scanner, registry, chat, bus, lifespan=lifespan, hub=hub)
     return Runtime(settings, store, bus, registry, scanner, agent, rules, chat, telegram, app)
 
 

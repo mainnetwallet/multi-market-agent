@@ -51,6 +51,7 @@ fun MarketsScreen(
     onOpen: (marketId: String, title: String, outcome: String) -> Unit,
     query: String = "",
     onQueryChange: (String) -> Unit = {},
+    onOpenEvent: (venue: String, eventId: String) -> Unit = { _, _ -> },
 ) {
     if (activeVenue in BROWSABLE_VENUES) {
         // Keyed on the venue so switching venue resets the tab and scroll position (the search text is cleared by the shell).
@@ -62,6 +63,7 @@ fun MarketsScreen(
                 fetchTabs = fetchTabs,
                 onQueryChange = onQueryChange,
                 onTrade = onOpen,
+                onOpenEvent = onOpenEvent,
             )
         }
     } else {

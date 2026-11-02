@@ -114,6 +114,14 @@ class KalshiVenue(HttpVenue):
         host = "external-api-ws.demo.kalshi.co" if demo else "external-api-ws.kalshi.com"
         return f"wss://{host}/trade-api/ws/v2"
 
+    def ws_url(self) -> str:
+        return self._ws_url()
+
+    def ws_headers(self) -> dict[str, str]:
+        """Fresh signed handshake headers for the market-data stream (read-only; the key never leaves the signer)."""
+
+        return self._ensure_signer().headers("GET", urlparse(self._ws_url()).path)
+
     async def account_events(self) -> AsyncIterator[None]:
         """Kalshi's private fill / order / position channels: one tick per change on the account."""
 

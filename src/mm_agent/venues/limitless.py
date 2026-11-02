@@ -85,7 +85,8 @@ class LimitlessVenue(HttpVenue):
             "partner server-wallet only.",
             "post_only": "Post-only is not documented for Limitless orders.",
             "amend": "Limitless has no amend endpoint; cancel and place a new order instead.",
-            "price_history": "No Limitless price-history endpoint is documented.",
+            "price_history": "Not wired into the order UI. Live-view charts read GET /markets/{slug}/historical-price "
+            "(YES series; response shape unverified).",
             "funds_history": "No Limitless funds-history endpoint is documented.",
         },
     )
@@ -446,6 +447,11 @@ class LimitlessVenue(HttpVenue):
 
     def _ws_url(self) -> str:
         return self.settings.limitless_ws_url.rstrip("/") + "/socket.io/?EIO=4&transport=websocket"
+
+    def market_ws_url(self) -> str:
+        """The Socket.IO URL of the public price stream (needs no credentials)."""
+
+        return self._ws_url()
 
     async def account_events(self) -> AsyncIterator[None]:
         """Limitless position/order events for the markets the account holds.

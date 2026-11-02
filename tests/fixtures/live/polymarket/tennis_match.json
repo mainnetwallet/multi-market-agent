@@ -1,0 +1,53 @@
+{
+  "data": {
+    "gameId": 9003,
+    "id": "7001",
+    "live": true,
+    "markets": [
+      {
+        "bestAsk": "0.58",
+        "bestBid": "0.57",
+        "clobTokenIds": "[\"t11\", \"t12\"]",
+        "gameId": 9003,
+        "groupItemTitle": "Sinner vs. Alcaraz",
+        "id": "t1",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.57\", \"0.43\"]",
+        "outcomes": "[\"Sinner\", \"Alcaraz\"]",
+        "question": "Sinner vs. Alcaraz",
+        "sportsMarketType": "moneyline"
+      },
+      {
+        "bestAsk": "0.52",
+        "bestBid": "0.51",
+        "clobTokenIds": "[\"t21\", \"t22\"]",
+        "gameId": 9003,
+        "groupItemTitle": "Total games O/U 22.5",
+        "id": "t2",
+        "line": 22.5,
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.51\", \"0.49\"]",
+        "outcomes": "[\"Over\", \"Under\"]",
+        "question": "Total games O/U 22.5",
+        "sportsMarketType": "totals"
+      }
+    ],
+    "period": "S2",
+    "score": "1-0",
+    "slug": "atp-sinner-alcaraz-2026-11-02",
+    "teams": [
+      {
+        "abbreviation": "SIN",
+        "name": "Sinner",
+        "ordering": "home"
+      },
+      {
+        "abbreviation": "ALC",
+        "name": "Alcaraz",
+        "ordering": "away"
+      }
+    ],
+    "title": "Sinner vs. Alcaraz"
+  },
+  "synthetic": true
+}

@@ -209,6 +209,7 @@ fun DiscoverScreen(
     fetchTabs: suspend (venue: String) -> JSONObject,
     onQueryChange: (String) -> Unit,
     onTrade: (marketId: String, title: String, outcome: String) -> Unit,
+    onOpenEvent: (venue: String, eventId: String) -> Unit = { _, _ -> },
 ) {
     // No tab is built into the app: every tab (sort modes and categories) is whatever the server returns.
     // When the background prefetch already got them, the page opens with its tabs and does not wait.
@@ -443,7 +444,7 @@ fun DiscoverScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(items, key = { it.optString("event_id") }) { event ->
-                EventCard(event, onTrade)
+                EventCard(event, onTrade) { onOpenEvent(venue, event.optString("event_id")) }
             }
             item {
                 when {
@@ -556,7 +557,7 @@ private fun SubTabChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Unit) {
+private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Unit, onOpenEvent: () -> Unit) {
     val markets = ApiClient.arrayOf(event, "markets").objects()
     var expanded by remember { mutableStateOf(false) }
     if (markets.isEmpty()) return
@@ -579,6 +580,7 @@ private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Un
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
+            .clickable { onOpenEvent() }
             .padding(14.dp),
     ) {
         Row(verticalAlignment = Alignment.Top) {
@@ -672,7 +674,7 @@ private fun EventCard(event: JSONObject, onTrade: (String, String, String) -> Un
 
 /** A tinted "Yes 57¢" button. The label always names the side, so colour is never the only signal. */
 @Composable
-private fun PriceButton(
+internal fun PriceButton(
     label: String,
     price: String,
     color: Color,

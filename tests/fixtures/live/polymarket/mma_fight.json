@@ -1,0 +1,51 @@
+{
+  "data": {
+    "gameId": 9004,
+    "id": "7002",
+    "live": false,
+    "markets": [
+      {
+        "bestAsk": "0.45",
+        "bestBid": "0.44",
+        "clobTokenIds": "[\"f11\", \"f12\"]",
+        "gameId": 9004,
+        "groupItemTitle": "Silva vs. Jones",
+        "id": "f1",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.44\", \"0.56\"]",
+        "outcomes": "[\"Silva\", \"Jones\"]",
+        "question": "Silva vs. Jones",
+        "sportsMarketType": "moneyline"
+      },
+      {
+        "bestAsk": "0.39",
+        "bestBid": "0.38",
+        "clobTokenIds": "[\"f21\", \"f22\"]",
+        "gameId": 9004,
+        "groupItemTitle": "Fight goes the distance?",
+        "id": "f2",
+        "oneDayPriceChange": "0.02",
+        "outcomePrices": "[\"0.38\", \"0.62\"]",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "question": "Fight goes the distance?",
+        "sportsMarketType": "method_of_victory"
+      }
+    ],
+    "slug": "ufc-silva-jones-2026-11-08",
+    "startTime": "2026-11-08T03:00:00Z",
+    "teams": [
+      {
+        "abbreviation": "SIL",
+        "name": "Silva",
+        "ordering": "home"
+      },
+      {
+        "abbreviation": "JON",
+        "name": "Jones",
+        "ordering": "away"
+      }
+    ],
+    "title": "Silva vs. Jones"
+  },
+  "synthetic": true
+}

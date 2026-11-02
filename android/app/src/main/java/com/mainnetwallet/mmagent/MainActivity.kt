@@ -28,7 +28,10 @@ import com.mainnetwallet.mmagent.data.ApiClient
 import com.mainnetwallet.mmagent.data.AppLock
 import com.mainnetwallet.mmagent.data.AppViewModel
 import com.mainnetwallet.mmagent.data.LiveSocket
+import com.mainnetwallet.mmagent.data.EventTarget
+import com.mainnetwallet.mmagent.data.EventViewModel
 import com.mainnetwallet.mmagent.data.TradeSheetViewModel
+import com.mainnetwallet.mmagent.ui.event.EventScreen
 import com.mainnetwallet.mmagent.data.heldShares
 import com.mainnetwallet.mmagent.data.WithdrawViewModel
 import com.mainnetwallet.mmagent.ui.AllowlistAddScreen
@@ -150,6 +153,10 @@ class MainActivity : FragmentActivity() {
                 val clipboard = LocalClipboardManager.current
 
                 val tradeVm = remember { TradeSheetViewModel(api) }
+                // One open event view (`/v1/stream` + REST fallback). The trade sheet opened from it returns to it.
+                val eventVm = remember { EventViewModel(api, { appViewModel.baseUrl }, { appViewModel.token }) }
+                val eventState by eventVm.state.collectAsState()
+                var tradeFromEvent by remember { mutableStateOf(false) }
                 val tradeState by tradeVm.state.collectAsState()
                 val withdrawVm = remember { WithdrawViewModel(api) }
                 val withdrawState by withdrawVm.state.collectAsState()
@@ -158,6 +165,9 @@ class MainActivity : FragmentActivity() {
                 // collectLatest: a newer message replaces the one on screen, it never queues.
                 LaunchedEffect(Unit) {
                     appViewModel.messages.collectLatest { message -> snackbar.showSnackbar(message) }
+                }
+                LaunchedEffect(overlay) {
+                    if (overlay != "event" && !(overlay == "trade" && tradeFromEvent)) eventVm.close()
                 }
                 // Signing out or an expired session drops every open screen.
                 LaunchedEffect(state.loggedIn) {
@@ -194,6 +204,10 @@ class MainActivity : FragmentActivity() {
                     BackHandler(enabled = overlay != null || showVenues || tab != Tab.HOME) {
                         when {
                             showVenues -> showVenues = false
+                            overlay == "trade" && tradeFromEvent -> {
+                                tradeFromEvent = false
+                                overlay = "event"
+                            }
                             overlay != null -> {
                                 if (overlay == "withdraw" || overlay == "allowlist") withdrawVm.reset()
                                 overlay = null
@@ -216,7 +230,16 @@ class MainActivity : FragmentActivity() {
                         onSettings = { overlay = "settings" },
                         snackbar = snackbar,
                         searchQuery = if (overlay == null && tab == Tab.MARKETS && state.status.venue in BROWSABLE_VENUES) marketQuery else null,
-                        onSearchQuery = { marketQuery = it },
+                        onSearchQuery = { text ->
+                            val pasted = EventTarget.fromPaste(text)
+                            if (pasted != null) {
+                                marketQuery = ""
+                                eventVm.open(pasted)
+                                overlay = "event"
+                            } else {
+                                marketQuery = text
+                            }
+                        },
                     ) {
                         when (overlay) {
                             "trade" -> TradeSheetScreen(
@@ -247,7 +270,30 @@ class MainActivity : FragmentActivity() {
                                 onPercent = { tradeVm.setPercentOfHeld(it) },
                                 onSlippage = { tradeVm.setMaxSlippage(it) },
                                 onSubmit = { tradeVm.submit() },
-                                onCancel = { overlay = null },
+                                onCancel = {
+                                    overlay = if (tradeFromEvent) "event" else null
+                                    tradeFromEvent = false
+                                },
+                            )
+
+                            "event" -> EventScreen(
+                                state = eventState,
+                                onRange = { eventVm.setRange(it) },
+                                onBack = { overlay = null },
+                                onTrade = { marketId, title, outcome ->
+                                    tradeVm.newIntent()
+                                    tradeVm.setMarket(marketId, title)
+                                    applyCapabilities(tradeVm, state, marketId)
+                                    tradeVm.startTicket(outcome)
+                                    val ticketVenue = tradeVm.state.value.draft.venue
+                                    tradeVm.setHeld(
+                                        yes = heldShares(state.positions, ticketVenue, marketId, "YES"),
+                                        no = heldShares(state.positions, ticketVenue, marketId, "NO"),
+                                    )
+                                    tradeVm.loadMarketData(marketId, ticketVenue, outcome)
+                                    tradeFromEvent = true
+                                    overlay = "trade"
+                                },
                             )
 
                             "deposit" -> DepositScreen(
@@ -368,7 +414,12 @@ class MainActivity : FragmentActivity() {
                                     fetchTabs = { venue -> appViewModel.discoverTabs(venue) },
                                     query = marketQuery,
                                     onQueryChange = { marketQuery = it },
+                                    onOpenEvent = { venue, eventId ->
+                                        eventVm.open(EventTarget(venue, eventId))
+                                        overlay = "event"
+                                    },
                                     onOpen = { marketId, title, outcome ->
+                                        tradeFromEvent = false
                                         tradeVm.newIntent()
                                         tradeVm.setMarket(marketId, title)
                                         applyCapabilities(tradeVm, state, marketId)

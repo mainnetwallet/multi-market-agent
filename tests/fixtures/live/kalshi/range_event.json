@@ -1,0 +1,22 @@
+{
+  "data": {
+    "category": "Economics",
+    "event_ticker": "KXSYN-26NOV01",
+    "markets": [
+      {
+        "floor_strike": 3.0,
+        "ticker": "KXSYN-26NOV01-T3.0",
+        "yes_ask_dollars": "0.62",
+        "yes_bid_dollars": "0.60"
+      },
+      {
+        "floor_strike": 3.5,
+        "ticker": "KXSYN-26NOV01-T3.5",
+        "yes_ask_dollars": "0.33",
+        "yes_bid_dollars": "0.30"
+      }
+    ],
+    "title": "Synthetic range event"
+  },
+  "synthetic": true
+}

@@ -13,6 +13,12 @@ directly — no WebView.
   event cards with the live Yes/No price, chance, 24h move, volume and close time.
   Tap a Yes or No price to open the trade sheet on that side. Other venues keep the plain list.
   Data comes from `GET /v1/discover` (public Gamma data, read-only).
+- **Event views** — tap an event card (or paste a polymarket.com / kalshi.com / limitless.exchange link into the
+  Markets search) to open it in the layout the server chose: soccer game (scoreboard, Home/Draw/Away, tabs), bracket
+  market (ordered ranges, 24h move, chart), and a generic list for candidates, Up/Down and anything else. Data is
+  pushed over `/v1/stream` (snapshot + patch, resync on a seq gap) and read from `/v1/event/view` only while the socket
+  cannot deliver. A LIVE / DELAYED / OFFLINE badge shows the source and data age. Yes/No buttons show the ask and open
+  the trade ticket below, which returns to the event when closed. Display only; no order code is involved.
 - **Trade ticket** — laid out like Polymarket's. Tap Yes or No on a market card and the ticket opens on that
   side: Buy / Sell tabs, a **Market | Limit** switch (only where the venue has both), and two big **Yes 62¢ /
   No 39¢** buttons that show each side's live price from the order book. A market buy is one number, in

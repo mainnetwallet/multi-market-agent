@@ -20,6 +20,7 @@ from fastapi import (
     FastAPI,
     Header,
     HTTPException,
+    Query,
     Request,
     Response,
     WebSocket,
@@ -33,6 +34,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 
 from . import discover as discover_lib
+from . import eventview, eventview_source
 from .agent import AgentService
 from .chat import ChatService
 from .config import Settings
@@ -40,6 +42,8 @@ from .domain import OrderType, Outcome, Side, VenueId, utcnow
 from .events import EventBus
 from .full_control import FullControlError, FullControlService
 from .funds import FundsError, FundsService
+from .live.hub import LiveHub
+from .live.service import build_hub
 from .polymarket_data import DataAPIError
 from .scanner import Scanner
 from .store import ConversationBusy, ConversationNotFound
@@ -232,8 +236,11 @@ def create_app(
     *,
     started_at: datetime | None = None,
     lifespan: Any = None,
+    hub: LiveHub | None = None,
 ) -> FastAPI:
     serializer = URLSafeTimedSerializer(settings.session_secret or "unset-secret", salt="mm-session")
+    own_hub = hub is None  # a hub the caller did not start is started on the first stream connection
+    live_hub = hub if hub is not None else build_hub(registry, run_feeds=False)
     login_attempts: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=10))
     full = FullControlService(settings, agent.store, registry, agent, agent.execution)
     full.restore_ceilings()
@@ -402,13 +409,19 @@ def create_app(
             "active_venue": registry.active_or_none.value if registry.active_or_none else None,
         }
 
+    def _status_payload() -> dict[str, Any]:
+        payload = agent.status()
+        if settings.live_views_enabled:
+            payload["live"] = live_hub.metrics()
+        return payload
+
     @app.get("/v1/status")
     async def get_status(_: str = Depends(require_auth)) -> dict[str, Any]:
-        return agent.status()
+        return _status_payload()
 
     @app.get("/status")
     async def get_status_short(_: str = Depends(require_auth)) -> dict[str, Any]:
-        return agent.status()
+        return _status_payload()
 
     @app.get("/v1/venues")
     async def venues(_: str = Depends(require_auth)) -> dict[str, Any]:
@@ -529,6 +542,45 @@ def create_app(
         if item is None:
             raise HTTPException(status_code=404, detail="event not found")
         return {"ok": True, "item": item}
+
+    @app.get("/v1/event/view")
+    async def event_view(
+        venue: VenueId | None = None,
+        event_id: str = Query("", alias="id", max_length=130),
+        slug: str = Query("", max_length=130),
+        url: str = Query("", max_length=300),
+        _: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """One event as an EventView: layout, rows, sections, chart shell. Any open market renders; an
+        unknown shape comes back as ``generic_list``. Display data only: orders use ``/v1/orders/*``."""
+
+        if not settings.live_views_enabled:
+            raise HTTPException(status_code=404, detail="live views are disabled")
+        try:
+            if url:
+                parsed_venue, ident = eventview.parse_event_url(url)
+                venue, slug, event_id = VenueId(parsed_venue), ident, ""
+            venue = venue or registry.active_or_none or VenueId.POLYMARKET
+            adapter = registry.adapters.get(venue)
+            if adapter is None:
+                raise HTTPException(status_code=404, detail=f"{venue.value} is not enabled")
+            if not event_id and not slug:
+                raise ValueError("id, slug or url is required")
+            if venue == VenueId.POLYMARKET:
+                view = await eventview_source.polymarket_view(adapter, event_id=event_id, slug=slug)
+            elif venue == VenueId.KALSHI:
+                view = await eventview_source.kalshi_view(adapter, ticker=(slug or event_id).upper())
+            else:
+                view = await eventview_source.limitless_view(adapter, slug=slug or event_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)[:160]) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"event lookup failed: {str(exc)[:160]}") from exc
+        if view is None:
+            raise HTTPException(status_code=404, detail="event not found")
+        return {"ok": True, "view": view}
 
     # ── Polymarket public data (Data API v2 and CLOB price routes; no credentials) ──
     def _pm_adapter(attr: str) -> Any:
@@ -1416,6 +1468,67 @@ def create_app(
             return
         except Exception:
             return
+
+    stream_conns: dict[str, int] = {}
+    MAX_STREAMS_PER_USER = 8
+
+    @app.websocket("/v1/stream")
+    async def stream(ws: WebSocket) -> None:
+        """Push updates for event views. Same auth as ``/v1/ws``. Client frames: ``{"op": "subscribe" |
+        "unsubscribe" | "snapshot", "topic": "event", "venue", "id", "range"}``. Server frames: ``snapshot``,
+        ``patch``, ``status``, ``error``. A gap in ``seq`` means ask for a snapshot. Display data only."""
+
+        token = ws.cookies.get(SESSION_COOKIE)
+        if not token:
+            header = ws.headers.get("authorization", "")
+            if header.lower().startswith("bearer "):
+                token = header.split(" ", 1)[1].strip()
+        user = _username_from_token(token) if token else None
+        if user is None:
+            await ws.close(code=4401)
+            return
+        if not settings.live_views_enabled:
+            await ws.close(code=4404)
+            return
+        if stream_conns.get(user, 0) >= MAX_STREAMS_PER_USER:
+            await ws.close(code=4429)  # too many open sockets for this account
+            return
+        stream_conns[user] = stream_conns.get(user, 0) + 1
+        try:
+            await ws.accept()
+        except BaseException:
+            stream_conns[user] -= 1
+            raise
+        if own_hub:
+            live_hub.start()
+        sink = live_hub.connect(user)
+        await ws.send_json({"type": "hello", "topic": "event", "server_ts": utcnow().isoformat()})
+
+        async def pump() -> None:
+            while (frame := await sink.get()) is not None:
+                await ws.send_json(frame)
+            await ws.close(code=4408)  # the hub dropped this client (it stopped reading)
+
+        sender = asyncio.create_task(pump())
+        try:
+            async for raw in ws.iter_text():
+                try:
+                    msg = json.loads(raw) if len(raw) <= 2048 else None
+                except ValueError:
+                    msg = None
+                if not isinstance(msg, dict):
+                    sink.put({"type": "error", "code": "bad_frame", "detail": "send a small JSON object"})
+                    continue
+                await live_hub.handle(sink, msg)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            live_hub.disconnect(sink)
+            sender.cancel()
+            await asyncio.gather(sender, return_exceptions=True)
+            stream_conns[user] -= 1
+            if stream_conns[user] <= 0:
+                stream_conns.pop(user, None)
 
     @app.head("/", include_in_schema=False)
     async def index_head() -> Response:

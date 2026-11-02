@@ -1,0 +1,19 @@
+{
+  "data": {
+    "live_datas": [
+      {
+        "details": {
+          "away_name": "Los Angeles L",
+          "away_points": 88,
+          "home_name": "Boston",
+          "home_points": 91,
+          "period": "Q3",
+          "status": "live"
+        },
+        "milestone_id": "synthetic-milestone-1",
+        "type": "basketball_game"
+      }
+    ]
+  },
+  "synthetic": true
+}

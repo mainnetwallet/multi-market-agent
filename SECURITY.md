@@ -111,3 +111,24 @@ pretending to work.
 
 After any suspected compromise: `/panic`, revoke venue credentials, move funds
 manually on each venue, rotate all secrets, and rebuild the host.
+
+
+## Live stream routes (`/v1/stream`, `/v1/event/view`) - reviewed in P5
+
+- Auth: both need a signed-in session (cookie or Bearer); unauthenticated sockets close with 4401 before `accept`.
+  Close codes: 4401 not signed in, 4404 `LIVE_VIEWS_ENABLED=false`, 4408 the hub dropped a client that stopped reading,
+  4429 more than 8 sockets for one user. `LIVE_VIEWS_ENABLED=false` turns the stream and `/v1/event/view` off.
+- Display only: no order, risk, funds or signing code is reachable from them; trades from the views use `/v1/orders/*`.
+- Input: client frames over 2 KB are refused; `venue` must be one of three names, `id` must match `[A-Za-z0-9][A-Za-z0-9._-]{0,129}`;
+  `/v1/event/view?url=` accepts only https polymarket.com / kalshi.com / limitless.exchange links; upstream errors reach
+  clients as an error class name (stream) or a 160-character message (REST), never a trace or a credential.
+- Caps: 8 sockets per user, 12 subscriptions per socket, 200 followed events, 30 event lookups per minute per socket,
+  64 queued patches and 512 queued frames per client, idle readers closed after 120 s; the per-id lock table is released after each
+  lookup. Before P5 the frame queue and the lock table were unbounded and a client could trigger unlimited venue lookups.
+- Known gap: `/v1/event/view` has no per-user rate limit of its own (it sits behind the session and the venue clients' own limiter).
+- Outbound reads added for Kalshi scores: `GET /live_data/batch` (at most 100 milestone ids per call, every 2.5 s, idle while
+  nothing is watched, at most 500 ids) and `GET /milestones?related_event_ticker=` (Sports events only, cached 10 minutes).
+  Both are public and unsigned, ids must match `[A-Za-z0-9][A-Za-z0-9._-]{0,80}`, a failure logs the error class and never its
+  text, and a venue 429 pauses the poller for its `Retry-After`. The response layouts are from the docs only (`DOCS_FINDINGS.md`
+  section 9). Display data only: nothing in the stream or the poller can place an order.
+- Secrets: nothing in `live/` reads or logs a key, token or cookie; do not put a GitHub or API token in a URL, a remote or a log.
