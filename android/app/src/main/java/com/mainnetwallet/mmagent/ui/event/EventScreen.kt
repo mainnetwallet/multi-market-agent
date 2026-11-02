@@ -62,6 +62,8 @@ fun EventScreen(
                     when (view.text("layout")) {
                         "game_3way", "game_2way" -> GameScreen(view, state.range, onRange, onTrade)
                         "bracket_ladder" -> BracketScreen(view, state.range, onRange, onTrade)
+                        "multi_candidates" -> CandidatesScreen(view, state.range, onRange, onTrade)
+                        "updown_window" -> UpDownScreen(view, state.range, onRange, onTrade)
                         else -> GenericScreen(view, state.range, onRange, onTrade)
                     }
                 }

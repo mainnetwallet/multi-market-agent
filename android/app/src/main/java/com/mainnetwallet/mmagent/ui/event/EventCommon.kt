@@ -117,21 +117,26 @@ fun YesNoButtons(row: JSONObject, onTrade: OnTrade, modifier: Modifier = Modifie
     }
 }
 
-/** One market row: label, chance (midpoint), 24h move, Yes/No at the ask. */
+/**
+ * One market row: label, chance (midpoint), 24h move, Yes/No at the ask. [crest] always draws the crest (initials
+ * when the row has no logo), as candidate lists do; [sub] shows the longer question under the label.
+ */
 @Composable
-fun MarketRow(row: JSONObject, onTrade: OnTrade) {
+fun MarketRow(row: JSONObject, onTrade: OnTrade, crest: Boolean = false, sub: Boolean = true) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface).padding(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (row.has("logo") && row.text("logo").isNotBlank()) {
+            if (crest || (row.has("logo") && row.text("logo").isNotBlank())) {
                 Crest(row.text("label"), row.text("logo"), 32)
                 Spacer(Modifier.width(10.dp))
             }
             Column(Modifier.weight(1f)) {
                 Text(row.text("label"), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                row.text("sub_label").takeIf { it.isNotBlank() }?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (sub) {
+                    row.text("sub_label").takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
