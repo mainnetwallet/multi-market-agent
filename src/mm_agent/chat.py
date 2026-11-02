@@ -24,7 +24,7 @@ from .domain import (
     display_cents,
     utcnow,
 )
-from .llm import LLMClient, LLMContextOverflow, LLMUnavailable, estimate_tokens, message_tokens, messages_tokens
+from .llm import LLMClient, LLMUnavailable, estimate_tokens, message_tokens, messages_tokens
 from .store import ConversationNotFound
 from .util import fmt_dhaka, get_logger, redact
 
@@ -36,33 +36,18 @@ BENGALI_RE = re.compile(r"[\u0980-\u09FF]")
 ChatEvent = Callable[[str, dict[str, Any]], Awaitable[None]]
 StopCheck = Callable[[], bool]
 
-# A long chat is not sent to the model whole: older messages fold into a summary.
-CONTEXT_RECENT_MESSAGES = 12
-SUMMARIZE_AFTER_MESSAGES = 30
-SUMMARIZE_AFTER_CHARS = 16000
-CONTEXT_MESSAGE_CHARS = 4000
-FALLBACK_SUMMARY_CHARS = 3000
-# Token budget (see Settings.llm_context_tokens): the share of the usable window each part may take.
-HISTORY_SHARE = 0.4  # recent messages kept verbatim; anything older folds into the summary
-USER_MESSAGE_SHARE = 0.25  # the current message is clipped (head + tail) beyond this
-DATA_SHARE = 0.3  # standing instructions + summary
-TOOL_RESULT_CHARS = 12000
-TOOL_RESULT_SHRUNK_CHARS = 400
-MAX_PINS = 20
-PIN_CHARS = 240
+# The model's window (Settings.llm_context_tokens) is the only ceiling: there is no count or character cap
+# on messages, summaries, tool results, pins, tasks or checkpoints. Older messages fold into a summary
+# only when the history alone no longer fits the window.
+HISTORY_SHARE = 1.0
+USER_MESSAGE_SHARE = 1.0
+DATA_SHARE = 1.0
+TOOL_RESULT_SHRUNK_CHARS = 400  # last resort in _fit, only when the window itself would be exceeded
 RETRIEVED_MESSAGES = 4  # folded messages that match the current message and are fetched back
 RETRIEVED_CHARS = 600
-OVERFLOW_RETRIES = 2  # times a request the provider refused as too long is asked again, smaller
-OVERFLOW_SHRINK = 0.6  # a retry asks for this fraction of the request that was refused
 MIN_BLOCK_TOKENS = 30  # an optional DATA block smaller than this is left out rather than shown cut to nothing
 # Execution checkpoint: what a run did with money/control tools, kept so an interrupted job resumes safely.
-MAX_CHECKPOINT_CALLS = 40
-CHECKPOINT_RESULT_CHARS = 1500
-CHECKPOINT_ARGS_CHARS = 300
 # Task plan the model keeps with update_task.
-MAX_TASK_STEPS = 20
-TASK_STEP_CHARS = 200
-TASK_GOAL_CHARS = 300
 TASK_STATUSES = ("pending", "in_progress", "done", "blocked")
 TASK_LABEL = "CURRENT TASK (the plan you keep with update_task; update it as steps finish)"
 # A sentence in an operator message that reads as a lasting instruction is pinned when its message
@@ -131,7 +116,7 @@ def extract_pins(messages: list[dict[str, Any]]) -> list[str]:
         for part in re.split(r"(?<=[.!?।])\s+|\n+", str(message.get("text", ""))):
             sentence = " ".join(part.split())
             if len(sentence) >= 8 and PIN_RE.search(sentence):
-                found.append(sentence[:PIN_CHARS])
+                found.append(sentence)
     return found
 
 
@@ -143,7 +128,7 @@ def merge_pins(old: list[str], new: list[str]) -> list[str]:
         if key not in seen:
             seen.add(key)
             merged.append(pin)
-    return merged[-MAX_PINS:]
+    return merged
 
 
 @dataclass(frozen=True)
@@ -243,13 +228,6 @@ class RunScope:
 
     def add_call(self, entry: dict[str, Any]) -> None:
         self.calls.append(entry)
-        while len(self.calls) > MAX_CHECKPOINT_CALLS:  # keep the guard: reads go first, then settled calls
-            idx = next((i for i, c in enumerate(self.calls) if not c["side_effect"]), None)
-            if idx is None:
-                idx = next((i for i, c in enumerate(self.calls) if c["state"] in ("done", "error")), None)
-            if idx is None:
-                break
-            del self.calls[idx]
 
     def checkpoint(self) -> dict[str, Any]:
         return {"run_id": self.run_id, "user_seq": self.user_seq, "status": self.status, "calls": list(self.calls)}
@@ -470,18 +448,14 @@ class ChatService:
         cid = conversation["id"]
         summary = str(conversation["summary"])
         pins = [str(x) for x in (conversation.get("state") or {}).get("pins", [])]
-        pending = store.chat_messages(owner, cid, after=conversation["summary_upto"], limit=500)
+        pending = store.chat_messages(owner, cid, after=conversation["summary_upto"], limit=None)
         history_cap = int(self._budget() * HISTORY_SHARE)
-        cost = [estimate_tokens(m["text"][:CONTEXT_MESSAGE_CHARS]) + 4 for m in pending]
-        too_long = (
-            len(pending) > SUMMARIZE_AFTER_MESSAGES
-            or sum(len(m["text"]) for m in pending) > SUMMARIZE_AFTER_CHARS
-            or sum(cost) > history_cap
-        )
+        cost = [estimate_tokens(m["text"]) + 4 for m in pending]
+        too_long = sum(cost) > history_cap  # the window is the only reason to fold
         if too_long:
             keep, used = 0, 0
-            for tokens in reversed(cost):  # newest first, as many as the budget and the cap allow
-                if keep >= CONTEXT_RECENT_MESSAGES or used + tokens > history_cap:
+            for tokens in reversed(cost):  # newest first, as many as the window allows
+                if used + tokens > history_cap:
                     break
                 keep, used = keep + 1, used + tokens
             old = pending[: len(pending) - keep]
@@ -494,7 +468,7 @@ class ChatService:
                     store.chat_patch_state(owner, cid, {"pins": pins})
                 pending = pending[len(old) :]
         history = [
-            {"role": "assistant" if m["role"] == "agent" else "user", "content": m["text"][:CONTEXT_MESSAGE_CHARS]}
+            {"role": "assistant" if m["role"] == "agent" else "user", "content": m["text"]}
             for m in pending
             if m["role"] in ("user", "agent")
         ]
@@ -546,7 +520,7 @@ class ChatService:
         lines = ([previous] if previous else []) + [
             f"- {m['role']}: {' '.join(m['text'].split())[:200]}" for m in messages
         ]
-        return "\n".join(lines)[-FALLBACK_SUMMARY_CHARS:]
+        return "\n".join(lines)
 
     @staticmethod
     def _language(text: str) -> str:
@@ -1239,7 +1213,6 @@ class ChatService:
             "history_dropped": len(history) - len(kept),
             "user_clipped": user_text != text,
             "tool_results_trimmed": 0,
-            "overflow_retries": 0,
             "total_cost": messages_tokens(messages) + tools_tokens,
             "over_budget": messages_tokens(messages) > usable,
             "tools_available": [t.name for t in view.available],
@@ -1381,7 +1354,7 @@ class ChatService:
             "key": key,
             "side_effect": tool.side_effect,
             "state": "started",
-            "args": json.dumps(redact(args), default=str, sort_keys=True)[:CHECKPOINT_ARGS_CHARS],
+            "args": json.dumps(redact(args), default=str, sort_keys=True),
             "result": "",
             "inherited": False,
         }
@@ -1407,7 +1380,7 @@ class ChatService:
         else:
             failed = result.get("ok") is False or "error" in result
             entry["state"] = "error" if failed else "done"
-        entry["result"] = json.dumps(redact(result), default=str)[:CHECKPOINT_RESULT_CHARS]
+        entry["result"] = json.dumps(redact(result), default=str)
         if not tool.side_effect:
             scope.add_call(entry)
         try:
@@ -1494,8 +1467,6 @@ class ChatService:
             scope.status = "running"
             self._save_checkpoint(scope)
         task_seen = dict(scope.task) if scope is not None else {}
-        cap: int | None = None  # set once the provider refuses a request as too long: the ceiling for this answer
-        retries = 0
         last_data: dict[str, Any] = {}
         steps = steps if steps is not None else []
 
@@ -1519,7 +1490,7 @@ class ChatService:
                 report.update(ctx)
             return result
 
-        for _ in range(4):
+        while True:  # as many tool rounds as the job needs; Stop is the brake
             # Stop is checked between steps only: a tool that already started always finishes,
             # and no new tool (trade, cancel, pause) starts once the operator pressed Stop.
             if should_stop is not None and should_stop():
@@ -1533,13 +1504,6 @@ class ChatService:
                         reply = await self.llm.chat(messages, tools=tools)
                     break
                 except LLMUnavailable as exc:
-                    if isinstance(exc, LLMContextOverflow) and retries < OVERFLOW_RETRIES:
-                        # The provider refused the request before generating anything, so no tool or
-                        # trade has run because of it: ask again with less history and shorter results.
-                        retries += 1
-                        cap = usable = int(min(usable, messages_tokens(messages)) * OVERFLOW_SHRINK)
-                        ctx["overflow_retries"] = retries
-                        continue
                     return finish(
                         {
                             "reply": f"Assistant unavailable: {exc}. Slash commands still work.",
@@ -1584,7 +1548,7 @@ class ChatService:
                         {
                             "role": "tool",
                             "tool_call_id": call["id"],
-                            "content": "DATA: " + json.dumps(redact(result), default=str)[:TOOL_RESULT_CHARS],
+                            "content": "DATA: " + json.dumps(redact(result), default=str),
                         }
                     )
                 # The tools may have changed what is possible (pause, venue switch, a new position):
@@ -1593,8 +1557,6 @@ class ChatService:
                 tools = view.specs()
                 tools_tokens = estimate_tokens(json.dumps(tools))
                 usable = self._budget() - tools_tokens
-                if cap is not None:
-                    usable = min(usable, cap)
                 if scope is not None and scope.task != task_seen:  # the plan changed during this answer
                     task_seen = dict(scope.task)
                     data_suffix = self._swap_task_block(data_suffix, scope.task, int(usable * DATA_SHARE * 0.4))
@@ -1624,14 +1586,14 @@ class ChatService:
         if args.get("goal") is None and args.get("steps") is None:
             return {"ok": False, "error": "give a goal and/or steps"}
         if args.get("goal") is not None:
-            goal = " ".join(str(args["goal"]).split())[:TASK_GOAL_CHARS]
+            goal = " ".join(str(args["goal"]).split())
         if args.get("steps") is not None:
             raw = args["steps"]
-            if not isinstance(raw, list) or len(raw) > MAX_TASK_STEPS:
-                return {"ok": False, "error": f"steps must be a list of at most {MAX_TASK_STEPS}"}
+            if not isinstance(raw, list):
+                return {"ok": False, "error": "steps must be a list"}
             steps = []
             for i, item in enumerate(raw, 1):
-                text = " ".join(str(item.get("text", "")).split())[:TASK_STEP_CHARS] if isinstance(item, dict) else ""
+                text = " ".join(str(item.get("text", "")).split()) if isinstance(item, dict) else ""
                 status = str(item.get("status", "pending")).lower() if isinstance(item, dict) else ""
                 if not text or status not in TASK_STATUSES:
                     return {"ok": False, "error": f"step {i} needs text and a status of {list(TASK_STATUSES)}"}
@@ -1826,7 +1788,7 @@ class ChatService:
             ToolDef(
                 "update_task",
                 "Keep your plan for a multi-step job: set the goal and/or REPLACE the whole step list "
-                f"(at most {MAX_TASK_STEPS} steps; an empty list clears it). Update it as steps finish so a "
+                "(an empty list clears it). Update it as steps finish so a "
                 "later message can resume",
                 {
                     "goal": {"type": "string"},

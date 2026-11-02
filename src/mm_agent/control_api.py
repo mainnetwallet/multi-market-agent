@@ -94,16 +94,15 @@ class RuleBody(BaseModel):
 
 
 _CHAT_TASKS: set[asyncio.Task[Any]] = set()
-CHAT_PAGE_SIZE = 50
 
 
 class ChatBody(BaseModel):
-    message: str = Field(min_length=1, max_length=4000)
-    conversation_id: str | None = Field(default=None, max_length=36)
+    message: str
+    conversation_id: str | None = None
 
 
 class ConversationBody(BaseModel):
-    title: str = Field(default="", max_length=120)
+    title: str = ""
 
 
 class LimitBody(BaseModel):
@@ -1402,7 +1401,7 @@ def create_app(
     # Every route is scoped to the signed-in user in the store itself; see Store._owned.
     @app.get("/v1/conversations")
     async def conversations_list(
-        q: str | None = None, limit: int = 100, user: str = Depends(require_auth)
+        q: str | None = None, limit: int | None = None, user: str = Depends(require_auth)
     ) -> dict[str, Any]:
         return {"conversations": agent.store.chat_list(f"web:{user}", q, limit)}
 
@@ -1415,7 +1414,7 @@ def create_app(
         """Everything needed to restore a chat: its summary, run state and the latest messages."""
 
         conversation = own_conversation(user, conversation_id)
-        messages = agent.store.chat_messages(f"web:{user}", conversation_id, limit=CHAT_PAGE_SIZE)
+        messages = agent.store.chat_messages(f"web:{user}", conversation_id)
         return {
             "conversation": conversation,
             "messages": messages,
@@ -1424,9 +1423,9 @@ def create_app(
 
     @app.get("/v1/conversations/{conversation_id}/messages")
     async def conversation_messages(
-        conversation_id: str, before: int | None = None, limit: int = CHAT_PAGE_SIZE, user: str = Depends(require_auth)
+        conversation_id: str, before: int | None = None, limit: int | None = None, user: str = Depends(require_auth)
     ) -> dict[str, Any]:
-        """One page of older history: the [limit] messages before sequence number [before]."""
+        """Older history: every message before sequence number [before] (or only the last [limit] of them)."""
 
         own_conversation(user, conversation_id)
         messages = agent.store.chat_messages(f"web:{user}", conversation_id, before=before, limit=limit)

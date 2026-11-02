@@ -438,7 +438,7 @@ class ConversationRow(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_conversation_id)
     owner: Mapped[str] = mapped_column(String(80), nullable=False)
-    title: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    title: Mapped[str] = mapped_column(Text, default="", nullable=False)
     summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
     summary_upto: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

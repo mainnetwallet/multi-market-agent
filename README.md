@@ -319,14 +319,14 @@ who created it: every store method takes `(owner, conversation_id)` and goes thr
 check, so another user's chat looks exactly like a missing one (404). Send `conversation_id` with
 `POST /v1/chat` or either `/v1/chat/stream` form and the model is given that chat's summary and
 recent messages (never another chat's); without it a message is answered on its own and not stored
-(Telegram). A chat answers one message at a time (409 otherwise). Past 30 unsummarized messages the
+(Telegram). A chat answers one message at a time (409 otherwise). Once the unsummarized history no longer fits the model window, the
 older ones fold into a summary (by the LLM, or a plain extract if it is down); nothing is deleted.
 
 | Route | |
 |---|---|
 | `GET /v1/conversations?q=` | your chats, newest first; `q` searches titles and message text |
 | `POST /v1/conversations` | create `{title?}`; an empty title becomes the first message |
-| `GET /v1/conversations/{id}` | restore: summary, run state (`idle/running/stopped/error/interrupted`), latest 50 messages |
+| `GET /v1/conversations/{id}` | restore: summary, run state (`idle/running/stopped/error/interrupted`), all messages (or the last `limit`) |
 | `GET /v1/conversations/{id}/messages?before=&limit=` | older history, page by page |
 | `POST /v1/conversations/{id}/rename` / `DELETE` | rename / delete with its messages |
 
@@ -338,15 +338,15 @@ Every model request is assembled fresh from code and live state, for one chat on
 the rules, the assistant's identity and the tools that are usable right now; everything that came from a
 person or a tool is fenced as DATA and can never change the rules.
 
-- **Budget.** A request is sized to `LLM_CONTEXT_TOKENS` minus `LLM_RESERVE_TOKENS` (defaults 32000 and 4000;
+- **Budget.** A request is sized to `LLM_CONTEXT_TOKENS` minus `LLM_RESERVE_TOKENS` (defaults 300000 and 0;
   character-based estimate). The rules, tool list and current message come first; standing instructions, task
-  plan, interrupted-run state, summary and retrieved messages take what is left, then recent history. Long
-  chats fold older messages into a summary by count, size or tokens; a failed summary falls back to a plain
-  extract. Nothing is deleted.
-  The count is an estimate, not the model's tokenizer, and dense JSON can cost more than it assumes. If the
-  provider still refuses a request as too long (HTTP 400/413), it is rebuilt with less history and shorter
-  tool results and asked again, at most twice per model call and for the rest of that answer. The refused
-  request produced nothing, so no tool or trade runs twice.
+  plan, interrupted-run state, summary and retrieved messages take what is left, then recent history. The
+  window is the only limit: there is no cap on message length, tool rounds per answer, tool-result size,
+  summary size, pins, task steps, checkpoint calls, chats or history length. Older messages fold into a
+  summary only when the history alone no longer fits the window; a failed summary falls back to a plain
+  extract. Nothing is deleted. The count is an estimate, not the model's tokenizer. If the provider refuses
+  a request as too long (HTTP 400/413) the answer ends with "Assistant unavailable" and nothing is retried:
+  set `LLM_CONTEXT_TOKENS` to the model's real window.
 - **Standing instructions.** Lasting operator rules ("always", "never", "from now on"...) are pinned in the
   chat's state when their message is folded, so summarizing cannot lose them.
 - **Retrieval.** Folded messages of this chat that share words with the new message (4+ letters) are fetched
@@ -360,7 +360,7 @@ person or a tool is fenced as DATA and can never change the rules.
   (`replayed`), one that was `started` or `unknown` is refused as UNKNOWN and never repeated, and a refused or
   vetoed one may be retried. Read-only tools always re-run. A finished answer starts the next with a fresh
   checkpoint, so deliberate repeats are never blocked for long.
-- **Task plan.** The model keeps a goal and up to 20 steps (`pending`, `in_progress`, `done`, `blocked`) with
+- **Task plan.** The model keeps a goal and any number of steps (`pending`, `in_progress`, `done`, `blocked`) with
   `update_task`. The plan is stored in the chat and shown again on every later message, so a long job
   continues across messages.
 

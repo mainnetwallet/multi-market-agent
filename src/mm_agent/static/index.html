@@ -516,7 +516,7 @@ function confirmHold({title,rows,label,seconds=2,tone="primary",note=""}){
 function askText(title,value="",placeholder=""){
   return new Promise((res)=>{
     let done=false;
-    const s=sheet('<h2>'+esc(title)+'</h2><form class="col"><input id="askIn" maxlength="120" placeholder="'+esc(placeholder)+'" value="'+esc(value)+'" required><div class="row" style="flex-wrap:nowrap"><button type="button" class="btn grow" data-x>Cancel</button><button class="btn primary grow" type="submit">Save</button></div></form>',{onClose:()=>{if(!done){done=true;res(null)}}});
+    const s=sheet('<h2>'+esc(title)+'</h2><form class="col"><input id="askIn" placeholder="'+esc(placeholder)+'" value="'+esc(value)+'" required><div class="row" style="flex-wrap:nowrap"><button type="button" class="btn grow" data-x>Cancel</button><button class="btn primary grow" type="submit">Save</button></div></form>',{onClose:()=>{if(!done){done=true;res(null)}}});
     const f=s.box.querySelector("form"),inp=s.box.querySelector("#askIn");setTimeout(()=>{inp.focus();inp.select()},30);
     f.addEventListener("submit",(e)=>{e.preventDefault();const v=inp.value.trim();if(!v)return;done=true;s.close();res(v)})})}
 async function copyText(text){try{await navigator.clipboard.writeText(text);toast("Copied")}catch(e){const t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();try{document.execCommand("copy");toast("Copied")}catch(_){toast("Copy failed")}t.remove()}}

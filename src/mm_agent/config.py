@@ -115,8 +115,8 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 60
     # Context window of the configured model and the share kept free for its reply. Every request
     # is assembled to fit (window - reserve - tool schemas); older chat folds into a summary.
-    llm_context_tokens: int = Field(default=32000, ge=2000, le=2_000_000)
-    llm_reserve_tokens: int = Field(default=4000, ge=256, le=200_000)
+    llm_context_tokens: int = Field(default=300000, ge=2000, le=2_000_000)
+    llm_reserve_tokens: int = Field(default=0, ge=0, le=200_000)
     research_min_sources: int = 2
     research_max_age_minutes: int = 90
     llm_adjustment_max_pp: Decimal = Decimal("3")

@@ -19,7 +19,6 @@ from itsdangerous import URLSafeTimedSerializer
 from sqlalchemy import create_engine, func, insert, select
 from sqlalchemy.exc import IntegrityError
 
-from mm_agent.chat import CONTEXT_RECENT_MESSAGES, SUMMARIZE_AFTER_MESSAGES
 from mm_agent.llm import LLMReply, LLMUnavailable
 from mm_agent.store import Base, ConversationBusy, ConversationNotFound, Store
 from mm_agent.store.models import ChatMessageRow, ConversationRow
@@ -210,8 +209,9 @@ def test_long_history_is_loaded_in_pages(tmp_path: Path) -> None:
     for start in range(0, 120, 40):
         _say(store, OWNER, cid, *[f"m{n}" for n in range(start + 1, start + 41)])
     seqs = lambda **kw: [m["seq"] for m in store.chat_messages(OWNER, cid, **kw)]  # noqa: E731
-    assert seqs() == list(range(71, 121))  # the latest page, oldest first
-    assert seqs(before=71) == list(range(21, 71))
+    assert seqs() == list(range(1, 121))  # no limit: everything, oldest first
+    assert seqs(before=71) == list(range(1, 71))
+    assert seqs(before=71, limit=50) == list(range(21, 71))  # a page is still available on request
     assert seqs(before=21) == list(range(1, 21))
     assert seqs(after=100) == list(range(101, 121))
     assert seqs(limit=3) == [118, 119, 120]
@@ -361,47 +361,73 @@ async def test_reopening_after_a_restart_restores_the_context(harness: Harness) 
     assert texts[0] == "remember the code word kiwi" and len(texts) == 4
 
 
-async def test_a_long_chat_is_summarized_and_the_context_stays_bounded(harness: Harness) -> None:
+async def test_a_chat_is_summarized_only_when_the_window_is_full(harness: Harness) -> None:
+    harness.chat.settings = harness.settings.model_copy(update={"llm_context_tokens": 3000, "llm_reserve_tokens": 0})
     model = _ModelDouble()
     harness.chat.llm = model  # type: ignore[assignment]
     store = harness.agent.store
     cid = store.chat_create(OWNER)["id"]
-    for n in range(SUMMARIZE_AFTER_MESSAGES // 2 + 3):
-        _say(store, OWNER, cid, f"question {n}")
-        _say(store, OWNER, cid, f"answer {n}", role="agent")
-    total = SUMMARIZE_AFTER_MESSAGES + 6
+    pad = " padding" * 60
+    for n in range(40):
+        _say(store, OWNER, cid, f"question {n}{pad}")
+        _say(store, OWNER, cid, f"answer {n}{pad}", role="agent")
+    total = 80
 
     await harness.chat.handle("one more thing", actor=OWNER, conversation_id=cid)
 
-    assert len(model.summary_calls) == 1
+    assert len(model.summary_calls) >= 1
     system = model.calls[0][0]["content"]
     assert "SUMMARY-OF-OLD-MESSAGES" in system and "out of date" in system
     history = model.calls[0][1:-1]
-    assert len(history) == CONTEXT_RECENT_MESSAGES  # old messages left the context ...
-    assert history[-1]["content"] == f"answer {total // 2 - 1}"
-    assert "question 0" not in _everything_sent(model.calls)
+    assert 0 < len(history) < total  # old messages left the context ...
+    assert "question 0 " not in _everything_sent(model.calls)
     chat = store.chat_get(OWNER, cid)
-    assert chat["summary"] == "SUMMARY-OF-OLD-MESSAGES" and chat["summary_upto"] == total - CONTEXT_RECENT_MESSAGES
-    # ... but nothing was lost: the whole history can still be paged back in.
-    everything = store.chat_messages(OWNER, cid, limit=500)
-    assert len(everything) == total + 2 and everything[0]["text"] == "question 0"
+    assert chat["summary"] == "SUMMARY-OF-OLD-MESSAGES" and 0 < chat["summary_upto"] < total
+    # ... but nothing was lost: the whole history can still be read back.
+    everything = store.chat_messages(OWNER, cid)
+    assert len(everything) == total + 2 and everything[0]["text"].startswith("question 0")
 
-    await harness.chat.handle("and another", actor=OWNER, conversation_id=cid)
-    assert len(model.summary_calls) == 1  # not summarized again until it grows long again
-    assert "SUMMARY-OF-OLD-MESSAGES" in model.calls[-1][0]["content"]
+
+async def test_a_long_chat_is_sent_whole_while_it_fits_the_window(harness: Harness) -> None:
+    model = _ModelDouble()
+    harness.chat.llm = model  # type: ignore[assignment]
+    store = harness.agent.store
+    cid = store.chat_create(OWNER)["id"]
+    for n in range(300):  # far past the old 30-message and 16000-character folding points
+        _say(store, OWNER, cid, f"fact {n}")
+
+    await harness.chat.handle("still there?", actor=OWNER, conversation_id=cid)
+
+    assert model.summary_calls == []  # no summary: the history fits, so it is all sent
+    history = model.calls[0][1:-1]
+    assert len(history) == 300 and history[0]["content"] == "fact 0"
+
+
+async def test_a_message_of_any_length_is_stored_and_sent_whole(harness: Harness) -> None:
+    model = _ModelDouble()
+    harness.chat.llm = model  # type: ignore[assignment]
+    store = harness.agent.store
+    cid = store.chat_create(OWNER)["id"]
+    long_text = ("word " * 5000).strip()  # about 25000 characters, over the old 4000 cap
+
+    await harness.chat.handle(long_text, actor=OWNER, conversation_id=cid)
+
+    assert model.calls[0][-1]["content"] == long_text
+    assert store.chat_messages(OWNER, cid)[0]["text"] == long_text
 
 
 async def test_summarizing_still_works_when_the_model_cannot(harness: Harness) -> None:
+    harness.chat.settings = harness.settings.model_copy(update={"llm_context_tokens": 3000, "llm_reserve_tokens": 0})
     model = _ModelDouble(summary=None)
     harness.chat.llm = model  # type: ignore[assignment]
     store = harness.agent.store
     cid = store.chat_create(OWNER)["id"]
-    for n in range(SUMMARIZE_AFTER_MESSAGES + 5):
-        _say(store, OWNER, cid, f"fact {n}")
+    for n in range(60):
+        _say(store, OWNER, cid, f"fact {n} " + "padding " * 60)
     result = await harness.chat.handle("still there?", actor=OWNER, conversation_id=cid)
     assert result["reply"].startswith("re:")
     summary = store.chat_get(OWNER, cid)["summary"]
-    assert "fact 0" in summary and len(summary) <= 3000
+    assert "fact 0" in summary
 
 
 async def test_chats_can_answer_at_the_same_time_without_mixing(harness: Harness) -> None:
@@ -653,8 +679,10 @@ def test_api_pages_through_a_long_history(harness: Harness) -> None:
     for start in range(0, 120, 40):
         _say(harness.agent.store, OWNER, cid, *[f"m{n}" for n in range(start + 1, start + 41)])
     opened = client.get(f"/v1/conversations/{cid}").json()
-    assert [m["seq"] for m in opened["messages"]] == list(range(71, 121)) and opened["has_more"] is True
-    collected = opened["messages"]
+    assert [m["seq"] for m in opened["messages"]] == list(range(1, 121)) and opened["has_more"] is False
+    first_page = client.get(f"/v1/conversations/{cid}/messages", params={"before": 71, "limit": 25}).json()
+    assert [m["seq"] for m in first_page["messages"]] == list(range(46, 71)) and first_page["has_more"] is True
+    collected = opened["messages"][50:]
     while True:
         page = client.get(
             f"/v1/conversations/{cid}/messages", params={"before": collected[0]["seq"], "limit": 25}

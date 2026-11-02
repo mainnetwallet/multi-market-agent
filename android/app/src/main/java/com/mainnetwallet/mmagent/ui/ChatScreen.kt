@@ -280,7 +280,7 @@ fun ChatScreen(
 
             Composer(
                 input = input,
-                onInput = { input = it.take(4000) },
+                onInput = { input = it },
                 busy = chat.busy,
                 onSend = { send() },
                 onStop = onStop,
@@ -1071,7 +1071,7 @@ private fun ChatHistoryDrawer(
         AlertDialog(
             onDismissRequest = { renaming = null },
             title = { Text("Rename chat") },
-            text = { OutlinedTextField(value = title, onValueChange = { title = it.take(60) }, singleLine = true) },
+            text = { OutlinedTextField(value = title, onValueChange = { title = it }, singleLine = true) },
             confirmButton = {
                 TextButton(
                     enabled = title.isNotBlank(),
