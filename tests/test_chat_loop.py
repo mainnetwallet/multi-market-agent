@@ -286,6 +286,67 @@ async def test_a_disconnected_app_still_gets_a_finished_read_only_answer(harness
     assert store.chat_messages(OWNER, cid)[-1]["text"] == "Read-only answer."  # stored for the app to show
 
 
+# ------------------------------------------- Stop / a gone app cancels the model request that is still running
+class _Hanging(_Script):
+    """A model request that never finishes on its own; records that it was cancelled (the HTTP stream closed)."""
+
+    def __init__(self) -> None:
+        super().__init__(lambda *_: LLMReply(content="never reached"))
+        self.started = asyncio.Event()
+        self.cancelled = False
+
+    async def chat(self, messages, tools=None, temperature=0.1, on_delta=None, tool_choice="auto", max_tokens=None):  # type: ignore[no-untyped-def]
+        self.started.set()
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
+async def test_stop_cancels_a_model_request_that_is_still_running(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("mm_agent.chat.STOP_POLL_SECONDS", 0.02)
+    model = _Hanging()
+    harness.chat.llm = model  # type: ignore[assignment]
+    flag = {"stop": False}
+    cid = harness.agent.store.chat_create(OWNER)["id"]
+    run = asyncio.create_task(
+        harness.chat.handle("long answer", actor=OWNER, conversation_id=cid, should_stop=lambda: flag["stop"])
+    )
+    await asyncio.wait_for(model.started.wait(), 5)
+    flag["stop"] = True  # the operator pressed Stop while the model was still answering
+    result = await asyncio.wait_for(run, 5)
+    assert result["reply"] == "Stopped." and model.cancelled is True
+
+
+async def test_the_model_request_stops_once_the_dropped_app_grace_is_over(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("mm_agent.chat.STOP_POLL_SECONDS", 0.02)
+    model = _Hanging()
+    harness.chat.llm = model  # type: ignore[assignment]
+    started_at = asyncio.get_running_loop().time()
+    grace = 0.15  # what control_api's should_stop() does: true once the connection has been gone this long
+    cid = harness.agent.store.chat_create(OWNER)["id"]
+    result = await asyncio.wait_for(
+        harness.chat.handle(
+            "long answer",
+            actor=OWNER,
+            conversation_id=cid,
+            should_stop=lambda: asyncio.get_running_loop().time() - started_at >= grace,
+            is_detached=lambda: True,
+        ),
+        5,
+    )
+    assert result["reply"] == "Stopped." and model.cancelled is True
+
+
+def test_a_gone_app_no_longer_keeps_the_model_running_for_ten_minutes(harness: Harness) -> None:
+    assert harness.chat.settings.chat_detached_grace_seconds <= 60
+
+
 async def test_text_from_each_round_starts_a_new_paragraph(harness: Harness) -> None:
     class Talker(_Script):
         async def chat(self, messages, tools=None, temperature=0.1, on_delta=None, tool_choice="auto"):  # type: ignore[no-untyped-def]

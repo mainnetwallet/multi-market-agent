@@ -135,9 +135,10 @@ class Settings(BaseSettings):
     # Max characters of a tool call's input / output kept on the step the app shows (secrets are redacted first).
     chat_step_detail_chars: int = Field(default=2000, ge=0)
     # If the app's connection drops mid-answer (background, network switch), the answer keeps running read-only
-    # for up to this long so the finished reply is stored for the app to show. Money/control tools are refused
-    # while nobody is watching. Only an explicit Stop ends the run at once.
-    chat_detached_grace_seconds: int = Field(default=600, ge=0)
+    # for up to this long so the finished reply is stored for the app to show; after that the running model
+    # request is cancelled and the answer stops. Money/control tools are refused while nobody is watching.
+    # An explicit Stop ends the run at once, including a model request that is still streaming.
+    chat_detached_grace_seconds: int = Field(default=30, ge=0)
     research_min_sources: int = 2
     research_max_age_minutes: int = 90
     llm_adjustment_max_pp: Decimal = Decimal("3")

@@ -45,6 +45,39 @@ BENGALI_RE = re.compile(r"[\u0980-\u09FF]")
 ChatEvent = Callable[[str, dict[str, Any]], Awaitable[None]]
 StopCheck = Callable[[], bool]
 
+# How often a running model request looks at the Stop / dropped-app flag.
+STOP_POLL_SECONDS = 0.5
+
+
+class AnswerStopped(Exception):
+    """Stop (or the end of the dropped-app grace) arrived while a model request was still running."""
+
+
+async def until_stopped(work: Awaitable[Any], should_stop: StopCheck | None) -> Any:
+    """Await [work], but cancel it the moment [should_stop] turns true.
+
+    Cancelling closes the HTTP stream to the provider, so a stopped or abandoned answer stops being generated (and
+    billed) instead of running to its end. Only model requests go through here: a tool that already started
+    (a trade) is never cancelled."""
+
+    if should_stop is None:
+        return await work
+    task = asyncio.ensure_future(work)
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=STOP_POLL_SECONDS)
+            if done:
+                return task.result()
+            if should_stop():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+                raise AnswerStopped
+    finally:
+        if not task.done():  # the caller itself was cancelled
+            task.cancel()
+
+
 # The model's window (Settings.llm_context_tokens) is the only ceiling: there is no count or character cap
 # on messages, summaries, tool results, pins, tasks or checkpoints. Auto-compaction keeps it from being hit:
 # when a request would fill COMPACT_AT of the window, the oldest part is folded into a summary until the
@@ -1781,7 +1814,9 @@ class ChatService:
             if force:
                 request["tool_choice"] = "none"
             try:
-                reply = await self.llm.chat(messages, **request)
+                reply = await until_stopped(self.llm.chat(messages, **request), should_stop)
+            except AnswerStopped:
+                return finish({"reply": "Stopped.", "data": {**last_data, "stopped": True}})
             except LLMUnavailable as exc:
                 return finish(
                     {
@@ -1799,7 +1834,9 @@ class ChatService:
                 room = max(usable - messages_tokens(messages), 4096)
                 for cap in sorted({room, 131072, 65536, 32768, 16384}, reverse=True):
                     try:
-                        bigger = await self.llm.chat(messages, **request, max_tokens=cap)
+                        bigger = await until_stopped(self.llm.chat(messages, **request, max_tokens=cap), should_stop)
+                    except AnswerStopped:
+                        return finish({"reply": "Stopped.", "data": {**last_data, "stopped": True}})
                     except LLMUnavailable:
                         continue  # the provider refused that size: try a smaller one
                     logger.info("llm_length_retry", cap=cap, finish_reason=bigger.finish_reason)
