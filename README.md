@@ -309,9 +309,15 @@ is configured, use slash commands.
 `GET /v1/chat/stream?message=...` and `POST /v1/chat/stream` (`{"message": ...}`, no
 URL-length limit, the Android app uses it and sends its `conversation_id`) are the Server-Sent Events form of `/v1/chat`. Events: `status`, `delta` (reply text as the LLM
 produces it), `tool` (`{id, name, state: running|done|error}`), `ping`, then
-`message` (the final, redacted reply) and `done`. If the client disconnects
-(Stop), no new tool is started, but a tool that is already running finishes, so
-check `/orders` after stopping a trade.
+`message` (the final, redacted reply) and `done`.
+
+**Stop vs. a dropped connection.** A dropped connection (app in the background, network switch, proxy) is *not*
+a Stop. The answer keeps running **read-only** for up to `CHAT_DETACHED_GRACE_SECONDS` (default 600) and its
+finished reply is stored in the chat, so the app shows it when it reconnects. While nobody is connected every
+trade/control tool is refused. Only an explicit Stop (`POST /v1/conversations/{id}/stop`, which the app's Stop
+button calls) ends the run at once: no new tool starts, but a tool that is already running finishes, so check
+`/orders` after stopping a trade. A one-off stream without a `conversation_id` has nowhere to store its reply
+and still stops when the client disconnects.
 
 **Conversations.** Chats live in the same database (`conversations`, `chat_messages`; Alembic
 `c7e2a91f4b30`). Each has a UUID, its own messages, summary and run state, and belongs to the user
@@ -341,8 +347,13 @@ person or a tool is fenced as DATA and can never change the rules.
 - **Budget.** A request is sized to `LLM_CONTEXT_TOKENS` (default 300000; character-based estimate), minus the
   tool schemas. The rules, tool list and current message come first; standing instructions, task plan,
   interrupted-run state, summary and retrieved messages take what is left, then recent history. The window is
-  the only limit: there is no cap on message length, tool rounds per answer, tool-result size, summary size,
-  pins, task steps, checkpoint calls, chats or history length, and no space is held back for the reply.
+  the ceiling for message length, summaries, pins, task steps, chats and history, and no space is held back for
+  the reply. Two limits keep an answer fast and make sure it ends: **`LLM_MAX_TOOL_ROUNDS`** (default 14, 0 =
+  none): three rounds before it the model is told to wrap up, and at the limit its next request has tools
+  switched off so it must write the answer; an empty reply is asked for once more the same way. **`LLM_TOOL_RESULT_CHARS`**
+  (default 16000, 0 = none): a longer tool result is cut in the middle, with a note, before it goes back to the model.
+  Independent read-only tool calls in one model turn run in parallel; trade/control calls always run one at a time.
+  A failed model call (timeout, reset connection, HTTP 429/5xx) is retried twice before anything has streamed to the app.
 - **Auto-compaction.** When a request would fill 90% of the window, the oldest part is folded into a summary
   until it is down to 50%, so there is always room to answer. Before an answer starts, the oldest chat messages
   are folded into the chat's summary. In the middle of a long answer (many tool rounds), the earlier chat

@@ -6,6 +6,7 @@ never receives API keys, auth headers, or raw venue responses.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -26,10 +27,22 @@ class LLMReply:
     content: str
     tool_calls: tuple[dict[str, Any], ...] = ()
     raw: dict[str, Any] | None = None
+    finish_reason: str = ""  # "stop", "tool_calls", "length" ... as the provider reported it
 
 
 class LLMUnavailable(RuntimeError):
     pass
+
+
+class LLMTransient(LLMUnavailable):
+    """A failure that is worth asking again: a timeout, a reset connection, HTTP 429 or 5xx.
+
+    A completion has no side effect until the caller acts on it, so asking again is always safe."""
+
+
+LLM_RETRIES = 2  # extra attempts after a transient failure (only while nothing was streamed to the app)
+LLM_RETRY_DELAYS = (1.0, 3.0)
+_TRANSIENT_STATUS = {408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 524, 529}
 
 
 class LLMContextOverflow(LLMUnavailable):
@@ -51,6 +64,8 @@ def http_error(status: int, body: str) -> LLMUnavailable:
     message = f"LLM HTTP {status}: {body[:200]}"
     if status == 413 or (status == 400 and _OVERFLOW_RE.search(body)):
         return LLMContextOverflow(message)
+    if status in _TRANSIENT_STATUS:
+        return LLMTransient(message)
     return LLMUnavailable(message)
 
 
@@ -101,6 +116,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.1,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
+        tool_choice: str = "auto",
     ) -> LLMReply:
         if not self.enabled:
             raise LLMUnavailable("LLM_BASE_URL and LLM_MODEL are not configured")
@@ -112,35 +128,81 @@ class LLMClient:
         }
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            payload["tool_choice"] = tool_choice
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+
+        delivered = False  # once text reached the app, a retry would repeat it
+
+        tracked: Callable[[str], Awaitable[None]] | None = None
         if on_delta is not None:
-            streamed = await self._chat_stream(url, payload, headers, on_delta)
-            if streamed is not None:
-                return streamed
-            # The provider refused streaming before sending anything: use the plain call.
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(url, json=payload, headers=headers)
+            sink = on_delta
+
+            async def tracked(piece: str) -> None:
+                nonlocal delivered
+                delivered = True
+                await sink(piece)
+
+        attempt = 0
+        while True:
+            try:
+                return await self._chat_once(url, payload, headers, tracked)
+            except LLMTransient as exc:
+                if delivered or attempt >= LLM_RETRIES:
+                    raise
+                delay = LLM_RETRY_DELAYS[min(attempt, len(LLM_RETRY_DELAYS) - 1)]
+                attempt += 1
+                logger.warning("llm_retry", attempt=attempt, error=str(exc)[:160], delay=delay)
+                await asyncio.sleep(delay)
+
+    def _timeout(self) -> httpx.Timeout:
+        return httpx.Timeout(self.timeout, connect=min(15.0, float(self.timeout)))
+
+    async def _chat_once(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        on_delta: Callable[[str], Awaitable[None]] | None,
+    ) -> LLMReply:
+        try:
+            if on_delta is not None:
+                streamed = await self._chat_stream(url, payload, headers, on_delta)
+                if streamed is not None:
+                    return streamed
+                # The provider refused streaming before sending anything: use the plain call.
+            async with httpx.AsyncClient(timeout=self._timeout()) as client:
+                response = await client.post(url, json=payload, headers=headers)
+        except httpx.TransportError as exc:  # timeout, reset connection, DNS, broken stream
+            raise LLMTransient(f"LLM connection failed: {type(exc).__name__}") from exc
         if response.status_code >= 400:
             raise http_error(response.status_code, response.text)
-        data = response.json()
         try:
-            choice = data["choices"][0]["message"]
-        except (KeyError, IndexError) as exc:
+            data = response.json()
+        except ValueError as exc:
+            raise LLMTransient("LLM returned a body that is not JSON") from exc
+        try:
+            first = data["choices"][0]
+            choice = first["message"]
+        except (KeyError, IndexError, TypeError) as exc:
             raise LLMUnavailable("LLM response missing choices[0].message") from exc
         calls: list[dict[str, Any]] = []
-        for call in choice.get("tool_calls") or []:
+        for n, call in enumerate(choice.get("tool_calls") or []):
             function = call.get("function") or {}
             calls.append(
                 {
-                    "id": call.get("id", ""),
+                    "id": call.get("id") or f"call_{n}",
                     "name": function.get("name", ""),
                     "arguments": function.get("arguments", "{}"),
                 }
             )
-        return LLMReply(content=str(choice.get("content") or ""), tool_calls=tuple(calls), raw=data)
+        return LLMReply(
+            content=str(choice.get("content") or ""),
+            tool_calls=tuple(calls),
+            raw=data,
+            finish_reason=str(first.get("finish_reason") or ""),
+        )
 
     async def _chat_stream(
         self,
@@ -152,8 +214,9 @@ class LLMClient:
         """OpenAI-style SSE completion. Returns None if the provider rejects `stream` up front."""
         content: list[str] = []
         calls: dict[int, dict[str, str]] = {}
+        finish_reason = ""
         async with (
-            httpx.AsyncClient(timeout=self.timeout) as client,
+            httpx.AsyncClient(timeout=self._timeout()) as client,
             client.stream("POST", url, json={**payload, "stream": True}, headers=headers) as response,
         ):
             if response.status_code in (400, 404, 405, 422):
@@ -168,25 +231,45 @@ class LLMClient:
                 if data == "[DONE]":
                     break
                 try:
-                    delta = json.loads(data)["choices"][0].get("delta") or {}
-                except (ValueError, KeyError, IndexError, TypeError):
+                    chunk = json.loads(data)
+                except ValueError:
                     continue
+                if not isinstance(chunk, dict):
+                    continue
+                if chunk.get("error"):  # the provider failed after it had already answered 200
+                    err = chunk["error"]
+                    detail = err.get("message") if isinstance(err, dict) else err
+                    raise LLMTransient(f"LLM stream error: {str(detail)[:200]}")
+                choices = chunk.get("choices") or []
+                if not choices or not isinstance(choices[0], dict):
+                    continue
+                choice = choices[0]
+                delta = choice.get("delta") or {}
+                if choice.get("finish_reason"):
+                    finish_reason = str(choice["finish_reason"])
                 text = delta.get("content")
                 if text:
                     content.append(str(text))
                     await on_delta(str(text))
                 for call in delta.get("tool_calls") or []:
-                    slot = calls.setdefault(int(call.get("index", 0)), {"id": "", "name": "", "arguments": ""})
+                    # Providers number parallel calls with `index`; some omit it or repeat 0, so a new
+                    # id on an occupied slot also starts a new call instead of gluing two together.
+                    key = call.get("index")
+                    key = key if isinstance(key, int) else (max(calls) if calls else 0)
+                    new_id = call.get("id") or ""
+                    if new_id and key in calls and calls[key]["id"] and calls[key]["id"] != new_id:
+                        key = max(calls) + 1
+                    slot = calls.setdefault(key, {"id": "", "name": "", "arguments": ""})
                     function = call.get("function") or {}
-                    slot["id"] = call.get("id") or slot["id"]
+                    slot["id"] = new_id or slot["id"]
                     slot["name"] = function.get("name") or slot["name"]
                     slot["arguments"] += function.get("arguments") or ""
         tool_calls = tuple(
-            {"id": c["id"], "name": c["name"], "arguments": c["arguments"] or "{}"}
-            for _, c in sorted(calls.items())
+            {"id": c["id"] or f"call_{n}", "name": c["name"], "arguments": c["arguments"] or "{}"}
+            for n, (_, c) in enumerate(sorted(calls.items()))
             if c["name"]
         )
-        return LLMReply(content="".join(content), tool_calls=tool_calls)
+        return LLMReply(content="".join(content), tool_calls=tool_calls, finish_reason=finish_reason)
 
 
 SEARCH_QUOTA_PAUSE = 900  # seconds to leave the search provider alone after a key/quota rejection

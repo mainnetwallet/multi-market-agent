@@ -769,17 +769,23 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     }
 
     /**
-     * The stream broke after the message was sent. Wait until the server has finished whatever step it
-     * was in and the network is back, then show the chat as the server stored it. Returns false if the
-     * server never received the message or could not be reached for about a minute.
-     * The server does not start new steps once the stream is gone, so a cut-off answer is not resumed
-     * by itself: the note tells the operator to say "continue".
+     * The stream broke after the message was sent. Wait until the server has finished answering and the
+     * network is back, then show the chat as the server stored it. Returns false if the server never
+     * received the message or could not be reached for about a minute.
+     * The server keeps answering read-only after a drop (it starts no trade or control step while the app
+     * is gone), so the finished reply is normally already stored; if it did not finish, the note tells the
+     * operator to say "continue".
      */
     private suspend fun recoverDroppedReply(serverId: String, message: String): Boolean {
+        // The server keeps answering for a while after the connection drops (read-only), so wait for it to
+        // finish, up to about 11 minutes; give up sooner only if the server cannot be reached at all.
         var wait = 1500L
-        repeat(15) {
+        var unreachable = 0
+        val deadline = System.currentTimeMillis() + 11 * 60_000L
+        while (System.currentTimeMillis() < deadline) {
             try {
                 val open = api.get("/v1/conversations/$serverId")
+                unreachable = 0
                 val status = open.optJSONObject("conversation")?.optString("status").orEmpty()
                 if (status != "running") {
                     val stored = ApiClient.arrayOf(open, "messages").objects().map { messageFromServer(it) }
@@ -791,7 +797,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                     }
                     finishTurn(
                         null,
-                        if (answered) null else "The connection dropped while the app was in the background, so this answer stopped. " +
+                        if (answered) null else "The connection dropped and this answer did not finish. " +
                             "Check Orders and Positions, then send \"continue\" to resume.",
                         isError = false,
                     )
@@ -802,7 +808,9 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             } catch (e: ApiClient.ApiException) {
                 return false
             } catch (e: Exception) {
-                // Still offline or the name does not resolve yet: try again.
+                // Still offline or the name does not resolve yet: try again, but not forever.
+                unreachable += 1
+                if (unreachable >= 15) return false
             }
             delay(wait)
             wait = minOf(wait * 2, 6000L)
@@ -868,6 +876,20 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
      * running (a trade, say) finishes, so the reply says so and the lists are refreshed.
      */
     fun stopChat() {
+        // A dropped connection is not a Stop (the server keeps answering so the reply is saved), so Stop
+        // says so explicitly. It goes out on its own coroutine: cancelling the chat job must not cancel it.
+        val id = _chat.value.activeId
+        if (id != null) {
+            viewModelScope.launch {
+                try {
+                    api.post("/v1/conversations/$id/stop", JSONObject())
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Offline: closing the stream below still ends the wait on this side.
+                }
+            }
+        }
         chatJob?.cancel()
     }
 

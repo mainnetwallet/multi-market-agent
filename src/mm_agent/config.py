@@ -112,10 +112,22 @@ class Settings(BaseSettings):
 
     llm_base_url: str = ""
     llm_model: str = ""
-    llm_timeout_seconds: int = 60
+    # Seconds to wait for the model's next bytes. A large context or a reasoning model can be silent for a
+    # minute or more before its first token, so this is generous; a failed call is retried (see llm.py).
+    llm_timeout_seconds: int = 180
     # Context window of the configured model. Every request is assembled to fit (window - tool schemas);
     # at 90% full the older chat is folded into a summary until it is down to 50% (see chat.COMPACT_AT).
     llm_context_tokens: int = Field(default=300000, ge=2000, le=2_000_000)
+    # One answer may use this many model <-> tool rounds. Near the end the model is told to wrap up, and at the
+    # limit it is made to answer with what it has, so a job can never loop without ever replying. 0 = no limit.
+    llm_max_tool_rounds: int = Field(default=14, ge=0, le=500)
+    # A tool result longer than this many characters is cut in the middle before it goes back to the model
+    # (the model is told it was cut). Keeps every round fast. 0 = no limit.
+    llm_tool_result_chars: int = Field(default=16000, ge=0)
+    # If the app's connection drops mid-answer (background, network switch), the answer keeps running read-only
+    # for up to this long so the finished reply is stored for the app to show. Money/control tools are refused
+    # while nobody is watching. Only an explicit Stop ends the run at once.
+    chat_detached_grace_seconds: int = Field(default=600, ge=0)
     research_min_sources: int = 2
     research_max_age_minutes: int = 90
     llm_adjustment_max_pp: Decimal = Decimal("3")

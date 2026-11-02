@@ -96,6 +96,9 @@ class RuleBody(BaseModel):
 
 
 _CHAT_TASKS: set[asyncio.Task[Any]] = set()
+# Run controls of the chat answers that are streaming right now, keyed by (user, conversation id):
+# "stop" is the operator's explicit Stop; "detached_at" is when the app's connection dropped.
+_CHAT_RUNS: dict[tuple[str, str], dict[str, Any]] = {}
 
 
 class ChatBody(BaseModel):
@@ -1324,12 +1327,25 @@ def create_app(
     def chat_event_stream(message: str, user: str, conversation_id: str | None = None) -> StreamingResponse:
         if conversation_id is not None and own_conversation(user, conversation_id)["status"] == "running":
             raise HTTPException(status_code=409, detail="this chat is still answering its previous message")
+        grace = float(settings.chat_detached_grace_seconds)
 
         async def event_stream() -> Any:
             yield 'event: status\ndata: {"state":"working"}\n\n'
 
             queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
-            stop = {"now": False}
+            # stop: the operator pressed Stop. detached_at: the connection dropped (app in the background, network
+            # switch, proxy). A drop is NOT a Stop: the answer keeps going read-only for a while so the finished
+            # reply is stored and the app can show it; money/control tools are refused while nobody is watching.
+            ctl: dict[str, Any] = {"stop": False, "detached_at": None}
+
+            def should_stop() -> bool:
+                if ctl["stop"]:
+                    return True
+                since = ctl["detached_at"]
+                return since is not None and time.monotonic() - since >= grace
+
+            def is_detached() -> bool:
+                return ctl["detached_at"] is not None
 
             async def on_event(kind: str, payload: dict[str, Any]) -> None:
                 queue.put_nowait((kind, payload))
@@ -1340,13 +1356,25 @@ def create_app(
                     actor=f"web:{user}",
                     source="web_chat",
                     on_event=on_event,
-                    should_stop=lambda: stop["now"],
+                    should_stop=should_stop,
+                    is_detached=is_detached,
                     conversation_id=conversation_id,
                 )
             )
             # Keep a reference: if the app disconnects, the task still ends cleanly.
             _CHAT_TASKS.add(task)
             task.add_done_callback(_CHAT_TASKS.discard)
+            run_key = (user, conversation_id) if conversation_id is not None else None
+            if run_key is not None:
+                _CHAT_RUNS[run_key] = ctl
+
+                def forget_run(
+                    _done: asyncio.Task[Any], key: tuple[str, str] = run_key, mine: dict[str, Any] = ctl
+                ) -> None:
+                    if _CHAT_RUNS.get(key) is mine:
+                        del _CHAT_RUNS[key]
+
+                task.add_done_callback(forget_run)
             getter: asyncio.Future[tuple[str, dict[str, Any]]] | None = None
             try:
                 while True:
@@ -1374,16 +1402,33 @@ def create_app(
             finally:
                 if getter is not None and not getter.done():
                     getter.cancel()
-                # The app pressed Stop (or lost the connection). Never cancel the task: a trade
-                # that already started must finish. It just may not start anything new.
+                # The connection ended before the answer did. Never cancel the task: a trade that already
+                # started must finish. A chat that stores its answer carries on read-only (see above); an
+                # unstored one-off answer has nowhere to deliver its result, so it just stops.
                 if not task.done():
-                    stop["now"] = True
+                    if conversation_id is None:
+                        ctl["stop"] = True
+                    else:
+                        ctl["detached_at"] = time.monotonic()
 
         return StreamingResponse(
             event_stream(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.post("/v1/conversations/{conversation_id}/stop")
+    async def conversations_stop(conversation_id: str, user: str = Depends(require_auth)) -> dict[str, Any]:
+        """The operator's explicit Stop. No new step starts; a step already running (a trade) finishes.
+
+        Dropping the connection is deliberately not a Stop (see chat_event_stream)."""
+
+        own_conversation(user, conversation_id)
+        ctl = _CHAT_RUNS.get((user, conversation_id))
+        if ctl is None:
+            return {"stopped": False, "reason": "this chat is not answering right now"}
+        ctl["stop"] = True
+        return {"stopped": True}
 
     @app.get("/v1/chat/stream")
     async def chat_stream(

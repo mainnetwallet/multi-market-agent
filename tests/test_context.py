@@ -926,7 +926,8 @@ async def test_a_task_plan_cannot_forge_the_fence_or_the_rules(harness: Harness)
 async def test_every_block_together_still_fits_a_small_window(
     harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _window(harness, 3000)
+    window = 3300  # the rules and the tool list alone take ~3000 tokens; every other block must squeeze into the rest
+    _window(harness, window)
     _count_buys(harness, monkeypatch)
     store = harness.agent.store
     model = _Model()
@@ -952,7 +953,7 @@ async def test_every_block_together_still_fits_a_small_window(
     await harness.chat.handle("alpha bravo charlie delta echo foxtrot status?", actor=OWNER, conversation_id=cid)
 
     sent = messages_tokens(model.calls[0]) + estimate_tokens(json.dumps(model.tool_sets[0]))
-    assert sent <= 3000  # the window itself is the ceiling now; no reply reserve is held back
+    assert sent <= window  # the window itself is the ceiling now; no reply reserve is held back
     system = model.calls[0][0]["content"]
     assert system.startswith(SYSTEM_INSTRUCTIONS) and "Available tools" in system
     assert store.chat_get(OWNER, cid)["state"]["context"]["over_budget"] is False
