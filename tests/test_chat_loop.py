@@ -31,9 +31,11 @@ class _Script:
         self.requests: list[dict[str, Any]] = []
 
     async def chat(  # type: ignore[no-untyped-def]
-        self, messages, tools=None, temperature=0.1, on_delta=None, tool_choice="auto"
+        self, messages, tools=None, temperature=0.1, on_delta=None, tool_choice="auto", max_tokens=None
     ):
-        self.requests.append({"messages": [dict(m) for m in messages], "tool_choice": tool_choice})
+        self.requests.append(
+            {"messages": [dict(m) for m in messages], "tool_choice": tool_choice, "max_tokens": max_tokens}
+        )
         return self.plan(len(self.requests), messages, tool_choice)
 
 
@@ -151,7 +153,8 @@ async def test_an_empty_reply_is_asked_again_once_with_tools_off(harness: Harnes
     harness.chat.llm = model  # type: ignore[assignment]
     result = await _ask(harness)
     assert result["reply"] == "Here is the answer."
-    assert [r["tool_choice"] for r in model.requests] == ["auto", "none"]
+    base = [r for r in model.requests if r["max_tokens"] is None]  # the larger-room retries are counted apart
+    assert [r["tool_choice"] for r in base] == ["auto", "none"]
 
 
 async def test_an_empty_reply_that_stays_empty_says_so(harness: Harness) -> None:
@@ -159,7 +162,7 @@ async def test_an_empty_reply_that_stays_empty_says_so(harness: Harness) -> None
     harness.chat.llm = model  # type: ignore[assignment]
     result = await _ask(harness)
     assert "no answer" in result["reply"] and "output limit" in result["reply"]
-    assert len(model.requests) == 2  # one retry, no endless loop
+    assert len([r for r in model.requests if r["max_tokens"] is None]) == 2  # one retry, no endless loop
 
 
 # --------------------------------------------------------------------------- speed
@@ -563,3 +566,29 @@ async def test_max_tokens_is_sent_only_when_configured(tmp_path: Path, monkeypat
     client.max_output_tokens = 16000
     await client.chat([{"role": "user", "content": "x"}])
     assert "max_tokens" not in bodies[0] and bodies[1]["max_tokens"] == 16000
+
+
+async def test_a_reply_cut_at_the_providers_default_cap_is_asked_again_with_more_room(harness: Harness) -> None:
+    sizes: list[int | None] = []
+
+    class Model(_Script):
+        async def chat(self, messages, tools=None, temperature=0.1, on_delta=None, tool_choice="auto", max_tokens=None):  # type: ignore[no-untyped-def]
+            sizes.append(max_tokens)
+            if max_tokens is None:
+                return LLMReply(content="", finish_reason="length")  # a reasoning model out of its default budget
+            if max_tokens > 131072:
+                raise LLMUnavailable("max_tokens too large")  # the provider refuses the biggest size
+            return LLMReply(content="Here is the answer.", finish_reason="stop")
+
+    harness.chat.llm = Model(lambda *_: LLMReply(content=""))  # type: ignore[assignment]
+    result = await _ask(harness)
+    assert result["reply"] == "Here is the answer."
+    assert sizes[0] is None and sizes[1] > 131072 and sizes[2] == 131072  # no cap first, then the biggest that works
+
+
+async def test_a_configured_output_cap_is_never_overridden(harness: Harness) -> None:
+    _set(harness, llm_max_output_tokens=500)
+    model = _Script(lambda *_: LLMReply(content="cut", finish_reason="length"))
+    harness.chat.llm = model  # type: ignore[assignment]
+    await _ask(harness)
+    assert len(model.requests) == 1

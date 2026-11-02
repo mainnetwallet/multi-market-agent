@@ -129,8 +129,8 @@ class Settings(BaseSettings):
     # A tool result longer than this many characters is cut in the middle before it goes back to the model
     # (the model is told it was cut). Keeps every round fast. 0 = no limit.
     llm_tool_result_chars: int = Field(default=16000, ge=0)
-    # Output cap sent to the model as max_tokens. 0 = send none (the provider's own default applies). Some providers
-    # default to a small cap, and a reasoning model can spend all of it thinking and return no answer.
+    # Output cap sent to the model as max_tokens. 0 = no limit from this app (the default): a reply the provider cut
+    # off at its own default cap is asked again with the room the window leaves (see chat._llm_chat).
     llm_max_output_tokens: int = Field(default=0, ge=0, le=200_000)
     # Max characters of a tool call's input / output kept on the step the app shows (secrets are redacted first).
     chat_step_detail_chars: int = Field(default=2000, ge=0)

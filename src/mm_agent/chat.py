@@ -1789,6 +1789,22 @@ class ChatService:
                         "data": {"error": True},
                     }
                 )
+            if (
+                reply.finish_reason == "length"
+                and not round_text
+                and not getattr(self.settings, "llm_max_output_tokens", 0)
+            ):
+                # No output limit is configured, so the cut came from the provider's own default cap (a reasoning
+                # model can spend all of it thinking). Ask again, once, with the room the window leaves.
+                room = max(usable - messages_tokens(messages), 4096)
+                for cap in sorted({room, 131072, 65536, 32768, 16384}, reverse=True):
+                    try:
+                        bigger = await self.llm.chat(messages, **request, max_tokens=cap)
+                    except LLMUnavailable:
+                        continue  # the provider refused that size: try a smaller one
+                    logger.info("llm_length_retry", cap=cap, finish_reason=bigger.finish_reason)
+                    reply = bigger
+                    break
             if reply.tool_calls and not force:
                 calls = [
                     {

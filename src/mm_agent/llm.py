@@ -118,6 +118,7 @@ class LLMClient:
         temperature: float = 0.1,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
         tool_choice: str = "auto",
+        max_tokens: int | None = None,
     ) -> LLMReply:
         if not self.enabled:
             raise LLMUnavailable("LLM_BASE_URL and LLM_MODEL are not configured")
@@ -127,8 +128,9 @@ class LLMClient:
             "messages": messages,
             "temperature": temperature,
         }
-        if self.max_output_tokens:
-            payload["max_tokens"] = self.max_output_tokens
+        cap = max_tokens if max_tokens is not None else self.max_output_tokens
+        if cap:
+            payload["max_tokens"] = cap
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
