@@ -502,7 +502,7 @@ Patches are merged and sent at most 4 times a second per event, the chance is th
 | Data | Polymarket | Kalshi | Limitless |
 |---|---|---|---|
 | Quotes / books | market WebSocket (push) | native WS (needs an API key: signed handshake) | native WS |
-| Game score, period | sports WebSocket (vendor may be late or wrong) | not carried by the hub | not carried by the hub |
+| Game score, period | sports WebSocket (vendor may be late or wrong) | REST poll of `/live_data/batch` every 2.5 s, source `kalshi_rest_polled` (layout from the docs, unverified; Sports events only) | not carried by the hub |
 | Chart history | `batch-prices-history` | price history | `historical-price` (docs only) |
 | Without its feed | REST poll, `DELAYED` | REST poll, `DELAYED` | REST poll, `DELAYED` |
 
@@ -514,7 +514,12 @@ Limits per account/client: 8 open stream sockets per user (close code 4429), 12 
 in the process, 30 new event lookups per minute per socket (`rate_limited` error), client frames of at most 2 KB, at most 64
 queued patches and 512 queued frames per client (a client over the cap, or one that stops reading for 120 s, is closed with
 4408). Codes: 4401 not signed in, 4404 `LIVE_VIEWS_ENABLED=false`, 4408 dropped, 4429 too many sockets.
-`LIVE_VIEWS_ENABLED=false` turns the stream and `/v1/event/view` off. `/status` reports `live` metrics.
+`LIVE_VIEWS_ENABLED=false` turns the stream and `/v1/event/view` off. `/status` reports `live` metrics, one entry per feed
+(`polymarket_market`, `polymarket_sports`, `kalshi_ws`, `limitless_ws`, `kalshi_live_data`).
+The Up/Down spot price says `coinbase`: PolyBolt is not wired (it needs credentials only the signing modules may read), so a
+view never claims `polybolt`. Polymarket discovery still uses `/events`; the `/events/keyset` form is used only to find a
+game's companion events. Not verified live: every venue response shape above comes from the docs or from synthetic fixtures
+(`LIVE_VERIFIED=false`). `WORKLOG.md` ("Handoff - P6 audit") lists what is done, partial, missing or unverifiable.
 `python scripts/live_load_test.py` runs an in-process load test (200 clients, 50 events, no network). The feed protocols are
 tested against fakes only; run `scripts/probe_live_shapes.py` and `scripts/live_hub_check.py` once on a real machine.
 

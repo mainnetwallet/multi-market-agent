@@ -512,3 +512,22 @@ PolyBolt auth needs; Limitless history intervals and group behaviour; Kalshi mil
 - No venue was contacted in P5 (sandbox has no route to them). Every drill uses fakes: silent feed, reconnect storm, a venue
   429 with `Retry-After`, malformed client frames. Nothing here says how a real venue behaves under rate limiting; the
   `Retry-After` handling reads `exc.retry_after` or `exc.response.headers["Retry-After"]` and is untested against a real 429.
+
+---
+
+## 9. P6 audit notes (2026-11-02) - docs only, NOT VERIFIED LIVE
+
+The sandbox could not reach any venue, so nothing below was seen on a live response. Each item is what the code sends or
+expects, so the probe (`scripts/probe_live_shapes.py`) can confirm or refute it on a real machine.
+
+- Kalshi `GET /live_data/batch`: the code sends `milestone_ids` as one comma-joined value (the probe sends the same), at most
+  100 ids per call. If Kalshi wants the parameter repeated instead, the poller gets an error or an empty list and the event
+  simply shows no score. Expected reply: `{"live_datas": [{"milestone_id", "type", "details": {...}}]}`; the parser also accepts
+  `live_data`, a bare list, and a few spellings of home/away name, score, period and status. Scores are whole numbers or none.
+- Kalshi `GET /milestones?related_event_ticker=<ticker>&limit=10`: used to link a Sports event to its milestone ids (reply
+  expected as `{"milestones": [{"id", ...}]}`). The probe captures it as `milestones_for_event`.
+- Not done on purpose: Limitless navigation endpoints (the `categories[0]` trick stays until P0 confirms them) and the Polymarket
+  `/events/keyset` discovery with `version=v1&version=v2` (the reply shape is unverified, and Discover must not break on a guess).
+- Second synthetic fixture set (tennis, MMA, esports, mentions, weather, Kalshi sports/binary/live_data, Limitless CLOB and
+  recurring) is hand-built. One real finding from building it: a threshold is read from the first number in a label only when a
+  non-letter follows it (`49°F` yes, `49F` no), so a bracket label spelled without that would fall back to a candidate list.
