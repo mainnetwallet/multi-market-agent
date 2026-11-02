@@ -172,8 +172,7 @@ class PolymarketVenue(HttpVenue):
         realtime=True,
         sandbox=False,
         neg_risk=True,
-        min_order_shares=Decimal("5"),  # resting limit orders
-        min_marketable_shares=ZERO,  # market (FOK/FAK) orders: only the $1 notional floor applies
+        min_order_shares=Decimal("5"),  # sizing floor for agent proposals only; manual orders are not gated on it
         min_notional_usd=Decimal("1"),
         default_tick=Decimal("0.01"),
         order_types=(OrderType.GTC, OrderType.GTD, OrderType.FAK, OrderType.FOK),

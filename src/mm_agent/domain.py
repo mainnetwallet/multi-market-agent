@@ -253,10 +253,6 @@ class VenueCaps(BaseModel):
     neg_risk: bool = False
     supports_reduce_only: bool = True
     min_order_shares: Decimal = Decimal("1")
-    # Floor in shares for marketable (FOK/FAK) orders when the venue sizes them differently from resting
-    # limit orders. None = same as min_order_shares. Polymarket: limit orders need 5 shares, but a
-    # marketable BUY is only bound by the $1 notional minimum.
-    min_marketable_shares: Decimal | None = None
     min_notional_usd: Decimal = Decimal("1")
     default_tick: Decimal = CENT
     # Manual-trading capabilities, verified against each venue's docs (2026-10-30).

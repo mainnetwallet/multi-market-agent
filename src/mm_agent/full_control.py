@@ -413,15 +413,11 @@ class FullControlService:
         amount = (size * ref_price).quantize(Decimal("0.01"))
         if not reduce_only:
             self._check_risk(target, amount, market_id=market_id)
-        min_shares = adapter.caps.min_order_shares
-        if is_market and adapter.caps.min_marketable_shares is not None:
-            min_shares = adapter.caps.min_marketable_shares
-        if size < min_shares:
-            raise FullControlError(
-                f"{target.value} needs at least {min_shares} shares",
-                code="below_min_shares",
-            )
-        if amount < adapter.caps.min_notional_usd and not reduce_only:
+        # No client-side share minimum: when the operator names a size, that is the size sent. The venue
+        # is the authority on its own limits and its refusal is shown as is. The one floor kept is the
+        # $1 notional of a marketable BUY, which the venue also enforces.
+        marketable = is_market or (side is Side.BUY and bool(book.asks) and price >= book.asks[0].price)
+        if marketable and side is Side.BUY and amount < adapter.caps.min_notional_usd and not reduce_only:
             raise FullControlError(
                 f"{target.value} needs at least {adapter.caps.min_notional_usd} of notional",
                 code="below_min_notional",

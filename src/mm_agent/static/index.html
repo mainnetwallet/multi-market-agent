@@ -800,7 +800,7 @@ function tkDraw(){
    +body
    +'<div class="pmdiv"></div><div id="tkSum" class="pmsumbox"></div><div id="tkMsg" class="small" role="status"></div>'
    +'<button type="button" class="btn primary wide pmgo" data-oc="'+esc(TK.outcome)+'" id="tkGo"'+(ready?"":" disabled")+'>Trade</button>'
-   +'<div class="tiny muted" style="margin-top:8px">Passes the same risk caps, pause state and audit trail as an agent proposal. Min order '+esc(vc.min_order_shares||"?")+' shares / $'+esc(vc.min_notional_usd||"?")+'.</div>'
+   +'<div class="tiny muted" style="margin-top:8px">Passes the same risk caps, pause state and audit trail as an agent proposal. Any share size; a market buy needs at least $'+esc(vc.min_notional_usd||"?")+'.</div>'
    +'</div>';
   tkDrawBook(bids,asks);tkWire();tkSum()}
 function tkDrawBook(bids,asks){
