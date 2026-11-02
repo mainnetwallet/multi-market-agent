@@ -309,5 +309,5 @@ def patch_polymarket_sdk() -> None:
     import polymarket.clients._transport as sdk_transport
 
     sdk_transport.httpx = _HttpxShim("httpx")  # type: ignore[attr-defined]
-    ws_conn.ws_connect = ws_connect  # type: ignore[attr-defined]
+    ws_conn.ws_connect = ws_connect  # type: ignore[attr-defined,assignment]
     _sdk_patched = True
