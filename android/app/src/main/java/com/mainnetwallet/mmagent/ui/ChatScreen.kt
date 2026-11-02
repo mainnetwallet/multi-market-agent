@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -115,26 +117,46 @@ import kotlinx.coroutines.launch
  */
 private data class Starter(val title: String, val hint: String, val text: String, val sendNow: Boolean)
 
+private const val PROMPT_STATUS =
+    "Check the agent's current status yourself: mode, active venue, venue health, book feed, any UNKNOWN orders or errors. Then tell me."
+private const val PROMPT_POSITIONS =
+    "Check my open positions on every venue and tell me what I hold, with entry price, current price and PnL."
+private const val PROMPT_MARKETS =
+    "Look at the active venue and tell me which markets are trading right now, with prices, volume and close time."
+private const val PROMPT_RESEARCH = "Research this market and tell me the sources, fair price and edge: "
+
 private val STARTERS = listOf(
-    Starter(
-        "Agent status",
-        "Mode, venue and health",
-        "Check the agent's current status yourself: mode, active venue, venue health, book feed, any UNKNOWN orders or errors. Then tell me.",
+    Starter("Agent status", "Mode, venue and health", PROMPT_STATUS, true),
+    Starter("My positions", "What I hold right now", PROMPT_POSITIONS, true),
+    Starter("Browse markets", "What is trading here", PROMPT_MARKETS, true),
+    Starter("Research a market", "Sources, fair price and edge", PROMPT_RESEARCH, false),
+)
+
+/**
+ * A shortcut chip under the chat. The [label] keeps the familiar command name, but tapping it never sends a
+ * slash command: [prompt] is plain language that goes to the assistant, which checks everything itself with
+ * its tools and answers. [sendNow] chips go straight out; the others only fill the input so the operator can
+ * finish the sentence. Nothing here moves money: a buy still needs the assistant's quote and the operator's approval.
+ */
+private data class CommandChip(val label: String, val prompt: String, val sendNow: Boolean)
+
+private val COMMANDS = listOf(
+    CommandChip("/status", PROMPT_STATUS, true),
+    CommandChip("/markets", PROMPT_MARKETS, true),
+    CommandChip("/positions", PROMPT_POSITIONS, true),
+    CommandChip(
+        "/orders",
+        "Check my open and recent orders on every venue and tell me the status of each, including anything resting, partially filled or UNKNOWN.",
         true,
     ),
-    Starter(
-        "My positions",
-        "What I hold right now",
-        "Check my open positions on every venue and tell me what I hold, with entry price, current price and PnL.",
+    CommandChip(
+        "/limits",
+        "Check the current risk limits and caps and tell me how much of each is used: per-trade cap, per-event, total exposure, daily loss and open positions.",
         true,
     ),
-    Starter(
-        "Browse markets",
-        "What is trading here",
-        "Look at the active venue and tell me which markets are trading right now, with prices, volume and close time.",
-        true,
-    ),
-    Starter("Research a market", "Sources, fair price and edge", "Research this market and tell me the sources, fair price and edge: ", false),
+    CommandChip("/research", PROMPT_RESEARCH, false),
+    CommandChip("/buy", "I want to buy ", false),
+    CommandChip("/help", "Tell me what you can do for me here and which tools you have.", true),
 )
 
 /**
@@ -260,6 +282,20 @@ fun ChatScreen(
                             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
                         )
                     }
+                }
+            }
+
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(COMMANDS) { chip ->
+                    ChoiceChip(
+                        label = chip.label,
+                        selected = false,
+                        enabled = !chat.busy,
+                        onClick = { if (chip.sendNow) onSend(chip.prompt) else input = chip.prompt },
+                    )
                 }
             }
 
