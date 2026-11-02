@@ -1927,7 +1927,11 @@ class ChatService:
                 "reply": (
                     "The model returned no answer"
                     + (" (its reply was cut off at the output limit)" if reply.finish_reason == "length" else "")
-                    + (". Ask again, or use /status, /markets, /positions." if source == TELEGRAM_SOURCE else ". Ask again.")
+                    + (
+                        ". Ask again, or use /status, /markets, /positions."
+                        if source == TELEGRAM_SOURCE
+                        else ". Ask again."
+                    )
                 ),
                 "data": last_data,
             }
