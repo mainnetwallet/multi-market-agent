@@ -828,3 +828,58 @@ async def test_chat_withdraw_needs_autopilot_but_cancel_and_list_do_not(
     off = harness.chat._tool_view().unavailable
     assert "CHAT_AUTOPILOT is off" in off["funds_withdraw"]
     assert "funds_cancel_withdrawal" not in off and "funds_list_withdrawals" not in off
+
+
+# ── venue minimums: limit orders count shares, marketable orders only the $1 notional ────────────────
+
+
+def _polymarket_like(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mm_agent.venues.base import Venue
+
+    adapter = harness.registry.get(VenueId.FAKE)
+    caps = adapter.caps.model_copy(update={"min_order_shares": Decimal("5"), "min_marketable_shares": ZERO_DEC})
+    monkeypatch.setattr(type(adapter), "caps", caps)
+    assert isinstance(adapter, Venue)
+
+
+ZERO_DEC = Decimal("0")
+
+
+def test_market_buy_of_one_dollar_is_not_blocked_by_the_five_share_limit_floor(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _polymarket_like(harness, monkeypatch)
+    client = make_client(harness)
+    response = client.post(
+        "/v1/orders/market",
+        json={"market_id": "fed-cut", "outcome": "YES", "side": "BUY", "amount_usd": "1"},
+        headers={"Idempotency-Key": "mkt-1"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert Decimal(body["shares"]) < Decimal("5")
+    assert Decimal(body["amount_usd"]) >= Decimal("1.00")
+
+
+def test_limit_order_under_five_shares_is_still_refused(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    _polymarket_like(harness, monkeypatch)
+    client = make_client(harness)
+    response = client.post(
+        "/v1/orders/limit",
+        json={"market_id": "fed-cut", "outcome": "YES", "side": "BUY", "price": "0.45", "shares": "4"},
+        headers={"Idempotency-Key": "lim-1"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "below_min_shares"
+
+
+def test_market_buy_under_one_dollar_is_still_refused(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    _polymarket_like(harness, monkeypatch)
+    client = make_client(harness)
+    response = client.post(
+        "/v1/orders/market",
+        json={"market_id": "fed-cut", "outcome": "YES", "side": "BUY", "amount_usd": "0.5"},
+        headers={"Idempotency-Key": "mkt-2"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "below_min_notional"

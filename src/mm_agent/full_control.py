@@ -19,7 +19,7 @@ import json
 import secrets
 import uuid
 from datetime import timedelta
-from decimal import Decimal
+from decimal import ROUND_UP, Decimal
 from typing import Any
 
 from .agent import AgentService
@@ -398,13 +398,27 @@ class FullControlService:
 
         if not (ZERO < price < ONE):
             raise FullControlError("price must be a probability in (0, 1)", code="bad_price", status=400)
-        size = self._size_from_amount(amount_usd, shares, price)
-        amount = (size * price).quantize(Decimal("0.01"))
+        is_market = order_type in (OrderType.FOK, OrderType.FAK)
+        # Price the order is expected to fill at: the best ask for a market BUY (``price`` is only the
+        # worst-case bound), otherwise the order's own price.
+        ref_price = price
+        if is_market and side is Side.BUY and book.asks:
+            ref_price = min(book.asks[0].price, price)
+        if is_market and amount_usd is not None and shares is None and side is Side.BUY:
+            # "Spend $X": size from the expected fill, rounded up so the fill is not a hair under $X
+            # (a $1 buy that fills at $0.9999 is refused by the venue's $1 marketable minimum).
+            size = (amount_usd / ref_price).quantize(Decimal("0.0001"), rounding=ROUND_UP)
+        else:
+            size = self._size_from_amount(amount_usd, shares, price)
+        amount = (size * ref_price).quantize(Decimal("0.01"))
         if not reduce_only:
             self._check_risk(target, amount, market_id=market_id)
-        if size < adapter.caps.min_order_shares:
+        min_shares = adapter.caps.min_order_shares
+        if is_market and adapter.caps.min_marketable_shares is not None:
+            min_shares = adapter.caps.min_marketable_shares
+        if size < min_shares:
             raise FullControlError(
-                f"{target.value} needs at least {adapter.caps.min_order_shares} shares",
+                f"{target.value} needs at least {min_shares} shares",
                 code="below_min_shares",
             )
         if amount < adapter.caps.min_notional_usd and not reduce_only:
