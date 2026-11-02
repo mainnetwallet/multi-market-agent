@@ -646,6 +646,15 @@ A typed-in receiver is refused when `FUNDS_REQUIRE_ALLOWLIST=true`, when the add
 when the chain/token is not on the bridge's list, or when the amount is below the token's minimum. The password
 idempotency key, hold window, daily limit and audit trail apply either way; no password or step-up token is needed to withdraw.
 
+**Withdrawing from chat.** The chat assistant has `funds_withdraw`, `funds_cancel_withdrawal` and
+`funds_list_withdrawals`. It uses the same `FundsService` as the app, so the allowlist
+(`FUNDS_REQUIRE_ALLOWLIST`), the token minimum, the daily limit, the hold window and the audit trail all apply.
+`funds_withdraw` is available only when `FUNDS_ENABLED=true` **and** `CHAT_AUTOPILOT=true`. Without `confirm=true`
+it only quotes and creates nothing; the assistant is told to show the quote and repeat the call with `confirm=true`
+only after the operator says yes. An identical withdrawal still in its hold window is refused as a duplicate, and
+`funds_cancel_withdrawal` stops one until the hold ends. Keep `FUNDS_REQUIRE_ALLOWLIST=true` if you do not want the
+assistant (or anything it reads) to be able to name a new receiver.
+
 ---
 
 ## Known gaps / limitations

@@ -730,3 +730,101 @@ async def test_full_control_tools_are_listed_with_a_reason_when_they_cannot_run(
     monkeypatch.setattr(harness.chat, "settings", harness.settings.model_copy(update={"chat_autopilot": False}))
     after = harness.chat._tool_view().unavailable
     assert "CHAT_AUTOPILOT is off" in after["place_market_order"] and "approve_proposal" in after
+
+
+# ── the chat agent can withdraw, through the same FundsService as the app ───
+
+
+def _allowlisted(harness: Harness) -> str:
+    """Turn the funds module on, save one receiver the way the app does, and return its id."""
+
+    harness.settings.__dict__["funds_enabled"] = True
+    harness.settings.__dict__["funds_allowlist_cooling_hours"] = 0
+    client = make_client(harness)
+    token = client.post("/v1/auth/stepup", json={"password": "test-password", "action": "allowlist_add"}).json()[
+        "stepup_token"
+    ]
+    added = client.post(
+        "/v1/funds/allowlist",
+        json={
+            "label": "cold",
+            "address": "0x1234567890abcdef1234567890abcdef12345678",
+            "network": "base",
+            "asset": "USDC",
+        },
+        headers={"X-Stepup-Token": token},
+    )
+    assert added.status_code == 200, added.text
+    return str(added.json()["id"])
+
+
+async def test_chat_withdraw_only_quotes_until_the_operator_confirms(harness: Harness, bridge: object) -> None:
+    del bridge
+    address_id = _allowlisted(harness)
+
+    quote = await _tool(harness, "funds_withdraw", {"venue": "polymarket", "amount": 5, "address_id": address_id})
+
+    assert quote["ok"] is True and quote["needs_confirmation"] is True and quote["withdrawal_created"] is False
+    assert quote["recipient"] == "0x1234567890abcdef1234567890abcdef12345678"
+    assert harness.store.list_withdrawals() == [], "a quote must create nothing"
+
+
+async def test_chat_withdraw_waits_in_the_hold_window_and_can_be_cancelled(harness: Harness, bridge: object) -> None:
+    del bridge
+    address_id = _allowlisted(harness)
+    args = {"venue": "polymarket", "amount": 5, "address_id": address_id, "confirm": True}
+
+    created = await _tool(harness, "funds_withdraw", args)
+    assert created["ok"] is True and created["status"] == "PENDING_HOLD" and created["id"]
+
+    repeat = await _tool(harness, "funds_withdraw", args)
+    assert repeat["ok"] is False and repeat["code"] == "duplicate_pending"
+    assert len(harness.store.list_withdrawals()) == 1, "an identical withdrawal is never queued twice"
+
+    listed = await _tool(harness, "funds_list_withdrawals", {})
+    assert [w["id"] for w in listed["withdrawals"]] == [created["id"]]  # type: ignore[attr-defined]
+
+    cancelled = await _tool(harness, "funds_cancel_withdrawal", {"withdrawal_id": created["id"]})
+    assert cancelled["ok"] is True and cancelled["status"] == "CANCELLED"
+    late = await _tool(harness, "funds_cancel_withdrawal", {"withdrawal_id": created["id"]})
+    assert late["ok"] is False and late["code"] == "not_cancellable"
+
+
+async def test_chat_withdraw_refusals_are_plain_errors_and_create_nothing(harness: Harness, bridge: object) -> None:
+    del bridge
+    address_id = _allowlisted(harness)
+
+    typed_in = await _tool(
+        harness,
+        "funds_withdraw",
+        {
+            "venue": "polymarket",
+            "amount": 5,
+            "recipient": "0x1234567890abcdef1234567890abcdef12345678",
+            "network": "base",
+            "asset": "USDC",
+            "confirm": True,
+        },
+    )
+    assert typed_in["ok"] is False and typed_in["code"] == "allowlist_required"
+
+    too_much = await _tool(
+        harness, "funds_withdraw", {"venue": "polymarket", "amount": 1000, "address_id": address_id, "confirm": True}
+    )
+    assert too_much["ok"] is False and too_much["code"] == "daily_limit"
+    assert "unknown" not in too_much  # a refusal may be corrected and retried; it is not an UNKNOWN outcome
+    assert harness.store.list_withdrawals() == []
+
+
+async def test_chat_withdraw_needs_autopilot_but_cancel_and_list_do_not(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _allowlisted(harness)
+    view = harness.chat._tool_view()
+    assert "funds_withdraw" not in view.unavailable
+    assert view.by_name["funds_withdraw"].side_effect, "a withdrawal is checkpointed and never replayed"
+
+    monkeypatch.setattr(harness.chat, "settings", harness.settings.model_copy(update={"chat_autopilot": False}))
+    off = harness.chat._tool_view().unavailable
+    assert "CHAT_AUTOPILOT is off" in off["funds_withdraw"]
+    assert "funds_cancel_withdrawal" not in off and "funds_list_withdrawals" not in off
