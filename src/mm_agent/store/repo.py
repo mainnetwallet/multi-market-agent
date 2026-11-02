@@ -692,10 +692,12 @@ class Store:
         self,
         *,
         venue: VenueId | None = None,
-        limit: int = 100,
+        limit: int | None = 100,
         states: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        stmt = select(OrderRow).order_by(OrderRow.created_at.desc()).limit(limit)
+        stmt = select(OrderRow).order_by(OrderRow.created_at.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit)
         if venue:
             stmt = stmt.where(OrderRow.venue == venue.value)
         if states:

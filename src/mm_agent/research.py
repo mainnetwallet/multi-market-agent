@@ -20,6 +20,10 @@ from .util import get_logger
 
 logger = get_logger(__name__)
 
+# Not a research budget: the model stops on its own once it has enough. This only keeps a
+# misbehaving model that never stops calling tools from looping (and billing) forever.
+RESEARCH_MAX_ROUNDS = 20
+
 RESEARCH_TOOL = {
     "type": "function",
     "function": {
@@ -70,7 +74,7 @@ class ResearchService:
         seen: dict[str, dict[str, str]] = {}
         content = ""
         try:
-            for _ in range(3):
+            for _ in range(RESEARCH_MAX_ROUNDS):
                 reply = await self.llm.chat(messages, tools=[RESEARCH_TOOL])
                 content = reply.content
                 if not reply.tool_calls:
@@ -82,9 +86,9 @@ class ResearchService:
                         continue
                     try:
                         args = json.loads(call["arguments"] or "{}")
-                        query = str(args.get("query") or market.title)[:200]
+                        query = str(args.get("query") or market.title)
                     except json.JSONDecodeError:
-                        query = market.title[:200]
+                        query = market.title
                     results = await self.search.search(query)
                     for result in results:
                         seen[result["url"]] = result
@@ -92,7 +96,7 @@ class ResearchService:
                         {
                             "role": "tool",
                             "tool_call_id": call["id"],
-                            "content": json.dumps(results, ensure_ascii=False)[:12000],
+                            "content": json.dumps(results, ensure_ascii=False),
                         }
                     )
         except (LLMUnavailable, Exception) as exc:
@@ -103,8 +107,8 @@ class ResearchService:
         try:
             payload = parse_json_block(content)
             probability = Decimal(str(payload["probability"]))
-            summary = str(payload.get("summary") or "")[:2000]
-            facts = tuple(str(x)[:400] for x in (payload.get("key_facts") or [])[:8])
+            summary = str(payload.get("summary") or "")
+            facts = tuple(str(x) for x in (payload.get("key_facts") or []))
             source_rows = payload.get("sources") or []
         except Exception as exc:
             return ResearchOutcome(None, reason=f"report parse failed: {str(exc)[:160]}")

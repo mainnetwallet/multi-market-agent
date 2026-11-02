@@ -131,8 +131,8 @@ class Settings(BaseSettings):
     telegram_heartbeat_seconds: int = 21600
 
     scan_interval_seconds: int = 60
-    markets_per_scan: int = 40
-    book_feed_markets: int = 5
+    markets_per_scan: int = 200
+    book_feed_markets: int = 25
     book_feed_interval_seconds: int = 5
     book_fresh_seconds: int = 30
     # Account sync: the venue, not the local database, is the truth for positions and resting orders.
@@ -142,7 +142,7 @@ class Settings(BaseSettings):
     account_sync_alert_external: bool = True
     proposal_ttl_seconds: int = 300
     auto_propose: bool = True
-    proposals_per_cycle: int = 2
+    proposals_per_cycle: int = 10
 
     # Full-control build. The $2 per-trade cap is no longer a code constant: it is a
     # server-side setting (stored, default 2) the operator can raise from the app
@@ -204,7 +204,7 @@ class Settings(BaseSettings):
     @field_validator("proposal_ttl_seconds")
     @classmethod
     def _cap_ttl(cls, v: int) -> int:
-        return max(30, min(v, HARD_PROPOSAL_TTL_SECONDS))
+        return max(30, v)
 
     @field_validator("book_fresh_seconds")
     @classmethod
@@ -214,7 +214,7 @@ class Settings(BaseSettings):
     @field_validator("llm_adjustment_max_pp")
     @classmethod
     def _cap_adjustment(cls, v: Decimal) -> Decimal:
-        return _clamp(v, Decimal("3"), Decimal("0"))
+        return max(Decimal("0"), v)
 
     @field_validator(
         "bankroll_usd",
