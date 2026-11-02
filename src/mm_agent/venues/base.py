@@ -185,7 +185,13 @@ class HttpVenue(Venue):
                 timeout=httpx.Timeout(20.0, connect=10.0),
                 headers={"User-Agent": "multi-market-agent/0.1"},
                 follow_redirects=True,
+                **self._client_kwargs(),
             )
+
+    def _client_kwargs(self) -> dict[str, Any]:
+        """Extra ``httpx.AsyncClient`` arguments; an adapter overrides this (Polymarket adds its proxy transport)."""
+
+        return {}
 
     async def close(self) -> None:
         if self._client is not None:

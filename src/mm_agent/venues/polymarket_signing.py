@@ -12,6 +12,8 @@ from typing import Any
 
 from polymarket import ApiKeyCreds, AsyncSecureClient
 
+from ..proxy import patch_polymarket_sdk
+
 _lock = asyncio.Lock()
 _client: AsyncSecureClient | None = None
 
@@ -35,6 +37,7 @@ async def secure_client(wallet: str) -> AsyncSecureClient:
         private_key = os.environ.get("POLYMARKET_PRIVATE_KEY", "").strip()
         if not private_key:
             raise RuntimeError("POLYMARKET_PRIVATE_KEY is not set")
+        patch_polymarket_sdk()  # the SDK has no proxy option: route its REST and WebSocket traffic through ours
         kwargs: dict[str, Any] = {"private_key": private_key}
         if wallet:
             kwargs["wallet"] = wallet

@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     chat_autopilot: bool = True
     live_views_enabled: bool = True
 
+    # Proxy for Polymarket traffic only (see proxy.py). Empty URLs = the built-in public proxies, in order.
+    polymarket_proxy_enabled: bool = True
+    polymarket_proxy_urls: str = ""
+    polymarket_proxy_cooldown_seconds: float = 60.0
+    polymarket_proxy_direct_fallback: bool = False
     polymarket_wallet_address: str = ""
     polymarket_signature_type: int = 3
     polymarket_allow_real_test: bool = True

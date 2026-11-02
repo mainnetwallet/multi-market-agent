@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 
+from .. import proxy as proxy_lib
 from ..config import Settings
 from ..domain import VenueId, utcnow
 from ..store import Store
@@ -118,7 +119,10 @@ class FundsService:
 
     async def client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0))
+            # the Polymarket bridge goes through the proxy list; the Polygon RPC and other hosts stay direct
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(20.0, connect=10.0), transport=proxy_lib.build_transport()
+            )
         return self._client
 
     async def close(self) -> None:

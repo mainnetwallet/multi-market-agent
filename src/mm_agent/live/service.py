@@ -6,6 +6,7 @@ from typing import Any
 
 from .. import eventview_source
 from ..domain import VenueId
+from ..proxy import ws_connect as proxy_ws_connect
 from .history import fetch_history, fetch_kalshi_history, fetch_limitless_history
 from .hub import LiveHub
 from .kalshi_sports import KalshiLiveDataFeed
@@ -63,8 +64,10 @@ def build_hub(registry: Any, *, run_feeds: bool) -> LiveHub:
     market = sports = kalshi_feed = limitless_feed = None
     unavailable: dict[str, str] = {}
     if adapter is not None:
-        market = PolymarketMarketFeed(on_quote=hub.on_quote, on_state=hub.on_feed_state, on_resolved=hub.on_resolved)
-        sports = PolymarketSportsFeed(on_game=hub.on_game, on_state=hub.on_feed_state)
+        market = PolymarketMarketFeed(
+            on_quote=hub.on_quote, on_state=hub.on_feed_state, on_resolved=hub.on_resolved, connector=proxy_ws_connect
+        )
+        sports = PolymarketSportsFeed(on_game=hub.on_game, on_state=hub.on_feed_state, connector=proxy_ws_connect)
         # PolyBolt needs CLOB credentials, which only the signing modules may read: Coinbase until wired.
     if kalshi is not None and hasattr(kalshi, "ws_headers"):
         try:

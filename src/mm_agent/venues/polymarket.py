@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from .. import discover as discover_lib
+from .. import proxy as proxy_lib
 from ..config import Settings
 from ..crypto_feed import SpotFeed
 from ..domain import (
@@ -217,6 +218,10 @@ class PolymarketVenue(HttpVenue):
     @property
     def display_name(self) -> str:
         return "Polymarket"
+
+    def _client_kwargs(self) -> dict[str, Any]:
+        # every *.polymarket.com call goes through the proxy list with fallback; other hosts (Coinbase spot) stay direct
+        return {"transport": proxy_lib.build_transport()}
 
     # ------------------------------------------------------------- discovery
     async def list_markets(self, query: MarketQuery) -> Page[Market]:
