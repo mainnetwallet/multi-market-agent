@@ -631,3 +631,102 @@ def test_ws_accepts_a_bearer_token(harness: Harness) -> None:
     with client.websocket_connect("/v1/ws", headers={"Authorization": f"Bearer {token}"}) as ws:
         hello = ws.receive_json()
         assert hello["topic"] == "hello"
+
+
+# ── the chat agent reaches the same full-control services ───────────────────
+
+
+class _StubBrowseVenue:
+    """Stands in for a venue adapter that has a browse feed (the fake venue has none)."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def close(self) -> None:  # the registry closes every adapter at teardown
+        return None
+
+    async def discover_tabs(self) -> dict[str, object]:
+        return {"tabs": [{"id": "crypto", "subtabs": [{"id": "crypto:15m", "label": "15 Min"}]}]}
+
+    async def discover(self, *, tab: str, q: str | None, limit: int, offset: int) -> dict[str, object]:
+        self.calls.append({"tab": tab, "q": q, "limit": limit, "offset": offset})
+        if tab == "nope":
+            raise ValueError("unknown tab nope")
+        return {"tab": tab, "items": [{"market_id": "btc-up-15m", "title": "BTC Up or Down 15m"}]}
+
+
+async def _tool(harness: Harness, name: str, args: dict[str, object]) -> dict[str, object]:
+    return await harness.chat._execute_tool(name, args, actor="operator", source="chat")
+
+
+async def test_chat_places_a_manual_limit_order_through_the_same_checks(harness: Harness) -> None:
+    make_client(harness)  # wires the full-control service the way the app does
+    placed = await _tool(
+        harness,
+        "place_limit_order",
+        {"market": "fed-cut", "outcome": "YES", "side": "BUY", "price": 0.43, "shares": 4},
+    )
+    assert placed["ok"] is True and placed["status"] == "FILLED" and placed["order_type"] == "GTC"
+    assert harness.store.list_orders(limit=5), "the order went through the normal order table"
+
+
+async def test_a_cap_refusal_from_chat_is_a_plain_error_not_unknown(harness: Harness) -> None:
+    make_client(harness)
+    refused = await _tool(
+        harness,
+        "place_limit_order",
+        {"market": "fed-cut", "outcome": "YES", "side": "BUY", "price": 0.43, "shares": 400},
+    )
+    assert refused["ok"] is False and refused["code"] == "max_trade_exceeded"
+    assert "unknown" not in refused  # a veto may be corrected and retried; it is not an UNKNOWN order
+
+
+async def test_chat_reads_balance_capabilities_and_pnl(harness: Harness) -> None:
+    make_client(harness)
+    balance = await _tool(harness, "get_balance", {"venue": "fake"})
+    assert balance["venue"] == "fake" and Decimal(str(balance["available"])) > 0
+    assert (await _tool(harness, "get_capabilities", {}))["manual_orders"] is True
+    assert "error" not in await _tool(harness, "get_pnl", {"days": 7})
+
+
+async def test_chat_browses_a_venues_own_tabs_and_pages_them(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = _StubBrowseVenue()
+    harness.registry.adapters[VenueId.POLYMARKET] = stub  # type: ignore[assignment]
+    monkeypatch.setattr(harness.registry, "enabled", lambda: (VenueId.POLYMARKET,))
+
+    tabs = await _tool(harness, "discover_tabs", {"venue": "polymarket"})
+    assert tabs["venue"] == "polymarket" and "crypto:15m" in str(tabs["tabs"])
+
+    found = await _tool(harness, "discover_markets", {"venue": "polymarket", "tab": "crypto:15m", "offset": 30})
+    assert found["venue"] == "polymarket" and found["items"][0]["market_id"] == "btc-up-15m"  # type: ignore[index]
+    assert stub.calls == [{"tab": "crypto:15m", "q": None, "limit": 30, "offset": 30}]
+
+    bad = await _tool(harness, "discover_markets", {"venue": "polymarket", "tab": "nope"})
+    assert bad["ok"] is False and "discover_tabs" in str(bad["hint"])
+
+
+async def test_a_market_the_scanner_never_stored_is_read_from_the_venue(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(harness.agent.store, "get_market", lambda *a, **k: None)
+    monkeypatch.setattr(harness.agent.store, "list_markets", lambda *a, **k: [])
+
+    market = await harness.chat._find_market("fake:fed-cut")
+
+    assert market.native_id == "fed-cut" and market.venue is VenueId.FAKE
+    assert await harness.chat._fetch_market(VenueId.FAKE, "no-such-market") is None
+
+
+async def test_full_control_tools_are_listed_with_a_reason_when_they_cannot_run(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    view = harness.chat._tool_view()
+    assert "the full-control service is not running" in view.unavailable["place_limit_order"]
+    assert "the funds module is off" in view.unavailable["funds_deposit_address"]
+
+    make_client(harness)
+    assert "place_limit_order" in {t.name for t in harness.chat._tool_view().available}
+
+    monkeypatch.setattr(harness.chat, "settings", harness.settings.model_copy(update={"chat_autopilot": False}))
+    after = harness.chat._tool_view().unavailable
+    assert "CHAT_AUTOPILOT is off" in after["place_market_order"] and "approve_proposal" in after
