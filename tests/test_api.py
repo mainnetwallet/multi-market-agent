@@ -68,15 +68,19 @@ def test_panic_needs_confirm(harness: Harness) -> None:
     assert second.json()["paused"] is True
 
 
-def test_chat_help_and_status(harness: Harness) -> None:
+async def test_slash_commands_only_run_for_telegram(harness: Harness) -> None:
     client = make_client(harness)
     client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})
-    help_response = client.post("/v1/chat", json={"message": "/help"})
-    assert help_response.status_code == 200
-    assert "/approve" in help_response.json()["reply"]
-    status_response = client.post("/v1/chat", json={"message": "/status"})
-    assert status_response.status_code == 200
-    assert "FAKE" in status_response.json()["reply"]
+    web = client.post("/v1/chat", json={"message": "/help"})  # web and app chat take plain language only
+    assert web.status_code == 200
+    assert "/approve" not in web.json()["reply"] and "not configured" in web.json()["reply"]
+    web_status = client.post("/v1/chat", json={"message": "/status"})
+    assert web_status.status_code == 200 and "FAKE" not in web_status.json()["reply"]
+
+    help_reply = await harness.chat.handle("/help", actor="telegram:1", source="telegram_chat")
+    assert "/approve" in help_reply["reply"]
+    status_reply = await harness.chat.handle("/status", actor="telegram:1", source="telegram_chat")
+    assert "FAKE" in status_reply["reply"]
 
 
 def test_no_market_mutation_without_auth(harness: Harness) -> None:
@@ -85,12 +89,9 @@ def test_no_market_mutation_without_auth(harness: Harness) -> None:
     assert response.status_code == 401
 
 
-def test_bengali_summary_is_appended(harness: Harness) -> None:
-    client = make_client(harness)
-    client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})
-    response = client.post("/v1/chat", json={"message": "/status দেখুন"})
-    assert response.status_code == 200
-    assert "[বাংলা সারসংক্ষেপ]" in response.json()["reply"]
+async def test_bengali_summary_is_appended(harness: Harness) -> None:
+    result = await harness.chat.handle("/status দেখুন", actor="telegram:1", source="telegram_chat")
+    assert "[বাংলা সারসংক্ষেপ]" in result["reply"]
 
 
 def test_discover_routes_are_venue_aware(harness: Harness) -> None:
@@ -140,13 +141,13 @@ class _ScriptedLLM:
         return LLMReply(content="All good.")
 
 
-def test_chat_stream_slash_command_events(harness: Harness) -> None:
+def test_chat_stream_does_not_run_slash_commands(harness: Harness) -> None:
     client = make_client(harness)
     client.post("/v1/auth/login", json={"username": "operator", "password": "test-password"})
     events = _sse(client.get("/v1/chat/stream", params={"message": "/status"}).text)
     names = [name for name, _ in events]
     assert names[0] == "status" and names[-2:] == ["message", "done"]
-    assert "FAKE" in str(events[-2][1]["reply"])
+    assert "FAKE" not in str(events[-2][1]["reply"])
 
 
 def test_chat_stream_reports_tool_progress_and_tokens(harness: Harness) -> None:

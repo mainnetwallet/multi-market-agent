@@ -157,7 +157,7 @@ python -m mm_agent.main                    # http://127.0.0.1:8080
 Sign in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`. The header always shows
 a `VENUE | LIVE` badge. Times are Asia/Dhaka. The LLM/research
 provider is optional: without it, no proposals are generated and the UI says
-research is unavailable. Slash commands still work.
+research is unavailable. Telegram slash commands still work.
 
 Run the quality gate:
 
@@ -287,10 +287,12 @@ step-up token.
 
 ---
 
-## Chat and slash commands
+## Chat and Telegram slash commands
 
-Slash commands are parsed server-side and never sent to the LLM. Ids may be
-shortened to a unique prefix.
+Slash commands exist **only in Telegram**. They are parsed server-side and never sent
+to the LLM. The PWA and Android chat take plain language only: a message starting
+with `/` there goes to the assistant like any other text. Ids may be shortened to a
+unique prefix.
 
 ```text
 /help /status /markets [q] /match <query> /positions /orders /rules /limits
@@ -304,7 +306,7 @@ shortened to a unique prefix.
 The optional LLM assistant has all required tools, is instructed to report
 `FILLED/PARTIAL/RESTING/NOT_FILLED/FAILED/UNKNOWN/ERROR` verbatim from tool data,
 never sees secrets/raw auth responses, and wraps tool output as DATA. If no LLM
-is configured, use slash commands.
+is configured, use the Telegram slash commands.
 
 `GET /v1/chat/stream?message=...` and `POST /v1/chat/stream` (`{"message": ...}`, no
 URL-length limit, the Android app uses it and sends its `conversation_id`) are the Server-Sent Events form of `/v1/chat`. Events: `status`, `delta` (reply text as the LLM

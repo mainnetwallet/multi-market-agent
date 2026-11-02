@@ -1,4 +1,4 @@
-"""Server-side slash commands and the optional tool-calling assistant."""
+"""Telegram slash commands and the optional tool-calling assistant (web and app chat take plain language only)."""
 
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from .funds import FundsService
 
 logger = get_logger(__name__)
+TELEGRAM_SOURCE = "telegram_chat"  # slash commands are handled for this source only
 
 BENGALI_RE = re.compile(r"[\u0980-\u09FF]")
 
@@ -357,7 +358,7 @@ class ChatService:
 
         text = text.strip()
         if not text:
-            return {"reply": "Send /help for commands.", "data": {}}
+            return {"reply": "Send /help for commands." if source == TELEGRAM_SOURCE else "Type a message.", "data": {}}
         if conversation_id is None:
             return await self._answer(
                 text,
@@ -394,7 +395,7 @@ class ChatService:
         scope: RunScope | None = None,
     ) -> dict[str, Any]:
         lang = self._language(text)
-        if text.startswith("/"):
+        if text.startswith("/") and source == TELEGRAM_SOURCE:
             try:
                 result = await self._slash(text, actor=actor, source=source)
                 return self._with_local_summary(result, lang)
@@ -502,7 +503,7 @@ class ChatService:
             raise
         finally:
             if scope is not None and scope.active:
-                # Only an answer that reached the model owns the checkpoint: a slash command must
+                # Only an answer that reached the model owns the checkpoint: a Telegram command must
                 # not erase the record of an interrupted job.
                 scope.status = checkpoint_status
                 try:
@@ -530,7 +531,7 @@ class ChatService:
             for call in prior.get("calls") or []:
                 if isinstance(call, dict) and call.get("name") and call.get("key") and call.get("state"):
                     scope.calls.append({"side_effect": True, **call, "inherited": True})
-        if self.llm.enabled and not text.startswith("/"):
+        if self.llm.enabled:
             found = self.agent.store.chat_search(owner, cid, text, RETRIEVED_MESSAGES)
             scope.retrieved = [{**m, "text": str(m["text"])[:RETRIEVED_CHARS]} for m in found]
         return scope
@@ -1642,7 +1643,11 @@ class ChatService:
     ) -> dict[str, Any]:
         if not self.llm.enabled:
             return {
-                "reply": "The LLM assistant is not configured. Slash commands still work; send /help.",
+                "reply": (
+                    "The LLM assistant is not configured. Slash commands still work; send /help."
+                    if source == TELEGRAM_SOURCE
+                    else "The LLM assistant is not configured."
+                ),
                 "data": {"llm": False},
             }
         in_chat = scope is not None
@@ -1922,7 +1927,7 @@ class ChatService:
                 "reply": (
                     "The model returned no answer"
                     + (" (its reply was cut off at the output limit)" if reply.finish_reason == "length" else "")
-                    + ". Ask again, or use /status, /markets, /positions."
+                    + (". Ask again, or use /status, /markets, /positions." if source == TELEGRAM_SOURCE else ". Ask again.")
                 ),
                 "data": last_data,
             }

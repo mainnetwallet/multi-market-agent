@@ -541,7 +541,7 @@ async def test_tool_steps_and_failures_are_stored(harness: Harness) -> None:
     got = store.chat_get(OWNER, cid)
     assert got["status"] == "idle" and got["state"]["tools"] == reply["tools"] and got["state"]["finished_at"]
 
-    await harness.chat.handle("/nosuchcommand", actor=OWNER, conversation_id=cid)
+    await harness.chat.handle("/nosuchcommand", actor=OWNER, source="telegram_chat", conversation_id=cid)
     failed = store.chat_messages(OWNER, cid)[-1]
     assert failed["role"] == "error"
     assert store.chat_get(OWNER, cid)["status"] == "error"
@@ -613,7 +613,7 @@ def test_api_conversation_lifecycle(harness: Harness) -> None:
     assert str(uuid.UUID(cid)) == cid and created["title"] == "" and created["status"] == "idle"
 
     reply = client.post("/v1/chat", json={"message": "/status", "conversation_id": cid}).json()
-    assert reply["conversation_id"] == cid and "FAKE" in reply["reply"]
+    assert reply["conversation_id"] == cid and "not configured" in reply["reply"]
 
     opened = client.get(f"/v1/conversations/{cid}").json()
     assert opened["conversation"]["title"] == "/status" and opened["has_more"] is False
@@ -624,7 +624,7 @@ def test_api_conversation_lifecycle(harness: Harness) -> None:
     assert client.post(f"/v1/conversations/{cid}/rename", json={"title": "  "}).status_code == 422
 
     assert [c["id"] for c in client.get("/v1/conversations", params={"q": "daily"}).json()["conversations"]] == [cid]
-    assert [c["id"] for c in client.get("/v1/conversations", params={"q": "FAKE"}).json()["conversations"]] == [cid]
+    assert [c["id"] for c in client.get("/v1/conversations", params={"q": "configured"}).json()["conversations"]] == [cid]
     assert client.get("/v1/conversations", params={"q": "zzz"}).json()["conversations"] == []
 
     assert client.delete(f"/v1/conversations/{cid}").json() == {"deleted": True}
