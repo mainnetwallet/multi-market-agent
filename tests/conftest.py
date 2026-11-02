@@ -39,6 +39,9 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
         "enabled_venues_raw": "fake",
         "active_venue": VenueId.FAKE,
         "auto_propose": False,
+        # Tests pin the conservative baseline; the app defaults for these are now True.
+        "advisory_mode": False,
+        "funds_enabled": False,
         "admin_password": "test-password",
         "session_secret": "test-session-secret-long-value",
         "llm_base_url": "",
