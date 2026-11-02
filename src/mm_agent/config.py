@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     polymarket_proxy_enabled: bool = True
     polymarket_proxy_urls: str = ""
     polymarket_proxy_cooldown_seconds: float = 60.0
+    polymarket_proxy_direct_first: bool = True  # server IP first, proxies only when it fails or is blocked
     polymarket_proxy_direct_fallback: bool = False
     polymarket_wallet_address: str = ""
     polymarket_signature_type: int = 3
