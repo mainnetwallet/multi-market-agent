@@ -23,8 +23,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -111,35 +109,36 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * A slash command shortcut. [sendNow] commands take no argument and go straight
- * out; the others only fill the input so the operator can finish them. Nothing
- * that moves money or panics is offered as a one-tap chip.
+ * A card on the empty chat. [text] is plain language for the assistant, which checks everything itself
+ * with its own tools and reports back; no slash commands. [sendNow] cards go straight out, the others
+ * only fill the input so the operator can finish the sentence. Nothing here moves money.
  */
-private data class CommandChip(val text: String, val sendNow: Boolean)
-
-private val COMMANDS = listOf(
-    CommandChip("/status", true),
-    CommandChip("/markets", true),
-    CommandChip("/positions", true),
-    CommandChip("/orders", true),
-    CommandChip("/limits", true),
-    CommandChip("/research ", false),
-    CommandChip("/buy ", false),
-    CommandChip("/help", true),
-)
-
-/** A card on the empty chat: a plain-words way to run a command. Same rule as [CommandChip]: nothing here moves money. */
 private data class Starter(val title: String, val hint: String, val text: String, val sendNow: Boolean)
 
 private val STARTERS = listOf(
-    Starter("Agent status", "Mode, venue and health", "/status", true),
-    Starter("My positions", "What I hold right now", "/positions", true),
-    Starter("Browse markets", "What is trading here", "/markets", true),
-    Starter("Research a market", "Sources, fair price and edge", "/research ", false),
+    Starter(
+        "Agent status",
+        "Mode, venue and health",
+        "Check the agent's current status yourself: mode, active venue, venue health, book feed, any UNKNOWN orders or errors. Then tell me.",
+        true,
+    ),
+    Starter(
+        "My positions",
+        "What I hold right now",
+        "Check my open positions on every venue and tell me what I hold, with entry price, current price and PnL.",
+        true,
+    ),
+    Starter(
+        "Browse markets",
+        "What is trading here",
+        "Look at the active venue and tell me which markets are trading right now, with prices, volume and close time.",
+        true,
+    ),
+    Starter("Research a market", "Sources, fair price and edge", "Research this market and tell me the sources, fair price and edge: ", false),
 )
 
 /**
- * Chat with the agent. Slash commands run on the server and never reach the LLM.
+ * Chat with the agent. Everything goes to the assistant, which checks things itself with its tools and reports back.
  * Chats are server conversations (the assistant sees the open chat's earlier messages); the history
  * drawer's search, rename and delete work on them, and older chats kept only on this device still open.
  */
@@ -262,20 +261,6 @@ fun ChatScreen(
                         )
                     }
                 }
-
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(COMMANDS) { chip ->
-                        ChoiceChip(
-                            label = chip.text.trim(),
-                            selected = false,
-                            enabled = !chat.busy,
-                            onClick = { if (chip.sendNow) onSend(chip.text) else input = chip.text },
-                        )
-                    }
-                }
             }
 
             Composer(
@@ -308,8 +293,8 @@ private fun EmptyChat(enabled: Boolean, onPick: (Starter) -> Unit, modifier: Mod
             Text("How can I help?", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(6.dp))
             Text(
-                "Ask about a market, or start with one of these. Slash commands answer instantly; " +
-                    "plain questions go to the assistant if one is configured.",
+                "Ask about a market or your account in plain words, or start with one of these. " +
+                    "The assistant checks everything itself and tells you.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -376,7 +361,7 @@ private fun Composer(input: String, onInput: (String) -> Unit, busy: Boolean, on
         TextField(
             value = input,
             onValueChange = onInput,
-            placeholder = { Text("Message or /command") },
+            placeholder = { Text("Ask anything") },
             maxLines = 6,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             keyboardActions = KeyboardActions(onSend = { onSend() }),
