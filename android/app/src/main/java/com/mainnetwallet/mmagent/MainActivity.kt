@@ -1,13 +1,18 @@
 package com.mainnetwallet.mmagent
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.viewModels
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.LaunchedEffect
@@ -25,6 +30,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.mainnetwallet.mmagent.data.ApiClient
+import com.mainnetwallet.mmagent.data.AppHolder
 import com.mainnetwallet.mmagent.data.AppLock
 import com.mainnetwallet.mmagent.data.AppViewModel
 import com.mainnetwallet.mmagent.data.LiveSocket
@@ -51,6 +57,9 @@ import com.mainnetwallet.mmagent.ui.VenueSwitcherDialog
 import com.mainnetwallet.mmagent.ui.WalletScreen
 import com.mainnetwallet.mmagent.ui.WithdrawScreen
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -73,6 +82,34 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { askBatteryExemption() }
+
+    /**
+     * Two one-time system prompts that keep Android from killing the app in the background: the
+     * notification permission (the keep-alive notification must be visible) and the battery
+     * exemption ("Unrestricted"; phone makers' battery savers are what usually kill a backgrounded app).
+     */
+    private fun askBackgroundPermissions() {
+        val needsNotification = Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (needsNotification) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else askBatteryExemption()
+    }
+
+    private fun askBatteryExemption() {
+        val prefs = getSharedPreferences("mm_agent_prefs", MODE_PRIVATE)
+        val power = getSystemService(POWER_SERVICE) as PowerManager
+        if (power.isIgnoringBatteryOptimizations(packageName) || prefs.getBoolean("battery_exemption_asked", false)) return
+        prefs.edit().putBoolean("battery_exemption_asked", true).apply()
+        try {
+            startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")),
+            )
+        } catch (e: Exception) {
+            // This phone has no such screen; the keep-alive notification still protects the app.
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Draw behind the system bars and let Compose pad for them (the bottom nav sits above the
@@ -81,22 +118,24 @@ class MainActivity : FragmentActivity() {
         appLock = AppLock(this)
         applyScreenshotPolicy(appLock.blockScreenshots)
 
-        // The token provider reads the saved session on every request. It used to be a
-        // hardcoded `null`, so nothing after login was ever authenticated and every
-        // screen came back empty (401).
-        val prefs = getSharedPreferences("mm_agent_prefs", MODE_PRIVATE)
-        val savedUrl = prefs.getString(AppViewModel.KEY_BASE_URL, null)?.takeIf { it.isNotBlank() }
-        val api = ApiClient(savedUrl ?: BuildConfig.DEFAULT_BASE_URL) {
-            prefs.getString(AppViewModel.KEY_TOKEN, null)
-        }
-        val appViewModel: AppViewModel by viewModels {
-            object : androidx.lifecycle.ViewModelProvider.Factory {
-                @Suppress("UNCHECKED_CAST")
-                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                    return AppViewModel(applicationContext, api) as T
+        // One ViewModel and one ApiClient for the whole process (see AppHolder), so a running chat
+        // answer survives the Activity being destroyed in the background. The token provider reads
+        // the saved session on every request.
+        val (api, appViewModel) = AppHolder.get(applicationContext)
+
+        // Keep the process alive while signed in, and hold the CPU awake while a chat answer runs, so
+        // Android does not kill the chat when the app is minimised or the screen turns off.
+        lifecycleScope.launch {
+            combine(
+                appViewModel.state.map { it.loggedIn },
+                appViewModel.chat.map { it.busy },
+            ) { loggedIn, busy -> loggedIn to busy }
+                .distinctUntilChanged()
+                .collect { (loggedIn, busy) ->
+                    if (loggedIn) KeepAliveService.sync(applicationContext, busy) else KeepAliveService.stop(applicationContext)
                 }
-            }
         }
+        askBackgroundPermissions()
 
         // Live updates: the server pushes `account.updated` the moment the venue's own account changes
         // (including a trade made on the venue's website), and the screens re-read at once. Only while the
