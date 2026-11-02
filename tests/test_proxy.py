@@ -9,9 +9,7 @@ from mm_agent import proxy
 
 
 class _Fake(httpx.AsyncBaseTransport):
-    def __init__(
-        self, name: str, log: list[str], *, fail: type[Exception] | None = None, status: int = 200
-    ) -> None:
+    def __init__(self, name: str, log: list[str], *, fail: type[Exception] | None = None, status: int = 200) -> None:
         self.name, self.log, self.fail, self.status = name, log, fail, status
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -96,13 +94,13 @@ async def test_post_is_not_replayed_after_a_read_timeout() -> None:
 
 
 async def test_get_retries_after_a_read_timeout() -> None:
-    t, log = _transport(["http://p1", "http://p2"], {"http://p1": httpx.ReadTimeout})
+    t, _log = _transport(["http://p1", "http://p2"], {"http://p1": httpx.ReadTimeout})
     r = await _call(t, "https://clob.polymarket.com/book")
     assert r.json() == {"via": "http://p2"}
 
 
 async def test_post_moves_on_when_the_tunnel_could_not_open() -> None:
-    t, log = _transport(["http://p1", "http://p2"], {"http://p1": httpx.ProxyError})
+    t, _log = _transport(["http://p1", "http://p2"], {"http://p1": httpx.ProxyError})
     r = await _call(t, "https://clob.polymarket.com/order", "POST")
     assert r.json() == {"via": "http://p2"}
 
