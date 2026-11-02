@@ -362,7 +362,7 @@ async def test_reopening_after_a_restart_restores_the_context(harness: Harness) 
 
 
 async def test_a_chat_is_summarized_only_when_the_window_is_full(harness: Harness) -> None:
-    harness.chat.settings = harness.settings.model_copy(update={"llm_context_tokens": 3000, "llm_reserve_tokens": 0})
+    harness.chat.settings = harness.settings.model_copy(update={"llm_context_tokens": 8000})
     model = _ModelDouble()
     harness.chat.llm = model  # type: ignore[assignment]
     store = harness.agent.store
@@ -417,12 +417,12 @@ async def test_a_message_of_any_length_is_stored_and_sent_whole(harness: Harness
 
 
 async def test_summarizing_still_works_when_the_model_cannot(harness: Harness) -> None:
-    harness.chat.settings = harness.settings.model_copy(update={"llm_context_tokens": 3000, "llm_reserve_tokens": 0})
+    harness.chat.settings = harness.settings.model_copy(update={"llm_context_tokens": 8000})
     model = _ModelDouble(summary=None)
     harness.chat.llm = model  # type: ignore[assignment]
     store = harness.agent.store
     cid = store.chat_create(OWNER)["id"]
-    for n in range(60):
+    for n in range(90):
         _say(store, OWNER, cid, f"fact {n} " + "padding " * 60)
     result = await harness.chat.handle("still there?", actor=OWNER, conversation_id=cid)
     assert result["reply"].startswith("re:")

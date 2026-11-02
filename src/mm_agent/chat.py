@@ -37,11 +37,13 @@ ChatEvent = Callable[[str, dict[str, Any]], Awaitable[None]]
 StopCheck = Callable[[], bool]
 
 # The model's window (Settings.llm_context_tokens) is the only ceiling: there is no count or character cap
-# on messages, summaries, tool results, pins, tasks or checkpoints. Older messages fold into a summary
-# only when the history alone no longer fits the window.
-HISTORY_SHARE = 1.0
-USER_MESSAGE_SHARE = 1.0
-DATA_SHARE = 1.0
+# on messages, summaries, tool results, pins, tasks or checkpoints. Auto-compaction keeps it from being hit:
+# when a request would fill COMPACT_AT of the window, the oldest part is folded into a summary until the
+# request is down to COMPACT_TO of the window, and the answer carries on from where it was.
+COMPACT_AT = 0.90
+COMPACT_TO = 0.50
+SUMMARY_TOKENS = 600  # room a fresh summary needs (the summarizer is asked for under 250 words)
+COMPACT_LABEL = "WORK SO FAR IN THIS ANSWER (your context was compacted; continue from here)"
 TOOL_RESULT_SHRUNK_CHARS = 400  # last resort in _fit, only when the window itself would be exceeded
 RETRIEVED_MESSAGES = 4  # folded messages that match the current message and are fetched back
 RETRIEVED_CHARS = 600
@@ -223,6 +225,8 @@ class RunScope:
     retrieved: list[dict[str, Any]] = field(default_factory=list)
     calls: list[dict[str, Any]] = field(default_factory=list)
     prior_status: str = ""
+    prior_compacted: str = ""  # work summary an unfinished earlier answer left when its context was compacted
+    compacted: str = ""  # this answer's own work summary, saved so an interruption can resume from it
     active: bool = False  # the model was reached, so this run owns the checkpoint
     status: str = "running"
 
@@ -230,7 +234,13 @@ class RunScope:
         self.calls.append(entry)
 
     def checkpoint(self) -> dict[str, Any]:
-        return {"run_id": self.run_id, "user_seq": self.user_seq, "status": self.status, "calls": list(self.calls)}
+        return {
+            "run_id": self.run_id,
+            "user_seq": self.user_seq,
+            "status": self.status,
+            "calls": list(self.calls),
+            "compacted": self.compacted,
+        }
 
 
 def chat_title(first_message: str) -> str:
@@ -345,7 +355,7 @@ class ChatService:
         state: dict[str, Any] = {}
         try:
             conversation = store.chat_get(actor, conversation_id)
-            summary, history, pins = await self._conversation_context(actor, conversation)
+            summary, history, pins = await self._conversation_context(actor, conversation, text)
             user_seq = store.chat_append(actor, conversation_id, [{"role": "user", "text": text}])[0]
             if not conversation["title"]:
                 store.chat_rename(actor, conversation_id, chat_title(text))
@@ -421,6 +431,7 @@ class ChatService:
         prior = state.get("checkpoint")
         if isinstance(prior, dict) and prior.get("status") != "done":
             scope.prior_status = str(prior.get("status") or "interrupted")
+            scope.prior_compacted = str(prior.get("compacted") or "")
             for call in prior.get("calls") or []:
                 if isinstance(call, dict) and call.get("name") and call.get("key") and call.get("state"):
                     scope.calls.append({"side_effect": True, **call, "inherited": True})
@@ -433,40 +444,55 @@ class ChatService:
         self.agent.store.chat_patch_state(scope.owner, scope.conversation_id, {"checkpoint": scope.checkpoint()})
 
     def _budget(self) -> int:
-        """Tokens of the model's window that the prompt may use (window minus the reply reserve)."""
+        """The model's window in tokens. Compaction (COMPACT_AT / COMPACT_TO) is what keeps room free."""
 
-        return max(1000, self.settings.llm_context_tokens - self.settings.llm_reserve_tokens)
+        return max(1000, self.settings.llm_context_tokens)
 
     async def _conversation_context(
-        self, owner: str, conversation: dict[str, Any]
+        self, owner: str, conversation: dict[str, Any], text: str
     ) -> tuple[str, list[dict[str, Any]], list[str]]:
-        """Summary, recent messages and pinned instructions for this one chat. A chat that has grown
-        past the message, character or token budget is folded into its summary first, so what the
-        model receives stays bounded however long the chat gets and nothing falls out unsummarized."""
+        """Summary, recent messages and pinned instructions for this one chat. When the request for [text]
+        would fill COMPACT_AT of the window, the oldest messages are folded into the summary until it is
+        down to COMPACT_TO, so nothing falls out unsummarized and the chat never hits the window."""
 
         store = self.agent.store
         cid = conversation["id"]
         summary = str(conversation["summary"])
-        pins = [str(x) for x in (conversation.get("state") or {}).get("pins", [])]
+        state = conversation.get("state") or {}
+        pins = [str(x) for x in state.get("pins", [])]
         pending = store.chat_messages(owner, cid, after=conversation["summary_upto"], limit=None)
-        history_cap = int(self._budget() * HISTORY_SHARE)
+        view = self._tool_view(in_conversation=True)
+        task = state.get("task")
+        fixed = (  # what every request carries besides the summary and the history
+            estimate_tokens(self._system_text(view))
+            + estimate_tokens(json.dumps(view.specs()))
+            + estimate_tokens(text)
+            + estimate_tokens("\n".join(pins))
+            + estimate_tokens(task_text(task) if isinstance(task, dict) else "")
+            + 8
+        )
+        window = self._budget()
         cost = [estimate_tokens(m["text"]) + 4 for m in pending]
-        too_long = sum(cost) > history_cap  # the window is the only reason to fold
-        if too_long:
+        if fixed + estimate_tokens(summary) + sum(cost) >= window * COMPACT_AT:
+            room = max(0, int(window * COMPACT_TO) - fixed)  # what the summary and the kept history may use
             keep, used = 0, 0
-            for tokens in reversed(cost):  # newest first, as many as the window allows
-                if used + tokens > history_cap:
+            for tokens in reversed(cost):  # newest first, as many as fit under the target
+                if used + tokens > max(0, room - estimate_tokens(summary) - SUMMARY_TOKENS):
                     break
                 keep, used = keep + 1, used + tokens
             old = pending[: len(pending) - keep]
             if old:
                 summary = await self._summarize(summary, old)
+                summary_room = max(SUMMARY_TOKENS, room - used)
+                if estimate_tokens(summary) > summary_room:  # only a plain-extract fallback can grow this large
+                    summary = clip_middle(summary, summary_room)
                 store.chat_set_summary(owner, cid, summary, old[-1]["seq"])
                 merged = merge_pins(pins, extract_pins(old))
                 if merged != pins:
                     pins = merged
                     store.chat_patch_state(owner, cid, {"pins": pins})
                 pending = pending[len(old) :]
+                logger.info("chat_compacted", folded=len(old), kept=len(pending), window=window)
         history = [
             {"role": "assistant" if m["role"] == "agent" else "user", "content": m["text"]}
             for m in pending
@@ -1126,9 +1152,9 @@ class ChatService:
 
         usable = self._budget() - tools_tokens
         system = self._system_text(view)
-        user_text = clip_middle(text, int(usable * USER_MESSAGE_SHARE))
+        user_text = clip_middle(text, usable)
         remaining = max(0, usable - estimate_tokens(system) - estimate_tokens(user_text) - 8)
-        left = min(int(usable * DATA_SHARE), remaining)  # what the DATA blocks may still spend
+        left = remaining  # what the DATA blocks may still spend
 
         blocks: list[str] = []
         costs: dict[str, int] = {}
@@ -1197,7 +1223,6 @@ class ChatService:
         ]
         report: dict[str, Any] = {
             "window": self.settings.llm_context_tokens,
-            "reserve": self.settings.llm_reserve_tokens,
             "usable": usable,
             "tools_cost": tools_tokens,
             "system_cost": estimate_tokens(system),
@@ -1213,6 +1238,7 @@ class ChatService:
             "history_dropped": len(history) - len(kept),
             "user_clipped": user_text != text,
             "tool_results_trimmed": 0,
+            "compactions": 0,
             "total_cost": messages_tokens(messages) + tools_tokens,
             "over_budget": messages_tokens(messages) > usable,
             "tools_available": [t.name for t in view.available],
@@ -1225,9 +1251,12 @@ class ChatService:
         """What an earlier, unfinished answer already did with money/control tools, for the model."""
 
         calls = [c for c in scope.calls if c.get("inherited") and c.get("side_effect")]
-        if not calls:
+        if not calls and not scope.prior_compacted:
             return ""
-        lines = [f"The previous answer in this chat did not finish (it was {scope.prior_status}). Its recorded calls:"]
+        lines = [
+            f"The previous answer in this chat did not finish (it was {scope.prior_status})."
+            + (" Its recorded calls:" if calls else "")
+        ]
         for c in calls:
             what = f"{c['name']} {c.get('args', '')}".strip()
             outcome = str(c.get("result", ""))[:300]
@@ -1240,6 +1269,8 @@ class ChatService:
                 )
             else:
                 lines.append(f"- REFUSED OR FAILED: {what} -> {outcome}. Retry only if the operator still wants it.")
+        if scope.prior_compacted:
+            lines.append("Its work so far, summarized when its context was compacted:\n" + scope.prior_compacted)
         lines.append("Continue the interrupted job from where it stopped; do not start it over.")
         return "\n".join(lines)
 
@@ -1490,26 +1521,48 @@ class ChatService:
                 report.update(ctx)
             return result
 
+        compact_note = ""  # summary of this answer's folded-away work; merged into the next compaction
+        compact_block = ""  # the same, fenced into the system message together with the resume instruction
+
+        def system_text() -> str:
+            return self._system_text(view) + data_suffix + compact_block
+
         while True:  # as many tool rounds as the job needs; Stop is the brake
             # Stop is checked between steps only: a tool that already started always finishes,
             # and no new tool (trade, cancel, pause) starts once the operator pressed Stop.
             if should_stop is not None and should_stop():
                 return finish({"reply": "Stopped.", "data": {**last_data, "stopped": True}})
-            while True:
-                self._fit(messages, usable, ctx)
-                try:
-                    if on_event is not None:
-                        reply = await self.llm.chat(messages, tools=tools, on_delta=delta)
-                    else:
-                        reply = await self.llm.chat(messages, tools=tools)
-                    break
-                except LLMUnavailable as exc:
-                    return finish(
-                        {
-                            "reply": f"Assistant unavailable: {exc}. Slash commands still work.",
-                            "data": {"error": True},
-                        }
-                    )
+            before = messages_tokens(messages) + tools_tokens
+            if before >= self._budget() * COMPACT_AT:
+                # Nearly full: fold the older work into a summary and carry on from the newest step.
+                note = await self._compact_answer(messages, tools_tokens, compact_note, scope)
+                if note is not None:
+                    compact_note = note
+                    compact_block = "\n\n" + fence(COMPACT_LABEL, self._compacted_text(note, scope))
+                    messages[0]["content"] = system_text()
+                    after = messages_tokens(messages) + tools_tokens
+                    ctx["compactions"] = int(ctx.get("compactions", 0)) + 1
+                    ctx["last_compaction"] = {"before": before, "after": after}
+                    logger.info("answer_compacted", before=before, after=after, window=self._budget())
+                    if scope is not None:
+                        scope.compacted = note  # an interruption can resume from here
+                        try:
+                            self._save_checkpoint(scope)
+                        except Exception as exc:  # the chat may be gone; the answer itself carries on
+                            logger.warning("compaction_checkpoint_failed", error=type(exc).__name__)
+            self._fit(messages, usable, ctx)
+            try:
+                if on_event is not None:
+                    reply = await self.llm.chat(messages, tools=tools, on_delta=delta)
+                else:
+                    reply = await self.llm.chat(messages, tools=tools)
+            except LLMUnavailable as exc:
+                return finish(
+                    {
+                        "reply": f"Assistant unavailable: {exc}. Slash commands still work.",
+                        "data": {"error": True},
+                    }
+                )
             if reply.tool_calls:
                 calls = [
                     {
@@ -1559,8 +1612,8 @@ class ChatService:
                 usable = self._budget() - tools_tokens
                 if scope is not None and scope.task != task_seen:  # the plan changed during this answer
                     task_seen = dict(scope.task)
-                    data_suffix = self._swap_task_block(data_suffix, scope.task, int(usable * DATA_SHARE * 0.4))
-                messages[0]["content"] = self._system_text(view) + data_suffix
+                    data_suffix = self._swap_task_block(data_suffix, scope.task, int(usable * 0.4))
+                messages[0]["content"] = system_text()
                 ctx["tools_available"] = [t.name for t in view.available]
                 ctx["tools_unavailable"] = dict(view.unavailable)
                 continue
@@ -1574,6 +1627,82 @@ class ChatService:
                 "data": last_data,
             }
         )
+
+    @staticmethod
+    def _tool_rounds(tail: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+        """The tool exchanges of one answer, oldest first: each is the model's tool request followed by
+        its results, which must always travel together."""
+
+        rounds: list[list[dict[str, Any]]] = []
+        for m in tail:
+            if m["role"] == "assistant" or not rounds:
+                rounds.append([m])
+            else:
+                rounds[-1].append(m)
+        return rounds
+
+    async def _compact_answer(
+        self, messages: list[dict[str, Any]], tools_tokens: int, previous: str, scope: RunScope | None
+    ) -> str | None:
+        """Fold the older part of a growing answer into a summary, down to COMPACT_TO of the window: the
+        earlier chat history and every tool round but the newest. The rules, the operator's message and the
+        newest round stay word for word, so the model carries on from the last step instead of starting
+        over. Rewrites [messages] in place (the caller refreshes the system message) and returns the
+        summary, or None when there is nothing older to fold."""
+
+        user_index = max(i for i, m in enumerate(messages) if m["role"] == "user")
+        history = messages[1:user_index]
+        rounds = self._tool_rounds(messages[user_index + 1 :])
+        target = int(self._budget() * COMPACT_TO) - tools_tokens - SUMMARY_TOKENS
+        target -= message_tokens(messages[0]) + message_tokens(messages[user_index])
+        kept: list[list[dict[str, Any]]] = []
+        used = 0
+        for rnd in reversed(rounds):  # newest first; the newest round always stays
+            cost = messages_tokens(rnd)
+            if kept and used + cost > target:
+                break
+            kept.append(rnd)
+            used += cost
+        kept.reverse()
+        folded = rounds[: len(rounds) - len(kept)]
+        if not history and not folded:
+            return None
+        lines: list[dict[str, Any]] = [{"role": m["role"], "text": str(m.get("content") or "")} for m in history]
+        for rnd in folded:
+            for m in rnd:
+                text = str(m.get("content") or "")
+                if m["role"] == "assistant":
+                    asked = "; ".join(
+                        f"{c['function']['name']}({c['function']['arguments']})" for c in m.get("tool_calls") or []
+                    )
+                    text = (text + f" [called: {asked}]").strip()
+                lines.append({"role": m["role"], "text": text})
+        note = await self._summarize(previous, lines)
+        room = max(SUMMARY_TOKENS, target + SUMMARY_TOKENS - used)
+        if estimate_tokens(note) > room:  # only a plain-extract fallback can grow this large
+            note = clip_middle(note, room)
+        messages[:] = [messages[0], messages[user_index], *(m for rnd in kept for m in rnd)]
+        return note
+
+    @staticmethod
+    def _compacted_text(note: str, scope: RunScope | None) -> str:
+        """What the model is told after a compaction: the summary, how to carry on, and the money and
+        control calls this answer already made (they are guarded and would be refused if repeated)."""
+
+        lines = [
+            note,
+            "",
+            "Your earlier steps and the earlier chat are folded into the summary above; the newest tool "
+            "results and the operator's message follow word for word. Continue the job from the last step: "
+            "do not start over and do not repeat steps that are done.",
+        ]
+        own = [c for c in (scope.calls if scope else []) if not c.get("inherited") and c.get("side_effect")]
+        if own:
+            lines.append("Money and control calls this answer has already made; never repeat them:")
+            for c in own:
+                what = f"{c['name']} {c.get('args', '')}".strip()
+                lines.append(f"- {str(c['state']).upper()}: {what} -> {str(c.get('result', ''))[:300]}")
+        return "\n".join(lines)
 
     def _update_task(self, args: dict[str, Any], scope: RunScope | None) -> dict[str, Any]:
         """Replace the chat's task plan (goal and/or the whole step list). It lives in the chat's state,

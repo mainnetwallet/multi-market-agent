@@ -59,7 +59,7 @@ def estimate_tokens(text: str) -> int:
     ASCII costs about one token per four characters; anything else (Bengali, emoji, CJK) is
     counted at one token per character, which over-counts a little. Dense ASCII such as JSON with
     many digits and symbols costs more than four characters per token, so this can under-count it;
-    the chat service covers that by retrying smaller when the provider refuses a request as too long.
+    the chat service covers that by compacting at 90% of the window, which leaves the margin.
     """
 
     if not text:

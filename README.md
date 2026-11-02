@@ -319,7 +319,7 @@ who created it: every store method takes `(owner, conversation_id)` and goes thr
 check, so another user's chat looks exactly like a missing one (404). Send `conversation_id` with
 `POST /v1/chat` or either `/v1/chat/stream` form and the model is given that chat's summary and
 recent messages (never another chat's); without it a message is answered on its own and not stored
-(Telegram). A chat answers one message at a time (409 otherwise). Once the unsummarized history no longer fits the model window, the
+(Telegram). A chat answers one message at a time (409 otherwise). At 90% of the model window the
 older ones fold into a summary (by the LLM, or a plain extract if it is down); nothing is deleted.
 
 | Route | |
@@ -338,15 +338,22 @@ Every model request is assembled fresh from code and live state, for one chat on
 the rules, the assistant's identity and the tools that are usable right now; everything that came from a
 person or a tool is fenced as DATA and can never change the rules.
 
-- **Budget.** A request is sized to `LLM_CONTEXT_TOKENS` minus `LLM_RESERVE_TOKENS` (defaults 300000 and 0;
-  character-based estimate). The rules, tool list and current message come first; standing instructions, task
-  plan, interrupted-run state, summary and retrieved messages take what is left, then recent history. The
-  window is the only limit: there is no cap on message length, tool rounds per answer, tool-result size,
-  summary size, pins, task steps, checkpoint calls, chats or history length. Older messages fold into a
-  summary only when the history alone no longer fits the window; a failed summary falls back to a plain
-  extract. Nothing is deleted. The count is an estimate, not the model's tokenizer. If the provider refuses
-  a request as too long (HTTP 400/413) the answer ends with "Assistant unavailable" and nothing is retried:
-  set `LLM_CONTEXT_TOKENS` to the model's real window.
+- **Budget.** A request is sized to `LLM_CONTEXT_TOKENS` (default 300000; character-based estimate), minus the
+  tool schemas. The rules, tool list and current message come first; standing instructions, task plan,
+  interrupted-run state, summary and retrieved messages take what is left, then recent history. The window is
+  the only limit: there is no cap on message length, tool rounds per answer, tool-result size, summary size,
+  pins, task steps, checkpoint calls, chats or history length, and no space is held back for the reply.
+- **Auto-compaction.** When a request would fill 90% of the window, the oldest part is folded into a summary
+  until it is down to 50%, so there is always room to answer. Before an answer starts, the oldest chat messages
+  are folded into the chat's summary. In the middle of a long answer (many tool rounds), the earlier chat
+  history and every tool round except the newest are folded into a "work so far" summary; the operator's
+  message and the newest tool results stay word for word, and the model is told to continue from the last step
+  rather than start over. Money and control calls made before the compaction stay on the checkpoint and are
+  never run twice, and the summary is saved with the checkpoint, so a stopped answer resumes from it on the
+  next message. A failed summary falls back to a plain extract. Nothing is deleted. The count is an estimate,
+  not the model's tokenizer, and the 10% left free is its margin. If the provider still refuses a request as
+  too long (HTTP 400/413) the answer ends with "Assistant unavailable" and nothing is retried: set
+  `LLM_CONTEXT_TOKENS` to the model's real window.
 - **Standing instructions.** Lasting operator rules ("always", "never", "from now on"...) are pinned in the
   chat's state when their message is folded, so summarizing cannot lose them.
 - **Retrieval.** Folded messages of this chat that share words with the new message (4+ letters) are fetched

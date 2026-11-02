@@ -97,7 +97,7 @@ _CHAT_TASKS: set[asyncio.Task[Any]] = set()
 
 
 class ChatBody(BaseModel):
-    message: str
+    message: str = Field(min_length=1)  # an empty message is still refused; only the upper cap is gone
     conversation_id: str | None = None
 
 
