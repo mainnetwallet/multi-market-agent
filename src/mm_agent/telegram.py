@@ -278,12 +278,19 @@ class TelegramBot:
         if self.application is None:
             return
         parts = split_message(text)
-        for i, part in enumerate(parts):
-            await self.application.bot.send_message(
-                chat_id=self.settings.telegram_allowed_user_id,
-                text=part,
-                reply_markup=reply_markup if i == len(parts) - 1 else None,
-            )
+        try:
+            for i, part in enumerate(parts):
+                await self.application.bot.send_message(
+                    chat_id=self.settings.telegram_allowed_user_id,
+                    text=part,
+                    reply_markup=reply_markup if i == len(parts) - 1 else None,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # A failed Telegram send (e.g. "Chat not found" before the owner has pressed /start on the bot,
+            # or a network blip) must never take the trading agent down: log it and carry on.
+            logger.warning("telegram_send_failed", error=f"{type(exc).__name__}: {str(exc)[:160]}")
 
     async def _heartbeat_loop(self) -> None:
         interval = max(300, self.settings.telegram_heartbeat_seconds)
