@@ -250,3 +250,16 @@ Status words: done / partial / missing / cannot verify here. "(fixed in P6)" mar
 - `python scripts/probe_live_shapes.py` and `python scripts/live_hub_check.py` on a machine that reaches the venues; replace the synthetic fixtures with the scrubbed real ones; check `/live_data/batch` parameter style (comma-joined vs repeated) and `/milestones?related_event_ticker=`; then set `LIVE_VERIFIED` only if they match.
 - PWA by hand: a soccer game (score, tabs, delayed note), a bracket (ordered rows, chart ranges), an Up/Down (countdown, spot vs price to beat), a Kalshi sports event (score line); cut the network and watch the indicator flip.
 - Revoke the GitHub token that was pasted into the chat; it was never used by this audit (GH_TOKEN was not set in the sandbox).
+
+
+## Polymarket Data tab (read-only API gap work)
+
+- Added `polymarket_explorer.py` (about 55 public rows: Gamma markets/tags/series/comments/sports/teams/profile,
+  CLOB batch and variant prices, fee/tick/neg-risk, market info, time, health, sampling lists, rewards, rebates,
+  Data combos/builders/accounting, relayer `/deployed`, geoblock) and `polymarket_account.py` (12 own-account reads).
+- New routes: `/v1/polymarket/catalog`, `/explore/{key}`, `/account/{key}`, `/system`. UI: Markets > Data, plus
+  Market insights in the market sheet. Service worker cache `mm-agent-v9`.
+- Fixed: `caps.batch_orders` was advertised without code; now `False`.
+- Tests: `tests/test_polymarket_explorer.py` (30 cases), `tests/js/explorer.test.mjs` (10), security canary.
+- Not done: write routes, Perps, PolyBolt rewrite (F1), Android screen, live fixtures (sandbox cannot reach polymarket.com).
+- Owner must run: `python scripts/pm_api_smoke.py`; open Markets > Data on a phone; revoke the GitHub token pasted in chat.

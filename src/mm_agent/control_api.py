@@ -218,6 +218,33 @@ def _data_http_error(exc: DataAPIError) -> HTTPException:
     return HTTPException(status_code=status, detail=exc.message[:200] or "venue error", headers=headers)
 
 
+_DATA_GROUP = {
+    "positions": "wallet",
+    "value": "wallet",
+    "approvals": "wallet",
+    "user-stats": "wallet",
+    "user-pnl": "wallet",
+    "user-volume": "wallet",
+    "trades": "wallet",
+    "activity": "wallet",
+    "holders": "markets-insight",
+    "oi": "markets-insight",
+    "live-volume": "markets-insight",
+    "resolutions": "markets-insight",
+    "tokens": "markets-insight",
+    "prices-history": "prices",
+    "leaderboard": "boards",
+    "biggest-winners": "boards",
+    "status": "system",
+}
+
+
+def _data_names() -> frozenset[str]:
+    from .polymarket_data import ENDPOINTS
+
+    return frozenset(ENDPOINTS)
+
+
 def _book_json(book: Any) -> dict[str, Any]:
     """A book snapshot for the UI. `best_bid`/`best_ask`/`mid`/`spread` are plain properties on the model,
     so `model_dump` leaves them out; the UI's price boxes need them, so they are added here."""
@@ -646,6 +673,124 @@ def create_app(
         if kind not in calls:
             raise HTTPException(status_code=404, detail=f"unknown price route; use one of: {', '.join(calls)}")
         return await _pm_call(calls[kind]())
+
+    # ── Polymarket Data tab: one registry, read-only ────────────────────────────────────────
+    @app.get("/v1/polymarket/catalog")
+    async def polymarket_catalog(_: str = Depends(require_auth)) -> dict[str, Any]:
+        """Every read-only route the Data tab can call: group, label, parameters, result kind, class,
+        official rate limit and how sure we are of the path (``evidence`` V verified, U unverified)."""
+
+        from .polymarket_account import PolymarketAccount
+        from .polymarket_data import ENDPOINTS
+        from .polymarket_explorer import PolymarketExplorer
+
+        catalog = PolymarketExplorer.catalog()
+        routes: list[dict[str, Any]] = list(catalog["routes"]) + PolymarketAccount.catalog()
+        for name, ep in ENDPOINTS.items():
+            routes.append(
+                {
+                    "key": "data." + name,
+                    "group": _DATA_GROUP.get(name, "markets-insight"),
+                    "label": "Data " + name,
+                    "host": "data",
+                    "method": "GET",
+                    "path": ep.path,
+                    "class": "R0",
+                    "path_params": [],
+                    "params": [{"name": p, "type": "text", "hint": ""} for p in sorted(ep.params)],
+                    "needs_any": list(ep.needs_any),
+                    "needs_one": list(ep.needs_one),
+                    "result": "series" if name in ("user-pnl", "prices-history") else "table",
+                    "kind": "json",
+                    "rate_limit": 1000,
+                    "evidence": "V",
+                    "paging": "cursor",
+                    "note": "",
+                }
+            )
+        return {"ok": True, "groups": catalog["groups"], "routes": routes}
+
+    @app.get("/v1/polymarket/explore/{key}")
+    async def polymarket_explore(key: str, request: Request, _: str = Depends(require_auth)) -> Any:
+        """Run one catalog route. ``data.*`` keys are the Data API v2 routes, everything else is validated
+        against the registry first. A ZIP route (accounting snapshot) answers with the file itself."""
+
+        from .polymarket_explorer import ROUTES
+
+        params = dict(request.query_params)
+        if key.startswith("data.") and key[5:] in _data_names():
+            return await _pm_call(_pm_adapter("market_data").fetch(key[5:], params))
+        explorer = _pm_adapter("explorer")
+        route = ROUTES.get(key)
+        if route is None:
+            raise HTTPException(status_code=404, detail="unknown polymarket route; see /v1/polymarket/catalog")
+        out = await _pm_call(explorer.call(key, params))
+        if route.kind == "bytes":
+            from fastapi.responses import Response
+
+            return Response(
+                content=out["result"],
+                media_type="application/zip",
+                headers={"Content-Disposition": 'attachment; filename="polymarket-accounting.zip"'},
+            )
+        return out
+
+    @app.get("/v1/polymarket/account/{key}")
+    async def polymarket_account(key: str, request: Request, _: str = Depends(require_auth)) -> dict[str, Any]:
+        """Read-only views of the signed-in account (rewards, scoring, notifications, balances). Without
+        credentials the answer is ``{"ok": false, "needs_credentials": true}`` instead of an error."""
+
+        from .polymarket_account import ACCOUNT_ROUTES
+        from .venues.base import VenueAuthError
+
+        if key not in ACCOUNT_ROUTES:
+            raise HTTPException(status_code=404, detail="unknown account route; see /v1/polymarket/catalog")
+        account = _pm_adapter("account")
+
+        async def read() -> Any:
+            try:
+                return await account.call(key, dict(request.query_params))
+            except (
+                VenueAuthError
+            ) as exc:  # a RuntimeError subclass: caught here so it is not mistaken for "not started"
+                return {"__needs_credentials__": str(exc)[:160]}
+
+        out = await _pm_call(read())
+        marker = out["result"].get("__needs_credentials__") if isinstance(out["result"], dict) else None
+        if marker is not None:
+            return {"ok": False, "needs_credentials": True, "detail": marker}
+        return out
+
+    @app.get("/v1/polymarket/system")
+    async def polymarket_system(_: str = Depends(require_auth)) -> dict[str, Any]:
+        """Health of Gamma, CLOB and Data, the geoblock answer, the venue clock skew and Data ``/v2/status``.
+        Each check fails on its own; the others still answer."""
+
+        import time as _time
+
+        from .polymarket_explorer import clock_skew
+
+        explorer = _pm_adapter("explorer")
+        data = _pm_adapter("market_data")
+        checks: dict[str, Any] = {}
+        for label, key in (
+            ("gamma", "gamma.health"),
+            ("clob", "clob.health"),
+            ("data", "data.health"),
+            ("geoblock", "site.geoblock"),
+            ("time", "clob.time"),
+        ):
+            try:
+                checks[label] = {"ok": True, "value": await explorer.call(key)}
+            except (DataAPIError, ValueError, httpx.HTTPError, RuntimeError) as exc:
+                checks[label] = {"ok": False, "detail": str(exc)[:160]}
+        try:
+            checks["v2_status"] = {"ok": True, "value": await data.fetch("status", {})}
+        except (DataAPIError, ValueError, httpx.HTTPError, RuntimeError) as exc:
+            checks["v2_status"] = {"ok": False, "detail": str(exc)[:160]}
+        if checks["time"].get("ok"):
+            checks["clock"] = clock_skew(checks["time"]["value"], _time.time())
+        return {"ok": True, "checks": checks}
 
     @app.get("/v1/crypto/spot")
     async def crypto_spot(
