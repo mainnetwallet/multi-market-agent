@@ -61,15 +61,20 @@ class ResearchService:
     def disabled_reason(self) -> str:
         if not self.llm.enabled:
             return "LLM_BASE_URL and LLM_MODEL are not configured"
-        if not self.search.enabled:
+        if not self.search.configured:
             return "TAVILY_API_KEY is not configured"
+        if not self.search.enabled:
+            return (
+                f"web search paused (HTTP {self.search.blocked_status}: Tavily key or usage limit); "
+                f"retry in {self.search.blocked_seconds}s"
+            )
         return ""
 
     async def research(self, market: Market) -> ResearchOutcome:
         if not self.llm.enabled:
             return ResearchOutcome(None, reason="LLM not configured")
         if not self.search.enabled:
-            return ResearchOutcome(None, reason="web search not configured (TAVILY_API_KEY)")
+            return ResearchOutcome(None, reason=self.disabled_reason or "web search unavailable")
         messages = self._initial_messages(market)
         seen: dict[str, dict[str, str]] = {}
         content = ""

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -188,6 +189,10 @@ class LLMClient:
         return LLMReply(content="".join(content), tool_calls=tool_calls)
 
 
+SEARCH_QUOTA_PAUSE = 900  # seconds to leave the search provider alone after a key/quota rejection
+SEARCH_RATE_LIMIT_PAUSE = 60
+
+
 class WebSearchClient:
     """Small Tavily-compatible web-search tool used by research."""
 
@@ -196,10 +201,26 @@ class WebSearchClient:
 
         self.api_key = os.environ.get("TAVILY_API_KEY", "").strip()
         self.endpoint = os.environ.get("WEB_SEARCH_URL", "https://api.tavily.com/search")
+        # When the provider rejects the key or the plan quota (401/403/432) or rate-limits us (429), stop
+        # calling it for a while instead of failing once per market, every cycle.
+        self._blocked_until = 0.0
+        self.blocked_status: int | None = None
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+    @property
+    def blocked_seconds(self) -> int:
+        return max(0, int(self._blocked_until - time.monotonic()))
 
     @property
     def enabled(self) -> bool:
-        return bool(self.api_key)
+        return self.configured and self.blocked_seconds == 0
+
+    def _block(self, status: int) -> None:
+        self.blocked_status = status
+        self._blocked_until = time.monotonic() + (SEARCH_RATE_LIMIT_PAUSE if status == 429 else SEARCH_QUOTA_PAUSE)
 
     async def search(self, query: str, max_results: int = 10) -> list[dict[str, str]]:
         if not self.enabled:
@@ -216,8 +237,19 @@ class WebSearchClient:
                 },
             )
         if response.status_code >= 400:
-            logger.warning("web_search_failed", status=response.status_code)
+            if response.status_code in (401, 403, 429, 432):
+                self._block(response.status_code)
+                logger.warning(
+                    "web_search_paused",
+                    status=response.status_code,
+                    pause_seconds=self.blocked_seconds,
+                    hint="Tavily key invalid or plan/usage limit reached: check the Tavily dashboard",
+                    body=response.text[:200],
+                )
+            else:
+                logger.warning("web_search_failed", status=response.status_code)
             return []
+        self.blocked_status = None
         data = response.json()
         out: list[dict[str, str]] = []
         for row in data.get("results") or []:

@@ -10,7 +10,7 @@ from decimal import ROUND_CEILING, Decimal
 from typing import Any
 
 from .account_sync import AccountSync
-from .books import BookCache, BookFeed, UnitGuard
+from .books import BookCache, BookFeed, UnitGuard, is_no_book_error
 from .config import Settings
 from .domain import (
     BookSnapshot,
@@ -185,6 +185,13 @@ class AgentService:
             try:
                 out[outcome] = await self.books.get(adapter, ref, force=force, max_age=max_age)
             except Exception as exc:
+                if is_no_book_error(exc):
+                    # Not an incident: the market has no book right now. Remember it and stop retrying it
+                    # every cycle (and stop it from using up the cycle's market budget).
+                    if not self.books.has_no_book(market.venue.value, market.native_id):
+                        logger.info("market_has_no_book", ref=ref.namespaced)
+                    self.books.mark_no_book(market.venue.value, market.native_id)
+                    break
                 logger.warning("book_fetch_failed", ref=ref.namespaced, error=str(exc)[:160])
         return out
 
@@ -803,6 +810,10 @@ class AgentService:
                 break
             if self.store.pending_proposal_for_market(market.venue, market.native_id):
                 continue
+            if self.books.has_no_book(market.venue.value, market.native_id):
+                continue
+            if not self.research_service.available:
+                break  # search got paused mid-cycle (quota/key): stop instead of failing every market
             outcome = await self.analyze_market(market, create_proposal=True)
             results.append(outcome)
             if outcome.get("ok"):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -47,10 +48,33 @@ class BookAnalysis:
         return self.mid is not None and self.spread is not None and self.best_ask is not None and not self.synthetic
 
 
+NO_BOOK_RETRY_SECONDS = 1800
+
+
+def is_no_book_error(exc: BaseException) -> bool:
+    """The venue says this market has no order book (closed, not listed yet, or a dead token)."""
+    text = str(exc)
+    return "No orderbook exists" in text or "HTTP 404" in text
+
+
 class BookCache:
     def __init__(self, fresh_seconds: int = 30) -> None:
         self.fresh_seconds = fresh_seconds
         self._books: dict[str, BookSnapshot] = {}
+        self._no_book: dict[str, float] = {}
+
+    def mark_no_book(self, venue_value: str, market_id: str) -> None:
+        self._no_book[f"{venue_value}:{market_id}"] = time.monotonic() + NO_BOOK_RETRY_SECONDS
+
+    def has_no_book(self, venue_value: str, market_id: str) -> bool:
+        key = f"{venue_value}:{market_id}"
+        until = self._no_book.get(key)
+        if until is None:
+            return False
+        if time.monotonic() >= until:
+            del self._no_book[key]
+            return False
+        return True
 
     def put(self, book: BookSnapshot) -> None:
         self._books[book.key] = book
@@ -153,6 +177,7 @@ class BookFeed:
         refs = [
             MarketRef(venue=venue, market_id=market.native_id, outcome=outcome)
             for market in markets
+            if not self.cache.has_no_book(venue.value, market.native_id)
             for outcome in (Outcome.YES, Outcome.NO)
         ]
         if not refs:
@@ -163,8 +188,10 @@ class BookFeed:
 
         results = await asyncio.gather(*(fetch(ref) for ref in refs), return_exceptions=True)
         count = 0
-        for result in results:
+        for ref, result in zip(refs, results, strict=True):
             if isinstance(result, BaseException):
+                if is_no_book_error(result):
+                    self.cache.mark_no_book(venue.value, ref.market_id)
                 self.errors += 1
                 self.last_error = f"{type(result).__name__}: {str(result)[:160]}"
                 continue
