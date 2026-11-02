@@ -65,6 +65,7 @@ import com.mainnetwallet.mmagent.data.Format
 import org.json.JSONObject
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -166,7 +167,10 @@ fun AppScaffold(
             }
         },
     ) { padding ->
-        Box(modifier = Modifier.padding(padding).fillMaxSize()) { content() }
+        // The padding already clears the bottom bar. Mark it consumed so a screen's own imePadding() adds only
+        // the keyboard height the bar does not already cover; otherwise the chat input floats a bar's height
+        // above the keyboard.
+        Box(modifier = Modifier.padding(padding).consumeWindowInsets(padding).fillMaxSize()) { content() }
     }
 }
 
