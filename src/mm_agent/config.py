@@ -77,7 +77,7 @@ class Settings(BaseSettings):
 
     enabled_venues_raw: str = Field(default="polymarket,kalshi,limitless", alias="ENABLED_VENUES")
     active_venue: VenueId = VenueId.POLYMARKET
-    parallel_scan: bool = False
+    parallel_scan: bool = True
 
     bankroll_usd: Decimal = Decimal("100")
     bankroll_polymarket: Decimal | None = None
@@ -88,14 +88,14 @@ class Settings(BaseSettings):
     max_total_exposure_pct: Decimal = HARD_MAX_TOTAL_EXPOSURE_PCT
     max_daily_loss_pct: Decimal = HARD_MAX_DAILY_LOSS_PCT
     max_open_positions: int = HARD_MAX_OPEN_POSITIONS
-    advisory_mode: bool = False
+    advisory_mode: bool = True
 
-    chat_autopilot: bool = False
+    chat_autopilot: bool = True
     live_views_enabled: bool = True
 
     polymarket_wallet_address: str = ""
     polymarket_signature_type: int = 3
-    polymarket_allow_real_test: bool = False
+    polymarket_allow_real_test: bool = True
     kalshi_api_key_id: str = ""
     kalshi_private_key_path: str = ""
     kalshi_base_url: str = "https://api.elections.kalshi.com/trade-api/v2"
@@ -151,7 +151,7 @@ class Settings(BaseSettings):
     default_max_trade_usd: Decimal = HARD_MAX_TRADE_USD
 
     # Funds module: off unless explicitly enabled. Separate signer, separate key.
-    funds_enabled: bool = False
+    funds_enabled: bool = True
     funds_signer_private_key: str = ""
     funds_signer_address: str = ""
     funds_rpc_url: str = "https://polygon-rpc.com"
@@ -163,7 +163,7 @@ class Settings(BaseSettings):
     # False: a withdrawal may name its receiver address, chain and token directly (the hold window and
     # daily limit still apply; no password is asked). True: only addresses already on the allowlist can
     # receive.
-    funds_require_allowlist: bool = False
+    funds_require_allowlist: bool = True
     funds_polymarket_bridge_url: str = "https://bridge.polymarket.com"
     funds_polymarket_builder_code: str = ""
 

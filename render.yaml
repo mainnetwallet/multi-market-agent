@@ -26,13 +26,13 @@ services:
       - key: ACTIVE_VENUE
         value: polymarket
       - key: PARALLEL_SCAN
-        value: "false"
+        value: "true"
       - key: BANKROLL_USD
         value: "50"
       - key: MAX_TRADE_USD
         value: "1"
       - key: CHAT_AUTOPILOT
-        value: "false"
+        value: "true"
       - key: ADMIN_USERNAME
         value: operator
       - key: ADMIN_PASSWORD
@@ -54,7 +54,7 @@ services:
       # Funds module: OFF until you set the secrets below and read SECURITY.md.
       # The funds signer is a SEPARATE key from every trading key.
       - key: FUNDS_ENABLED
-        value: "false"
+        value: "true"
       - key: FUNDS_SIGNER_PRIVATE_KEY
         sync: false
       - key: FUNDS_SIGNER_ADDRESS
