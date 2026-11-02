@@ -776,14 +776,14 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         viewModelScope.launch {
             val epoch = chatEpoch
             try {
-                val rows = api.get("/v1/conversations?limit=$MAX_CHATS")
+                val rows = api.get("/v1/conversations")
                 // A rename or delete began (or ended) meanwhile: this answer may be stale, and that change refreshes again.
                 if (epoch != chatEpoch) return@launch
                 val server = ApiClient.arrayOf(rows, "conversations").objects()
                     .map { conversationFromServer(it) }
                     .filter { it.id.isNotBlank() && it.id !in pendingDeletes }
                     .map { chat -> pendingRenames[chat.id]?.let { chat.copy(title = it) } ?: chat }
-                _chat.update { s -> s.copy(conversations = mergeChatLists(server, s.conversations, s.activeId).take(MAX_CHATS)) }
+                _chat.update { s -> s.copy(conversations = mergeChatLists(server, s.conversations, s.activeId)) }
                 persistChats()
             } catch (e: CancellationException) {
                 throw e
@@ -798,7 +798,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         val needle = query.trim()
         if (needle.isEmpty()) return emptyList()
         return try {
-            val rows = api.get("/v1/conversations?limit=$MAX_CHATS&q=" + java.net.URLEncoder.encode(needle, "UTF-8"))
+            val rows = api.get("/v1/conversations?q=" + java.net.URLEncoder.encode(needle, "UTF-8"))
             ApiClient.arrayOf(rows, "conversations").objects().map { it.optString("id") }
         } catch (e: CancellationException) {
             throw e
@@ -831,7 +831,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     private fun loadChatMessages(chat: Conversation) {
         viewModelScope.launch {
             try {
-                val res = api.get("/v1/conversations/${chat.id}/messages?limit=$MAX_CHAT_MESSAGES")
+                val res = api.get("/v1/conversations/${chat.id}/messages")
                 val stored = ApiClient.arrayOf(res, "messages").objects().map { messageFromServer(it) }
                 // Only if the reader is still on this chat and has not started typing to it.
                 val more = res.optBoolean("has_more")
@@ -863,7 +863,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     }
 
     fun renameChat(id: String, title: String) {
-        val clean = title.trim().take(60)
+        val clean = title.trim()
         if (clean.isEmpty()) return
         val synced = _chat.value.conversations.firstOrNull { it.id == id }?.synced == true
         _chat.update { s -> s.copy(conversations = s.conversations.map { if (it.id == id) it.copy(title = clean) else it }) }
@@ -931,7 +931,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         loadingEarlier = true
         viewModelScope.launch {
             try {
-                val res = api.get("/v1/conversations/$id/messages?before=$oldest&limit=$MAX_CHAT_MESSAGES")
+                val res = api.get("/v1/conversations/$id/messages?before=$oldest")
                 val older = ApiClient.arrayOf(res, "messages").objects().map { messageFromServer(it) }
                 val more = res.optBoolean("has_more")
                 _chat.update { st -> if (st.activeId == id) st.copy(messages = older + st.messages, hasEarlier = more) else st }
@@ -995,7 +995,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             val now = System.currentTimeMillis()
             val saved = s.messages.filterNot { it.streaming }
             val updated = s.conversations.map { if (it.id == id) it.copy(messages = saved, updatedAt = now) else it }
-            s.copy(conversations = updated.sortedByDescending { it.updatedAt }.take(MAX_CHATS))
+            s.copy(conversations = updated.sortedByDescending { it.updatedAt })
         }
         persistChats()
     }
@@ -1006,7 +1006,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         for ((index, chat) in _chat.value.conversations.withIndex()) {
             val messages = JSONArray()
             if (!chat.synced || index < CACHED_CHATS) {
-                for (m in chat.messages.takeLast(MAX_CHAT_MESSAGES)) {
+                for (m in chat.messages) {
                     messages.put(JSONObject().put("role", m.role).put("text", m.text).put("at", m.at))
                 }
             }
@@ -1036,7 +1036,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             emptyList()
         }
         if (chats.isNotEmpty()) {
-            _chat.value = ChatUiState(conversations = chats.sortedByDescending { it.updatedAt }.take(MAX_CHATS))
+            _chat.value = ChatUiState(conversations = chats.sortedByDescending { it.updatedAt })
         }
     }
 
@@ -1233,9 +1233,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         const val KEY_TOKEN = "session_token"
         const val KEY_USERNAME = "username"
         private const val KEY_CHATS = "chat_history"
-        private const val MAX_CHATS = 100
         private const val CACHED_CHATS = 20
-        private const val MAX_CHAT_MESSAGES = 200
         const val DEFAULT_USERNAME = "operator"
         private const val RENEW_EVERY_MS = 6L * 60 * 60 * 1000
         private const val RENEW_RETRY_MS = 5L * 60 * 1000

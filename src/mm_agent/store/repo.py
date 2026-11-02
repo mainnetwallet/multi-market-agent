@@ -105,7 +105,6 @@ class ConversationBusy(RuntimeError):
 
 
 CONVERSATION_STATUSES = frozenset({"idle", "running", "stopped", "error", "interrupted"})
-SUMMARY_MAX_CHARS = 6000
 
 
 def _dec(value: Decimal | None) -> Decimal:
@@ -1449,12 +1448,12 @@ class Store:
             raise ValueError("a conversation needs an owner")
         now = utcnow()
         with self.session() as s:
-            row = ConversationRow(owner=owner, title=title.strip()[:120], created_at=now, updated_at=now)
+            row = ConversationRow(owner=owner, title=title.strip(), created_at=now, updated_at=now)
             s.add(row)
             s.flush()
             return self._conversation_dict(row)
 
-    def chat_list(self, owner: str, q: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def chat_list(self, owner: str, q: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
         """The owner's chats, newest first. [q] matches titles and message text (case-insensitive)."""
 
         stmt = select(ConversationRow).where(ConversationRow.owner == owner)
@@ -1469,7 +1468,9 @@ class Store:
                 .exists()
             )
             stmt = stmt.where(or_(ConversationRow.title.icontains(needle, autoescape=True), in_messages))
-        stmt = stmt.order_by(ConversationRow.updated_at.desc(), ConversationRow.id).limit(max(1, min(limit, 200)))
+        stmt = stmt.order_by(ConversationRow.updated_at.desc(), ConversationRow.id)
+        if limit is not None:
+            stmt = stmt.limit(max(1, int(limit)))
         with self.session() as s:
             return [self._conversation_dict(r) for r in s.scalars(stmt).all()]
 
@@ -1484,7 +1485,7 @@ class Store:
             }
 
     def chat_rename(self, owner: str, conversation_id: str, title: str) -> dict[str, Any]:
-        clean = title.strip()[:120]
+        clean = title.strip()
         if not clean:
             raise ValueError("a title is required")
         with self.session() as s:
@@ -1505,21 +1506,22 @@ class Store:
         *,
         before: int | None = None,
         after: int | None = None,
-        limit: int = 50,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Messages of one chat, oldest first. Default: the latest [limit]; [before] pages back to
-        older ones; [after] returns the first [limit] newer than that sequence number."""
+        """Messages of one chat, oldest first. Without [limit] all of them; with it, the latest [limit];
+        [before] pages back to older ones; [after] returns the first [limit] newer than that sequence number."""
 
-        limit = max(1, min(int(limit), 500))
         with self.session() as s:
             row = self._owned(s, owner, conversation_id)
             stmt = select(ChatMessageRow).where(ChatMessageRow.conversation_id == row.id)
             if after is not None:
-                rows = list(s.scalars(stmt.where(ChatMessageRow.seq > after).order_by(ChatMessageRow.seq).limit(limit)))
+                newer = stmt.where(ChatMessageRow.seq > after).order_by(ChatMessageRow.seq)
+                rows = list(s.scalars(newer if limit is None else newer.limit(max(1, int(limit)))))
             else:
                 if before is not None:
                     stmt = stmt.where(ChatMessageRow.seq < before)
-                rows = list(s.scalars(stmt.order_by(ChatMessageRow.seq.desc()).limit(limit)))[::-1]
+                older = stmt.order_by(ChatMessageRow.seq.desc())
+                rows = list(s.scalars(older if limit is None else older.limit(max(1, int(limit)))))[::-1]
             return [
                 {
                     "seq": m.seq,
@@ -1573,7 +1575,7 @@ class Store:
                     ConversationRow.summary_upto < upto,
                     ConversationRow.last_seq >= upto,
                 )
-                .values(summary=redact_text(summary)[:SUMMARY_MAX_CHARS], summary_upto=upto)
+                .values(summary=redact_text(summary), summary_upto=upto)
             )
             return rowcount(done) == 1
 

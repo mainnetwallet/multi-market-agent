@@ -167,7 +167,8 @@ def test_chat_stream_post_takes_a_long_message_in_the_body(harness: Harness) -> 
     long_text = "/status " + "\u0995" * 3000
     events = _sse(client.post("/v1/chat/stream", json={"message": long_text}).text)
     assert [name for name, _ in events][-2:] == ["message", "done"]
-    assert client.post("/v1/chat/stream", json={"message": ""}).status_code == 422
+    assert client.post("/v1/chat/stream", json={"message": "x" * 100_000}).status_code == 200  # no length cap
+    assert client.post("/v1/chat/stream", json={"message": ""}).status_code == 422  # but an empty one is refused
 
 
 async def test_stop_prevents_a_new_tool_from_starting(harness: Harness) -> None:

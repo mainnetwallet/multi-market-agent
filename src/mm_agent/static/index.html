@@ -516,7 +516,7 @@ function confirmHold({title,rows,label,seconds=2,tone="primary",note=""}){
 function askText(title,value="",placeholder=""){
   return new Promise((res)=>{
     let done=false;
-    const s=sheet('<h2>'+esc(title)+'</h2><form class="col"><input id="askIn" maxlength="120" placeholder="'+esc(placeholder)+'" value="'+esc(value)+'" required><div class="row" style="flex-wrap:nowrap"><button type="button" class="btn grow" data-x>Cancel</button><button class="btn primary grow" type="submit">Save</button></div></form>',{onClose:()=>{if(!done){done=true;res(null)}}});
+    const s=sheet('<h2>'+esc(title)+'</h2><form class="col"><input id="askIn" placeholder="'+esc(placeholder)+'" value="'+esc(value)+'" required><div class="row" style="flex-wrap:nowrap"><button type="button" class="btn grow" data-x>Cancel</button><button class="btn primary grow" type="submit">Save</button></div></form>',{onClose:()=>{if(!done){done=true;res(null)}}});
     const f=s.box.querySelector("form"),inp=s.box.querySelector("#askIn");setTimeout(()=>{inp.focus();inp.select()},30);
     f.addEventListener("submit",(e)=>{e.preventDefault();const v=inp.value.trim();if(!v)return;done=true;s.close();res(v)})})}
 async function copyText(text){try{await navigator.clipboard.writeText(text);toast("Copied")}catch(e){const t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();try{document.execCommand("copy");toast("Copied")}catch(_){toast("Copy failed")}t.remove()}}
@@ -1114,7 +1114,7 @@ $("#histSearch").addEventListener("input",()=>{clearTimeout(CHAT.timer);CHAT.tim
 function chatNew(){CHAT.id=null;chatSaveId();$("#chatlog").innerHTML='<div class="msg bot">'+esc(CHAT_GREETING)+'</div>';$("#chatTitle").textContent="New chat";chatMark()}
 async function chatRestore(){if(CHAT.restored)return;CHAT.restored=true;await chatList();if(CHAT.id)await chatOpen(CHAT.id)}
 async function chatList(){
-  try{const d=await api("/v1/conversations?limit=100"+(CHAT.q?"&q="+enc(CHAT.q):""));CHAT.list=d.conversations||[];
+  try{const d=await api("/v1/conversations"+(CHAT.q?"?q="+enc(CHAT.q):""));CHAT.list=d.conversations||[];
     $("#histList").innerHTML=CHAT.list.length?CHAT.list.map(c=>'<div class="citem'+(c.id===CHAT.id?" on":"")+'" data-cid="'+esc(c.id)+'" tabindex="0"><div class="ctitle">'+esc(c.title||"Untitled chat")+'</div><div class="tiny muted">'+esc(dhaka(c.updated_at))+' · '+esc(c.message_count)+' msgs'+(c.status==="running"?' · answering':c.status==="interrupted"?' · interrupted':"")+'</div><div class="cact"><button data-ren="'+esc(c.id)+'" aria-label="Rename chat"><svg class="i"><use href="#i-edit"/></svg></button><button data-del="'+esc(c.id)+'" aria-label="Delete chat"><svg class="i"><use href="#i-trash"/></svg></button></div></div>').join(""):'<div class="muted small" style="padding:10px">'+(CHAT.q?"No chats match.":"No saved chats yet. Send a message to start one.")+'</div>';
     chatMark()}
   catch(e){$("#histList").innerHTML='<div class="muted small" style="padding:10px">'+esc(e.message)+'</div>'}}
@@ -1139,7 +1139,7 @@ async function chatOpen(id){
   catch(e){if(/not found|404/i.test(e.message)){CHAT.id=null;chatSaveId();chatNew()}toast(e.message)}}
 async function chatOlder(){
   if(!CHAT.id||CHAT.oldest==null)return;
-  try{const d=await api("/v1/conversations/"+enc(CHAT.id)+"/messages?before="+CHAT.oldest+"&limit=50"),ms=d.messages||[],log=$("#chatlog"),btn=$("#chatOlder");
+  try{const d=await api("/v1/conversations/"+enc(CHAT.id)+"/messages?before="+CHAT.oldest),ms=d.messages||[],log=$("#chatlog"),btn=$("#chatOlder");
     const frag=document.createDocumentFragment();ms.forEach(m=>{const el=document.createElement("div");el.className="msg "+(m.role==="user"?"user":"bot");el.textContent=m.text;frag.appendChild(el)});
     const h0=log.scrollHeight;(btn?btn.after(frag):log.prepend(frag));log.scrollTop+=log.scrollHeight-h0;
     if(ms.length)CHAT.oldest=ms[0].seq;if(!d.has_more&&btn)btn.remove()}

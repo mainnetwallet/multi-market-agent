@@ -29,6 +29,27 @@ from .util import fmt_dhaka, get_logger
 logger = get_logger(__name__)
 
 
+TELEGRAM_MESSAGE_CHARS = 4000  # Telegram itself refuses more than 4096 per message: longer text is sent in parts
+
+
+def split_message(text: str, size: int = TELEGRAM_MESSAGE_CHARS) -> list[str]:
+    """Cut [text] into parts Telegram accepts, at line breaks where possible. Nothing is dropped."""
+
+    if len(text) <= size:
+        return [text or "(no reply)"]
+    parts: list[str] = []
+    rest = text
+    while len(rest) > size:
+        cut = rest.rfind("\n", 0, size)
+        if cut < size // 2:
+            cut = size
+        parts.append(rest[:cut])
+        rest = rest[cut:].lstrip("\n")
+    if rest:
+        parts.append(rest)
+    return parts
+
+
 class TelegramBot:
     def __init__(
         self,
@@ -124,7 +145,8 @@ class TelegramBot:
             actor=f"telegram:{user.id}",
             source="telegram_chat",
         )
-        await update.effective_message.reply_text(result.get("reply", "(no reply)")[:4000])
+        for part in split_message(result.get("reply", "(no reply)")):
+            await update.effective_message.reply_text(part)
 
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -138,7 +160,8 @@ class TelegramBot:
             actor=f"telegram:{user.id}",
             source="telegram_chat",
         )
-        await update.effective_message.reply_text(result.get("reply", "(no reply)")[:4000])
+        for part in split_message(result.get("reply", "(no reply)")):
+            await update.effective_message.reply_text(part)
 
     async def _on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         del context
@@ -254,11 +277,13 @@ class TelegramBot:
     async def _send(self, text: str, *, reply_markup: Any = None) -> None:
         if self.application is None:
             return
-        await self.application.bot.send_message(
-            chat_id=self.settings.telegram_allowed_user_id,
-            text=text[:4000],
-            reply_markup=reply_markup,
-        )
+        parts = split_message(text)
+        for i, part in enumerate(parts):
+            await self.application.bot.send_message(
+                chat_id=self.settings.telegram_allowed_user_id,
+                text=part,
+                reply_markup=reply_markup if i == len(parts) - 1 else None,
+            )
 
     async def _heartbeat_loop(self) -> None:
         interval = max(300, self.settings.telegram_heartbeat_seconds)
