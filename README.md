@@ -348,9 +348,12 @@ person or a tool is fenced as DATA and can never change the rules.
   tool schemas. The rules, tool list and current message come first; standing instructions, task plan,
   interrupted-run state, summary and retrieved messages take what is left, then recent history. The window is
   the ceiling for message length, summaries, pins, task steps, chats and history, and no space is held back for
-  the reply. Two limits keep an answer fast and make sure it ends: **`LLM_MAX_TOOL_ROUNDS`** (default 14, 0 =
-  none): three rounds before it the model is told to wrap up, and at the limit its next request has tools
-  switched off so it must write the answer; an empty reply is asked for once more the same way. **`LLM_TOOL_RESULT_CHARS`**
+  the reply. Two guards keep an answer fast and make sure it ends: **tool rounds are dynamic**: an answer
+  uses as many rounds as the request needs (`LLM_MAX_TOOL_ROUNDS`, default 0 = no fixed cap; a positive value is an
+  optional hard ceiling, with a wrap-up warning three rounds before it). The loop guard **`LLM_STALL_ROUNDS`**
+  (default 3, 0 = off) catches a model that only repeats tool calls it already made: it is warned after 2 such
+  rounds in a row and, after 3, its next request has tools switched off so it must write the answer. An empty
+  reply is asked for once more the same way. **`LLM_TOOL_RESULT_CHARS`**
   (default 16000, 0 = none): a longer tool result is cut in the middle, with a note, before it goes back to the model.
   Independent read-only tool calls in one model turn run in parallel; trade/control calls always run one at a time.
   A failed model call (timeout, reset connection, HTTP 429/5xx) is retried twice before anything has streamed to the app.

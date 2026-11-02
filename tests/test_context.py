@@ -88,9 +88,11 @@ def _tool_names(tools: list[dict[str, Any]]) -> set[str]:
 
 
 def _window(harness: Harness, tokens: int) -> None:
-    """Settings are frozen: give the chat service a copy with a smaller context window."""
+    """Settings are frozen: give the chat service a copy with a smaller context window.
 
-    harness.chat.settings = harness.settings.model_copy(update={"llm_context_tokens": tokens})
+    The loop guard is off here: these tests repeat one call on purpose to grow the context."""
+
+    harness.chat.settings = harness.settings.model_copy(update={"llm_context_tokens": tokens, "llm_stall_rounds": 0})
 
 
 def _install(harness: Harness, model: _Model) -> str:

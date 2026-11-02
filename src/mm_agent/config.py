@@ -118,9 +118,14 @@ class Settings(BaseSettings):
     # Context window of the configured model. Every request is assembled to fit (window - tool schemas);
     # at 90% full the older chat is folded into a summary until it is down to 50% (see chat.COMPACT_AT).
     llm_context_tokens: int = Field(default=300000, ge=2000, le=2_000_000)
-    # One answer may use this many model <-> tool rounds. Near the end the model is told to wrap up, and at the
-    # limit it is made to answer with what it has, so a job can never loop without ever replying. 0 = no limit.
-    llm_max_tool_rounds: int = Field(default=14, ge=0, le=500)
+    # Tool rounds are dynamic: an answer may use as many model <-> tool rounds as the request needs. 0 = no fixed
+    # cap (the default). A positive number is an optional hard ceiling: near it the model is told to wrap up and at
+    # it the model is made to answer with what it has.
+    llm_max_tool_rounds: int = Field(default=0, ge=0, le=500)
+    # Loop guard instead of a cap: if this many rounds in a row only repeat tool calls (same tool, same arguments)
+    # already made in this answer, no new information is coming, so the model is warned and then made to answer.
+    # 0 = off.
+    llm_stall_rounds: int = Field(default=3, ge=0, le=50)
     # A tool result longer than this many characters is cut in the middle before it goes back to the model
     # (the model is told it was cut). Keeps every round fast. 0 = no limit.
     llm_tool_result_chars: int = Field(default=16000, ge=0)

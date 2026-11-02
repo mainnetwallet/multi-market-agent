@@ -54,7 +54,7 @@ async def _ask(harness: Harness, text: str = "which market is good?", **kw: Any)
 
 # ----------------------------------------------------------------- the loop always ends in an answer
 async def test_the_round_budget_ends_with_a_final_answer(harness: Harness) -> None:
-    _set(harness, llm_max_tool_rounds=4)
+    _set(harness, llm_max_tool_rounds=4, llm_stall_rounds=0)
 
     def plan(n: int, _m: list[dict[str, Any]], tool_choice: str) -> LLMReply:
         if tool_choice == "none":
@@ -71,8 +71,69 @@ async def test_the_round_budget_ends_with_a_final_answer(harness: Harness) -> No
     assert "FINAL ANSWER REQUIRED" in model.requests[4]["messages"][0]["content"]
 
 
+async def test_tool_rounds_are_dynamic_when_every_call_is_new(harness: Harness) -> None:
+    """No fixed cap: a job that keeps asking for new information runs as many rounds as it needs."""
+
+    assert harness.chat.settings.llm_max_tool_rounds == 0
+    needed = 30  # well above the old fixed limit of 14
+
+    def plan(n: int, _m: list[dict[str, Any]], tool_choice: str) -> LLMReply:
+        if n > needed:
+            return LLMReply(content="Done after many rounds.")
+        call = {"id": f"c{n}", "name": "get_status", "arguments": json.dumps({"i": n})}
+        return LLMReply(content="", tool_calls=(call,))
+
+    model = _Script(plan)
+    harness.chat.llm = model  # type: ignore[assignment]
+    result = await _ask(harness)
+    assert result["reply"] == "Done after many rounds."
+    assert len(model.requests) == needed + 1
+    assert all(r["tool_choice"] == "auto" for r in model.requests)
+
+
+async def test_a_loop_of_repeated_calls_is_warned_then_forced_to_answer(harness: Harness) -> None:
+    _set(harness, llm_stall_rounds=3)
+
+    def plan(n: int, _m: list[dict[str, Any]], tool_choice: str) -> LLMReply:
+        if tool_choice == "none":
+            return LLMReply(content="Best guess from what I have.")
+        return LLMReply(content="", tool_calls=(_call(ident=f"c{n}"),))  # same call every round
+
+    model = _Script(plan)
+    harness.chat.llm = model  # type: ignore[assignment]
+    result = await _ask(harness)
+    assert result["reply"] == "Best guess from what I have."
+    # round 1 is new; rounds 2, 3, 4 repeat it, so the 5th request is the forced answer
+    assert [r["tool_choice"] for r in model.requests] == ["auto"] * 4 + ["none"]
+    assert "LOOP WARNING" in model.requests[3]["messages"][0]["content"]
+    assert "FINAL ANSWER REQUIRED" in model.requests[4]["messages"][0]["content"]
+
+
+async def test_a_new_call_after_a_repeat_clears_the_loop_warning(harness: Harness) -> None:
+    _set(harness, llm_stall_rounds=3)
+    script = [
+        {"id": "a", "name": "get_status", "arguments": "{}"},
+        {"id": "b", "name": "get_status", "arguments": "{}"},  # repeat: stalled = 1
+        {"id": "c", "name": "get_status", "arguments": "{}"},  # repeat: stalled = 2 -> warned
+        {"id": "d", "name": "get_status", "arguments": json.dumps({"new": 1})},  # new: warning cleared
+    ]
+
+    def plan(n: int, _m: list[dict[str, Any]], tool_choice: str) -> LLMReply:
+        if n > len(script):
+            return LLMReply(content="Finished.")
+        return LLMReply(content="", tool_calls=(script[n - 1],))
+
+    model = _Script(plan)
+    harness.chat.llm = model  # type: ignore[assignment]
+    result = await _ask(harness)
+    assert result["reply"] == "Finished."
+    assert "LOOP WARNING" in model.requests[3]["messages"][0]["content"]
+    assert "LOOP WARNING" not in model.requests[4]["messages"][0]["content"]
+    assert all(r["tool_choice"] == "auto" for r in model.requests)
+
+
 async def test_a_model_that_ignores_tool_choice_none_still_gets_an_answer(harness: Harness) -> None:
-    _set(harness, llm_max_tool_rounds=2)
+    _set(harness, llm_max_tool_rounds=2, llm_stall_rounds=0)
     model = _Script(lambda n, _m, _t: LLMReply(content="", tool_calls=(_call(ident=f"c{n}"),)))
     harness.chat.llm = model  # type: ignore[assignment]
     result = await _ask(harness)

@@ -73,6 +73,11 @@ WRAP_UP_TEXT = (
     "ROUND BUDGET: this answer has used {used} of its {limit} tool rounds. Stop gathering data. Use what you "
     "already have and write the final answer now; if something is missing, say plainly what is missing."
 )
+STALL_TEXT = (
+    "LOOP WARNING: your last {n} rounds only repeated tool calls you already made, so they returned nothing new. "
+    "Do not repeat them. Either call a different tool or different arguments that add new information, or write "
+    "the final answer now from the data you already have."
+)
 FINAL_ANSWER_TEXT = (
     "FINAL ANSWER REQUIRED: tools are switched off for this turn. Write your complete answer to the operator now, "
     "in their language, from the data already in this conversation. Do not call tools and do not end with a "
@@ -1632,6 +1637,9 @@ class ChatService:
         max_rounds = int(getattr(self.settings, "llm_max_tool_rounds", 0) or 0)
         result_chars = int(getattr(self.settings, "llm_tool_result_chars", 0) or 0)
         rounds = 0  # model <-> tool rounds completed in this answer
+        stall_limit = int(getattr(self.settings, "llm_stall_rounds", 0) or 0)
+        seen_calls: set[tuple[str, str]] = set()  # (tool, arguments) already requested in this answer
+        stalled = 0  # consecutive rounds that only repeated earlier calls
         must_answer = False  # tools are switched off for the next request: it has to be the final answer
         wrap_up = ""  # appended to the system message when the round budget is nearly used or exhausted
         round_text = False  # the current model request streamed some text to the app
@@ -1734,9 +1742,16 @@ class ChatService:
                             logger.warning("compaction_checkpoint_failed", error=type(exc).__name__)
             # Round budget: a few rounds before the limit the model is told to wrap up; at the limit its next
             # request has tools switched off, so the answer always ends with a reply instead of another lookup.
-            force = must_answer or (bool(max_rounds) and rounds >= max_rounds)
+            force = (
+                must_answer
+                or (bool(max_rounds) and rounds >= max_rounds)
+                or (bool(stall_limit) and stalled >= stall_limit)
+            )
             if force:
                 wrap_up = "\n\n" + FINAL_ANSWER_TEXT
+                messages[0]["content"] = system_text()
+            elif stall_limit and stalled >= max(1, stall_limit - 1) and "LOOP WARNING" not in wrap_up:
+                wrap_up = "\n\n" + STALL_TEXT.format(n=stalled)
                 messages[0]["content"] = system_text()
             elif max_rounds and rounds >= max(1, max_rounds - 3) and not wrap_up:
                 wrap_up = "\n\n" + WRAP_UP_TEXT.format(used=rounds, limit=max_rounds)
@@ -1787,6 +1802,11 @@ class ChatService:
                     body = clip_chars(json.dumps(redact(result), default=str), result_chars)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": "DATA: " + body})
                 rounds += 1
+                signatures = {(str(c["name"]), str(c["arguments"])) for c in reply.tool_calls}
+                stalled = stalled + 1 if signatures <= seen_calls else 0  # nothing new asked this round
+                seen_calls |= signatures
+                if stalled == 0 and wrap_up.lstrip().startswith("LOOP WARNING"):
+                    wrap_up = ""  # the model moved on to something new: drop the warning
                 need_break = round_text  # text said before the tools: the next text starts a new paragraph
                 # The tools may have changed what is possible (pause, venue switch, a new position):
                 # the next request must describe the world as it now is.
