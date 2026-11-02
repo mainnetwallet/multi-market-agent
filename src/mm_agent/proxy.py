@@ -1,8 +1,9 @@
 """Outbound proxy for Polymarket traffic only, with ordered fallback.
 
-Every request to a ``*.polymarket.com`` host (REST, the official SDK and WebSockets) goes through the first
-working proxy of the list. If a proxy cannot be reached, the next one is tried. Everything else (Kalshi,
-Limitless, the LLM, Coinbase, the Polygon RPC, ...) is sent directly and never touches a proxy.
+Every request to a ``*.polymarket.com`` host (REST, the official SDK and WebSockets) is tried in this order:
+the server's own IP first (direct, as before), then the proxies of the list. When the direct connection fails or is
+blocked, the next proxy is tried, and so on. Everything else (Kalshi, Limitless, the LLM, Coinbase, the Polygon
+RPC, ...) is sent directly and never touches a proxy.
 
 Configuration (all optional):
 
@@ -11,11 +12,14 @@ Configuration (all optional):
   where a private proxy goes.
 * ``POLYMARKET_PROXY_ENABLED``: ``false`` turns the whole thing off (direct connections).
 * ``POLYMARKET_PROXY_COOLDOWN_SECONDS``: how long a failed proxy is tried last (default 60).
-* ``POLYMARKET_PROXY_DIRECT_FALLBACK``: ``true`` lets a request go direct when every proxy failed (default off:
-  a direct call from a blocked region would just fail, and would show the server's real IP).
+* ``POLYMARKET_PROXY_DIRECT_FIRST``: ``true`` (default) tries the direct connection before the proxies; ``false``
+  puts the proxies first.
+* ``POLYMARKET_PROXY_DIRECT_FALLBACK``: only used when direct-first is off: ``true`` goes direct when every proxy
+  failed.
 
-Only failures that happen BEFORE the request reaches Polymarket (cannot connect, proxy refused the tunnel) move
-on to the next proxy for any method, so an order is never sent twice. A read timeout moves on only for GET/HEAD.
+Only failures that happen BEFORE the request is accepted (cannot connect, proxy refused the tunnel, an HTTP 403/451
+block page) move on to the next route for any method, so an order is never sent twice. A read timeout moves on only
+for GET/HEAD. A route that failed is tried last for the cooldown, so a blocked server IP does not slow every call.
 """
 
 from __future__ import annotations
@@ -52,6 +56,9 @@ _IDEMPOTENT_ERRORS: tuple[type[BaseException], ...] = (
 )
 _IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
+DIRECT = "direct"  # the server's own IP; sits in the route list like a proxy URL
+BLOCKED_STATUSES = frozenset({403, 451})  # geo-block / edge refusal: the request was not processed
+
 
 def parse_proxy_list(raw: str) -> list[str]:
     """Split a comma/space/newline list, add ``http://`` to bare ``host:port`` entries and drop duplicates."""
@@ -71,6 +78,8 @@ def parse_proxy_list(raw: str) -> list[str]:
 def redact(url: str) -> str:
     """``scheme://host:port`` without credentials, safe for logs."""
 
+    if url == DIRECT:
+        return DIRECT
     parts = urlsplit(url)
     host = parts.hostname or "?"
     return f"{parts.scheme}://{host}" + (f":{parts.port}" if parts.port else "")
@@ -82,7 +91,8 @@ def is_proxied_host(host: str | None) -> bool:
 
 
 class ProxyPool:
-    """Ordered proxy list. A failed proxy is moved to the back for ``cooldown`` seconds, never dropped."""
+    """Ordered route list (direct and/or proxies). A failed route is moved to the back for ``cooldown`` seconds,
+    never dropped."""
 
     def __init__(
         self,
@@ -90,25 +100,37 @@ class ProxyPool:
         *,
         cooldown: float = 60.0,
         direct_fallback: bool = False,
+        direct_first: bool = False,
         enabled: bool = True,
     ) -> None:
         self.urls = list(urls)
         self.cooldown = cooldown
         self.direct_fallback = direct_fallback
+        self.direct_first = direct_first
         self.enabled = enabled and bool(self.urls)
         self._failed_at: dict[str, float] = {}
 
+    def routes(self) -> list[str]:
+        """Every route in configured priority order: ``DIRECT`` first, last or absent, then the proxies."""
+
+        if self.direct_first:
+            return [DIRECT, *self.urls]
+        if self.direct_fallback:
+            return [*self.urls, DIRECT]
+        return list(self.urls)
+
     def candidates(self) -> list[str]:
-        """Proxies in priority order; the ones that failed recently come last."""
+        """Routes in priority order; the ones that failed recently come last."""
 
         now = time.monotonic()
-        fresh = [u for u in self.urls if now - self._failed_at.get(u, -1e9) >= self.cooldown]
-        cooling = [u for u in self.urls if u not in fresh]
+        routes = self.routes()
+        fresh = [u for u in routes if now - self._failed_at.get(u, -1e9) >= self.cooldown]
+        cooling = [u for u in routes if u not in fresh]
         return fresh + cooling
 
     def mark_failed(self, url: str) -> None:
         self._failed_at[url] = time.monotonic()
-        log.warning("proxy_failed", proxy=redact(url))
+        log.warning("proxy_failed", proxy=redact(url))  # "direct" when the server IP itself failed
 
     def mark_ok(self, url: str) -> None:
         self._failed_at.pop(url, None)
@@ -124,6 +146,8 @@ class PolymarketProxyTransport(httpx.AsyncBaseTransport):
         self._proxied: dict[str, httpx.AsyncHTTPTransport] = {}
 
     def _transport_for(self, proxy_url: str) -> httpx.AsyncHTTPTransport:
+        if proxy_url == DIRECT:
+            return self._direct
         transport = self._proxied.get(proxy_url)
         if transport is None:
             transport = httpx.AsyncHTTPTransport(proxy=httpx.Proxy(proxy_url), limits=self._limits)
@@ -135,17 +159,27 @@ class PolymarketProxyTransport(httpx.AsyncBaseTransport):
             return await self._direct.handle_async_request(request)
         retry_on = _IDEMPOTENT_ERRORS if request.method.upper() in _IDEMPOTENT_METHODS else _CONNECT_ERRORS
         last: BaseException | None = None
-        for proxy_url in self._pool.candidates():
+        blocked: httpx.Response | None = None
+        for route in self._pool.candidates():
             try:
-                response = await self._transport_for(proxy_url).handle_async_request(request)
+                response = await self._transport_for(route).handle_async_request(request)
             except retry_on as exc:
-                self._pool.mark_failed(proxy_url)
+                self._pool.mark_failed(route)
                 last = exc
                 continue
-            self._pool.mark_ok(proxy_url)
+            if response.status_code in BLOCKED_STATUSES:
+                # refused at the edge (geo-block): nothing was processed, so the next route is safe for any method
+                self._pool.mark_failed(route)
+                if blocked is not None:
+                    await blocked.aclose()
+                blocked = response
+                continue
+            self._pool.mark_ok(route)
+            if blocked is not None:
+                await blocked.aclose()
             return response
-        if self._pool.direct_fallback:
-            return await self._direct.handle_async_request(request)
+        if blocked is not None:
+            return blocked  # every route was refused: give the caller the real 403/451 instead of a made-up error
         assert last is not None
         raise last
 
@@ -170,9 +204,10 @@ def get_pool() -> ProxyPool:
             urls,
             cooldown=s.polymarket_proxy_cooldown_seconds,
             direct_fallback=s.polymarket_proxy_direct_fallback,
+            direct_first=s.polymarket_proxy_direct_first,
             enabled=s.polymarket_proxy_enabled,
         )
-        log.info("proxy_pool", enabled=_pool.enabled, proxies=[redact(u) for u in _pool.urls])
+        log.info("proxy_pool", enabled=_pool.enabled, routes=[redact(u) for u in _pool.routes()])
     return _pool
 
 
@@ -208,20 +243,17 @@ class _FallbackConnect:
             self._conn = connect(self._url, proxy=None, **self._kwargs)
             return await self._conn.__aenter__()
         last: BaseException | None = None
-        for proxy_url in pool.candidates():
-            conn = connect(self._url, proxy=proxy_url, **self._kwargs)
+        for route in pool.candidates():
+            conn = connect(self._url, proxy=None if route == DIRECT else route, **self._kwargs)
             try:
                 ws = await conn.__aenter__()
             except (OSError, TimeoutError, InvalidProxy, InvalidHandshake) as exc:
-                pool.mark_failed(proxy_url)
+                pool.mark_failed(route)
                 last = exc
                 continue
-            pool.mark_ok(proxy_url)
+            pool.mark_ok(route)
             self._conn = conn
             return ws
-        if pool.direct_fallback:
-            self._conn = connect(self._url, proxy=None, **self._kwargs)
-            return await self._conn.__aenter__()
         assert last is not None
         raise last
 
