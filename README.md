@@ -777,8 +777,9 @@ proxy list, in order. Every other host (Kalshi, Limitless, the LLM, Coinbase, th
 A failed route is moved to the back for `POLYMARKET_PROXY_COOLDOWN_SECONDS`.
 
 * Default: 3 built-in public proxies (`src/mm_agent/proxy.py`). They are free and unreliable.
-* Private proxy: set `POLYMARKET_PROXY_URLS=http://user:pass@host:port` (comma separated for more). On Render this is
-  an environment variable in the dashboard (it is `sync: false` in `render.yaml`). It replaces the public list.
+* No env var is needed: the server IP and the 3 public proxies are built into the code.
+* Private proxy (optional): add only `POLYMARKET_PROXY_URLS=http://user:pass@host:port` (comma separated for more), on Render in
+  the dashboard Environment tab. It replaces the public list; the server IP is still tried first, then your proxy.
 * `POLYMARKET_PROXY_ENABLED=false` turns it off. `POLYMARKET_PROXY_DIRECT_FIRST=false` puts the proxies first (then `POLYMARKET_PROXY_DIRECT_FALLBACK=true` allows a last direct try).
 * A request that may already have reached Polymarket (a POST that timed out while reading) is never sent again.
 * HTTP/HTTPS proxies are supported; SOCKS needs extra packages.

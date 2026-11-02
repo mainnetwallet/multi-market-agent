@@ -21,10 +21,6 @@ services:
         value: Asia/Dhaka
       - key: DATABASE_URL
         value: sqlite:////app/data/mm_agent.db
-      # Polymarket-only outbound proxy. Empty = built-in public proxies; put the private proxy here later
-      # (http://user:pass@host:port, comma separated for fallbacks). Replaces the public ones.
-      - key: POLYMARKET_PROXY_URLS
-        sync: false
       - key: ENABLED_VENUES
         value: polymarket,kalshi,limitless
       - key: ACTIVE_VENUE
