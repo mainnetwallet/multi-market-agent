@@ -259,7 +259,7 @@ class AgentService:
             return {"ok": False, "reasons": ["PENDING_PROPOSAL"]}
         if any(
             o["market_id"] == market.native_id
-            for o in self.store.list_orders(venue=market.venue, states={"UNKNOWN", "SUBMITTING"}, limit=200)
+            for o in self.store.list_orders(venue=market.venue, states={"UNKNOWN", "SUBMITTING"}, limit=None)
         ):
             return {"ok": False, "reasons": ["UNKNOWN_ORDER_BLOCKS_MARKET"]}
         books = await self.books_for(market, force=False)
@@ -452,7 +452,7 @@ class AgentService:
             return {"ok": False, "error": "agent is paused; no new entries"}
         unknown = [
             order
-            for order in self.store.list_orders(venue=proposal.venue, states={"UNKNOWN", "SUBMITTING"}, limit=200)
+            for order in self.store.list_orders(venue=proposal.venue, states={"UNKNOWN", "SUBMITTING"}, limit=None)
             if order["market_id"] == proposal.market_id
         ]
         if unknown:
@@ -797,7 +797,7 @@ class AgentService:
         active = self.registry.active
         created = 0
         results: list[dict[str, Any]] = []
-        markets = self.store.list_markets(venue=active, status=MarketStatus.OPEN, limit=20)
+        markets = self.store.list_markets(venue=active, status=MarketStatus.OPEN, limit=self.settings.markets_per_scan)
         for market in markets:
             if created >= self.settings.proposals_per_cycle:
                 break

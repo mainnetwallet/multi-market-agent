@@ -201,7 +201,7 @@ class WebSearchClient:
     def enabled(self) -> bool:
         return bool(self.api_key)
 
-    async def search(self, query: str, max_results: int = 5) -> list[dict[str, str]]:
+    async def search(self, query: str, max_results: int = 10) -> list[dict[str, str]]:
         if not self.enabled:
             return []
         async with httpx.AsyncClient(timeout=25) as client:
@@ -228,7 +228,7 @@ class WebSearchClient:
                 {
                     "title": str(row.get("title") or ""),
                     "url": url,
-                    "content": str(row.get("content") or "")[:1500],
+                    "content": str(row.get("content") or ""),
                 }
             )
         return out
