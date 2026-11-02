@@ -277,6 +277,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         if (!token.isNullOrBlank()) {
             loadChats()
             refreshChats()
+            resumeChat()
             // The report and audit log Settings shows are fetched now too, not when Settings is tapped.
             loadReport()
             loadAudit()
@@ -778,6 +779,13 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 // connection abort"), and right after coming back the network may not resolve names
                 // yet. The server keeps the chat, so ask it what happened instead of showing the raw error.
                 val id = serverId
+                if (e is ApiClient.ApiException && e.status == 409 && id != null) {
+                    // The server is still answering an earlier message of this chat (the app was closed
+                    // meanwhile). Nothing was sent: show that answer when it lands instead of an error.
+                    _messages.tryEmit("The previous answer is still running, so this message was not sent.")
+                    watchRunningChat(id)
+                    return@launch
+                }
                 if (e is IOException && id != null && recoverDroppedReply(id, message)) return@launch
                 val text = if (e is IOException) {
                     "The connection was lost (the app was in the background or the network dropped). " +
@@ -840,6 +848,94 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         return false
     }
 
+    /**
+     * Pick the open chat up again after the app was closed or came back to the screen. If the server is
+     * still answering it, show the chat as stored with the answer "typing" and wait for the finished reply
+     * (Stop works as usual); otherwise just refresh it from the server. A no-op while this app is already
+     * streaming or watching an answer itself.
+     */
+    fun resumeChat() {
+        val s = _chat.value
+        val id = s.activeId ?: return
+        val chat = s.conversations.firstOrNull { it.id == id } ?: return
+        if (!chat.synced || s.busy || chatJob?.isActive == true) return
+        chatJob = viewModelScope.launch {
+            try {
+                val open = api.get("/v1/conversations/$id")
+                val status = open.optJSONObject("conversation")?.optString("status").orEmpty()
+                val stored = ApiClient.arrayOf(open, "messages").objects().map { messageFromServer(it) }
+                if (_chat.value.activeId != id || _chat.value.busy) return@launch
+                if (status == "running") {
+                    watchRunningChat(id)
+                } else {
+                    _chat.update { st ->
+                        if (st.activeId == id) st.copy(messages = stored, hasEarlier = open.optBoolean("has_more")) else st
+                    }
+                    saveActiveChat()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Offline or the chat is gone: the cached copy stays; openChat handles a deleted chat.
+            }
+        }
+    }
+
+    /**
+     * The server is answering this chat but this app holds no stream for it. Show the stored messages with
+     * a streaming placeholder, poll until the server is done (up to about 11 minutes), then show the final
+     * chat. Runs inside [chatJob], so Stop cancels it like any other answer.
+     */
+    private suspend fun watchRunningChat(serverId: String) {
+        _chat.update { s ->
+            if (s.activeId == serverId) s.copy(busy = true, messages = s.messages.filterNot { it.streaming } + ChatMessage("agent", "", streaming = true)) else s
+        }
+        var wait = 1500L
+        var unreachable = 0
+        val deadline = System.currentTimeMillis() + 11 * 60_000L
+        try {
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    val open = api.get("/v1/conversations/$serverId")
+                    unreachable = 0
+                    val status = open.optJSONObject("conversation")?.optString("status").orEmpty()
+                    val stored = ApiClient.arrayOf(open, "messages").objects().map { messageFromServer(it) }
+                    val more = open.optBoolean("has_more")
+                    if (status != "running") {
+                        val answered = stored.lastOrNull()?.role.let { it != null && it != "user" }
+                        _chat.update { s -> if (s.activeId == serverId) s.copy(messages = stored, hasEarlier = more) else s }
+                        finishTurn(
+                            null,
+                            if (answered) null else "This answer was interrupted. Check Orders and Positions, then send \"continue\" to resume.",
+                            isError = false,
+                        )
+                        return
+                    }
+                    _chat.update { s ->
+                        if (s.activeId == serverId) s.copy(messages = stored + ChatMessage("agent", "", streaming = true), hasEarlier = more) else s
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: ApiClient.ApiException) {
+                    finishTurn(null, e.message ?: "Could not read this chat.", isError = true)
+                    return
+                } catch (e: Exception) {
+                    unreachable += 1
+                    if (unreachable >= 15) {
+                        finishTurn(null, "Could not reach the server. Open this chat again to see the answer.", isError = true)
+                        return
+                    }
+                }
+                delay(wait)
+                wait = minOf(wait * 2, 4000L)
+            }
+            finishTurn(null, "The answer is taking very long. Open this chat again later to see it.", isError = false)
+        } catch (e: CancellationException) {
+            finishTurn(null, "Stopped.", isError = false)
+            throw e
+        }
+    }
+
     /** The open chat's server id; a new or device-only chat is created on the server first and takes its id. */
     private suspend fun ensureServerChat(): String {
         val id = _chat.value.activeId ?: throw IllegalStateException("No chat is open.")
@@ -854,6 +950,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 conversations = s.conversations.map { if (it.id == id) it.copy(id = serverId, synced = true) else it },
             )
         }
+        persistChats() // a restart mid-answer must find this chat under its server id
         return serverId
     }
 
@@ -918,13 +1015,18 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     fun newChat() {
         if (_chat.value.busy) return
         _chat.update { it.copy(activeId = null, messages = emptyList(), hasEarlier = false) }
+        persistChats()
     }
 
     fun openChat(id: String) {
         if (_chat.value.busy) return
         val chat = _chat.value.conversations.firstOrNull { it.id == id } ?: return
         _chat.update { s -> s.copy(activeId = chat.id, messages = chat.messages, hasEarlier = false) }
-        if (chat.synced) loadChatMessages(chat)
+        persistChats()
+        if (chat.synced) {
+            loadChatMessages(chat)
+            resumeChat()
+        }
     }
 
     /** Show the stored messages of a server chat; what was cached stays on screen until they arrive. */
@@ -1115,7 +1217,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                     .put("synced", chat.synced).put("messages", messages),
             )
         }
-        prefs.edit().putString(KEY_CHATS, chats.toString()).apply()
+        prefs.edit().putString(KEY_CHATS, chats.toString()).putString(KEY_ACTIVE_CHAT, _chat.value.activeId).apply()
     }
 
     private fun loadChats() {
@@ -1136,7 +1238,15 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
             emptyList()
         }
         if (chats.isNotEmpty()) {
-            _chat.value = ChatUiState(conversations = chats.sortedByDescending { it.updatedAt })
+            val sorted = chats.sortedByDescending { it.updatedAt }
+            // Reopen the chat that was on screen when the app was closed, so an answer still running
+            // on the server can be picked up again (see resumeChat).
+            val active = prefs.getString(KEY_ACTIVE_CHAT, null)?.takeIf { id -> sorted.any { it.id == id } }
+            _chat.value = ChatUiState(
+                conversations = sorted,
+                activeId = active,
+                messages = sorted.firstOrNull { it.id == active }?.messages ?: emptyList(),
+            )
         }
     }
 
@@ -1333,6 +1443,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         const val KEY_TOKEN = "session_token"
         const val KEY_USERNAME = "username"
         private const val KEY_CHATS = "chat_history"
+        private const val KEY_ACTIVE_CHAT = "active_chat_id"
         private const val CACHED_CHATS = 20
         const val DEFAULT_USERNAME = "operator"
         private const val RENEW_EVERY_MS = 6L * 60 * 60 * 1000

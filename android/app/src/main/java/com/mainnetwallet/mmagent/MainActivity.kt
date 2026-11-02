@@ -156,6 +156,14 @@ class MainActivity : FragmentActivity() {
             }
         }
 
+        // Coming back to the app (or opening it): pick up a chat answer the server is still working on,
+        // or has finished while the app was closed.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                if (appViewModel.state.value.loggedIn) appViewModel.resumeChat()
+            }
+        }
+
         // 5 s background refresh, only while the app is on screen. Silent: it never
         // flips the loading flag, and a failed tick keeps the last good data.
         lifecycleScope.launch {
