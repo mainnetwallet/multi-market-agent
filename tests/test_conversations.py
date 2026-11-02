@@ -624,7 +624,8 @@ def test_api_conversation_lifecycle(harness: Harness) -> None:
     assert client.post(f"/v1/conversations/{cid}/rename", json={"title": "  "}).status_code == 422
 
     assert [c["id"] for c in client.get("/v1/conversations", params={"q": "daily"}).json()["conversations"]] == [cid]
-    assert [c["id"] for c in client.get("/v1/conversations", params={"q": "configured"}).json()["conversations"]] == [cid]
+    found = client.get("/v1/conversations", params={"q": "configured"}).json()["conversations"]
+    assert [c["id"] for c in found] == [cid]
     assert client.get("/v1/conversations", params={"q": "zzz"}).json()["conversations"] == []
 
     assert client.delete(f"/v1/conversations/{cid}").json() == {"deleted": True}

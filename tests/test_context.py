@@ -807,7 +807,7 @@ async def test_checkpoints_do_not_cross_chats_and_slash_commands_leave_them_alon
     )
     before = _checkpoint(harness, a)
 
-    await harness.chat.handle("/status", actor=OWNER, conversation_id=a)  # not a model answer: no checkpoint change
+    await harness.chat.handle("/status", actor=OWNER, source="telegram_chat", conversation_id=a)  # not a model answer
     assert _checkpoint(harness, a) == before
 
     await harness.chat.handle("buy 1 yes", actor=OWNER, conversation_id=b)  # chat B knows nothing of A's trade
