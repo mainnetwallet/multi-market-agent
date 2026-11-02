@@ -276,6 +276,25 @@ def test_migrations_build_the_same_schema_as_the_models(tmp_path: Path) -> None:
     store.close()
 
 
+def test_the_title_migration_downgrades_even_when_a_title_is_long(tmp_path: Path) -> None:
+    url = f"sqlite:///{tmp_path / 'roundtrip.db'}"
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "alembic"))
+    config.set_main_option("sqlalchemy.url", url)
+    command.upgrade(config, "head")
+    store = Store(url)
+    cid = store.chat_create(OWNER, "t" * 500)["id"]
+    assert len(store.chat_get(OWNER, cid)["title"]) == 500  # no cap on the title any more
+    store.close()
+    command.downgrade(config, "-1")  # the old column holds 120: longer titles are cut, not refused
+    engine = create_engine(url)
+    with engine.connect() as connection:
+        title = connection.execute(select(ConversationRow.title).where(ConversationRow.id == cid)).scalar_one()
+    engine.dispose()
+    assert title == "t" * 120
+    command.upgrade(config, "head")  # and it goes forward again
+
+
 # ------------------------------------------------------------------ chat service
 class _ModelDouble:
     """Stands in for the LLM and remembers exactly what it was sent."""

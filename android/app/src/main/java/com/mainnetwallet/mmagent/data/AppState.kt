@@ -863,7 +863,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
     }
 
     fun renameChat(id: String, title: String) {
-        val clean = title.trim().take(60)
+        val clean = title.trim()
         if (clean.isEmpty()) return
         val synced = _chat.value.conversations.firstOrNull { it.id == id }?.synced == true
         _chat.update { s -> s.copy(conversations = s.conversations.map { if (it.id == id) it.copy(title = clean) else it }) }

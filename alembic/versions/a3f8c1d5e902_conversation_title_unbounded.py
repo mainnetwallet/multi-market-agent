@@ -24,5 +24,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Titles may now be longer than the old column allows; Postgres refuses to narrow the type otherwise.
+    op.execute(sa.text("UPDATE conversations SET title = SUBSTR(title, 1, 120) WHERE LENGTH(title) > 120"))
     with op.batch_alter_table("conversations") as batch:
         batch.alter_column("title", existing_type=sa.Text(), type_=sa.String(length=120), existing_nullable=False)
