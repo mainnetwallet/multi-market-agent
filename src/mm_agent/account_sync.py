@@ -26,6 +26,8 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
+from mm_agent.util.aio import wait_for
+
 from .config import Settings
 from .domain import VenueId, utcnow
 from .events import EventBus
@@ -139,7 +141,7 @@ class AccountSync:
                 wait = min(MAX_BACKOFF_SECONDS, wait * (2 ** min(failures, 5)))
             wait = max(MIN_GAP_SECONDS, wait - (time.monotonic() - started))
             try:
-                await asyncio.wait_for(wake.wait(), timeout=wait)
+                await wait_for(wake.wait(), timeout=wait)
             except TimeoutError:
                 continue
             # Woken by an event, not by the clock. Debounce: a burst of stream events is one read.
@@ -196,7 +198,7 @@ class AccountSync:
 
     async def _sleep(self, seconds: float) -> None:
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._stop.wait(), timeout=seconds)
+            await wait_for(self._stop.wait(), timeout=seconds)
 
     # ------------------------------------------------------------------ sync
     def _protected(self, venue: VenueId) -> frozenset[tuple[str, str]]:
@@ -218,7 +220,7 @@ class AccountSync:
         lock = self._locks.setdefault(venue, asyncio.Lock())
         async with lock:
             adapter = self.registry.get(venue)
-            positions, orders, positions_complete, orders_complete = await asyncio.wait_for(
+            positions, orders, positions_complete, orders_complete = await wait_for(
                 adapter.get_account_snapshot(), timeout=READ_TIMEOUT_SECONDS
             )
             result = self.store.sync_positions(
@@ -318,7 +320,7 @@ class AccountSync:
         """The balance when it differs from the last read, else ``None`` (and a failed read is not an update)."""
 
         try:
-            balance = await asyncio.wait_for(self.registry.get(venue).get_balance(), timeout=READ_TIMEOUT_SECONDS)
+            balance = await wait_for(self.registry.get(venue).get_balance(), timeout=READ_TIMEOUT_SECONDS)
         except Exception:
             return None
         available = str(balance.available_usd)

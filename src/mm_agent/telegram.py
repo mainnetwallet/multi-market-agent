@@ -18,6 +18,8 @@ from telegram.ext import (
     filters,
 )
 
+from mm_agent.util.aio import wait_for
+
 from .agent import AgentService
 from .chat import ChatService
 from .config import Settings
@@ -296,7 +298,7 @@ class TelegramBot:
         interval = max(300, self.settings.telegram_heartbeat_seconds)
         while not self._stop.is_set():
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=interval)
+                await wait_for(self._stop.wait(), timeout=interval)
             except TimeoutError:
                 status = self.agent.status()
                 await self._send(
@@ -308,7 +310,7 @@ class TelegramBot:
     async def _lease_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=120)
+                await wait_for(self._stop.wait(), timeout=120)
             except TimeoutError:
                 if not self.store.try_poller_lease("telegram", self._owner, ttl_seconds=240):
                     logger.error("telegram_lease_lost")

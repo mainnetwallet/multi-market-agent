@@ -9,6 +9,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from mm_agent.util.aio import wait_for
+
 from .domain import (
     BookSnapshot,
     Market,
@@ -164,7 +166,7 @@ class BookFeed:
                 self.errors += 1
                 self.last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self.settings.book_feed_interval_seconds)
+                await wait_for(self._stop.wait(), timeout=self.settings.book_feed_interval_seconds)
             except TimeoutError:
                 continue
 
@@ -184,7 +186,7 @@ class BookFeed:
             return 0
 
         async def fetch(ref: MarketRef) -> BookSnapshot:
-            return await asyncio.wait_for(adapter.get_book(ref), timeout=12)
+            return await wait_for(adapter.get_book(ref), timeout=12)
 
         results = await asyncio.gather(*(fetch(ref) for ref in refs), return_exceptions=True)
         count = 0

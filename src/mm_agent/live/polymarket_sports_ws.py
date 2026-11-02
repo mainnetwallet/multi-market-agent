@@ -22,6 +22,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
+from mm_agent.util.aio import wait_for
+
 from ..util import get_logger
 from .common import FeedStats, backoff_delay
 
@@ -173,7 +175,7 @@ class PolymarketSportsFeed:
                     attempt = 0
                     while True:
                         try:
-                            raw = await asyncio.wait_for(ws.recv(), timeout=self._silence)
+                            raw = await wait_for(ws.recv(), timeout=self._silence)
                         except TimeoutError as exc:
                             raise ConnectionError("sports feed went silent") from exc
                         self.stats.message()

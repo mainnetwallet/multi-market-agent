@@ -19,6 +19,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
+from mm_agent.util.aio import wait_for
+
 from ..crypto_feed import SpotFeed
 from ..util import get_logger
 from .common import FeedStats, backoff_delay
@@ -92,7 +94,7 @@ class PolyBoltFeed:
                         self._on_state(self.name, True)
                     attempt = 0
                     while True:
-                        raw = await asyncio.wait_for(ws.recv(), timeout=self._silence)
+                        raw = await wait_for(ws.recv(), timeout=self._silence)
                         self.stats.message()
                         self.handle(raw)
             except asyncio.CancelledError:

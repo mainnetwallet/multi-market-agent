@@ -25,6 +25,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
+from mm_agent.util.aio import wait_for
+
 from ..util import get_logger
 from .books import to_dec
 from .common import FeedStats, Quote, backoff_delay
@@ -153,7 +155,7 @@ class LimitlessMarketFeed:
             attempt += 1
 
     async def _session(self, ws: Any) -> None:
-        opened = _text(await asyncio.wait_for(ws.recv(), timeout=OPEN_TIMEOUT))
+        opened = _text(await wait_for(ws.recv(), timeout=OPEN_TIMEOUT))
         if not opened.startswith("0"):
             raise LimitlessFeedError(f"unexpected first frame {opened[:40]!r}")
         info = _json(opened[1:])
@@ -165,7 +167,7 @@ class LimitlessMarketFeed:
         last_frame = self._clock()
         while True:
             try:
-                raw: str | bytes | None = await asyncio.wait_for(ws.recv(), timeout=CHECK_SECONDS)
+                raw: str | bytes | None = await wait_for(ws.recv(), timeout=CHECK_SECONDS)
             except TimeoutError:
                 raw = None
             now = self._clock()
