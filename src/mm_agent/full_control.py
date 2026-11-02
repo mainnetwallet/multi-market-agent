@@ -375,48 +375,70 @@ class FullControlService:
             raise FullControlError(f"market is {market.status.value}", code="market_not_open")
 
         adapter = self.registry.get(target)
-        book = await self.agent.books.get(
-            adapter,
-            MarketRef(venue=target, market_id=market_id, outcome=outcome),
-            force=True,
-        )
-        if order_type in (OrderType.FOK, OrderType.FAK):
-            if price is None:
-                # Market order: derive the worst price from the book plus a slippage bound.
+        is_market = order_type in (OrderType.FOK, OrderType.FAK)
+        try:
+            book = await self.agent.books.get(
+                adapter,
+                MarketRef(venue=target, market_id=market_id, outcome=outcome),
+                force=True,
+            )
+        except Exception:
+            if not is_market:
+                raise
+            # A Polymarket market order does not need the book: the venue matches it against its own
+            # resting orders. Other venues still need a quote below and say so if there is none.
+            book = None
+        best_ask = book.asks[0].price if book is not None and book.asks else None
+        best_bid = book.bids[0].price if book is not None and book.bids else None
+        # Only a venue whose market order takes a spend amount / share count with an optional worst price
+        # (Polymarket) can go without one. Kalshi and Limitless send ``price`` as a limit, so they keep a
+        # book-derived bound.
+        unbounded_ok = adapter.caps.market_unbounded
+        spend_sized = is_market and side is Side.BUY and amount_usd is not None and shares is None
+        bounded = True
+        if is_market and price is None:
+            if max_slippage_cents is None and unbounded_ok and (spend_sized or side is Side.SELL):
+                # No worst price and no ask needed. ``price`` is only a placeholder for sizing and records.
+                bounded = False
+                price = (best_ask or Decimal("0.99")) if side is Side.BUY else (best_bid or Decimal("0.01"))
+            else:
                 slip = max_slippage_cents if max_slippage_cents is not None else Decimal("2")
-                if side is Side.BUY:
-                    if not book.asks:
-                        raise FullControlError("no asks in the book; cannot price a market buy", code="no_book")
-                    worst = book.asks[0].price + slip / HUNDRED
-                else:
-                    if not book.bids:
-                        raise FullControlError("no bids in the book; cannot price a market sell", code="no_book")
-                    worst = book.bids[0].price - slip / HUNDRED
+                ref = best_ask if side is Side.BUY else best_bid
+                if ref is None:
+                    raise FullControlError(
+                        "no quote in the book to measure a market order from; try a limit order with a price",
+                        code="no_book",
+                    )
+                worst = ref + slip / HUNDRED if side is Side.BUY else ref - slip / HUNDRED
                 price = max(min(worst, ONE - Decimal("0.0001")), Decimal("0.0001"))
-        elif price is None:
+        elif price is None and not is_market:
             raise FullControlError("a limit order needs a price", code="missing_price", status=400)
+        assert price is not None
 
         if not (ZERO < price < ONE):
             raise FullControlError("price must be a probability in (0, 1)", code="bad_price", status=400)
-        is_market = order_type in (OrderType.FOK, OrderType.FAK)
         # Price the order is expected to fill at: the best ask for a market BUY (``price`` is only the
         # worst-case bound), otherwise the order's own price.
         ref_price = price
-        if is_market and side is Side.BUY and book.asks:
-            ref_price = min(book.asks[0].price, price)
-        if is_market and amount_usd is not None and shares is None and side is Side.BUY:
-            # "Spend $X": size from the expected fill, rounded up so the fill is not a hair under $X
-            # (a $1 buy that fills at $0.9999 is refused by the venue's $1 marketable minimum).
+        if is_market and side is Side.BUY and best_ask is not None:
+            ref_price = min(best_ask, price)
+        if spend_sized:
+            assert amount_usd is not None
+            if amount_usd <= 0:
+                raise FullControlError("amount_usd must be positive", code="bad_amount", status=400)
+            # "Spend $X": the dollars are exact; the share count is only an estimate, rounded up so a venue
+            # that sizes in shares does not end up a hair under $X.
             size = (amount_usd / ref_price).quantize(Decimal("0.0001"), rounding=ROUND_UP)
+            amount = amount_usd.quantize(Decimal("0.01"))
         else:
             size = self._size_from_amount(amount_usd, shares, price)
-        amount = (size * ref_price).quantize(Decimal("0.01"))
+            amount = (size * ref_price).quantize(Decimal("0.01"))
         if not reduce_only:
             self._check_risk(target, amount, market_id=market_id)
         # No client-side share minimum: when the operator names a size, that is the size sent. The venue
         # is the authority on its own limits and its refusal is shown as is. The one floor kept is the
         # $1 notional of a marketable BUY, which the venue also enforces.
-        marketable = is_market or (side is Side.BUY and bool(book.asks) and price >= book.asks[0].price)
+        marketable = is_market or (side is Side.BUY and best_ask is not None and price >= best_ask)
         if marketable and side is Side.BUY and amount < adapter.caps.min_notional_usd and not reduce_only:
             raise FullControlError(
                 f"{target.value} needs at least {adapter.caps.min_notional_usd} of notional",
@@ -438,6 +460,8 @@ class FullControlService:
             order_type=order_type,
             expires_at=expires_at,
             post_only=post_only,
+            amount_usd=amount if spend_sized else None,
+            bounded=bounded,
         )
         result, local_id = await self.execution.submit(request, market)
         self.store.audit(

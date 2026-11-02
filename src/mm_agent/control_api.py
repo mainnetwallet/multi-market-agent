@@ -151,7 +151,7 @@ class MarketOrderBody(BaseModel):
     side: Side = Side.BUY
     shares: Decimal | None = None
     amount_usd: Decimal | None = None
-    max_slippage_cents: Decimal = Decimal("2")
+    max_slippage_cents: Decimal | None = None
     client_id: str | None = Field(default=None, max_length=64)
 
 

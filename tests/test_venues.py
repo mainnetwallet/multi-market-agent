@@ -332,3 +332,83 @@ async def test_polymarket_price_history_uses_market_param_and_fidelity() -> None
     assert [p["close"] for p in points] == ["0.41", "0.43"]
     with pytest.raises(ValueError):
         await venue.get_price_history("30828", interval="5y")
+
+
+def _poly_market_raw() -> dict[str, object]:
+    return {
+        "id": "m1",
+        "conditionId": "0xc1",
+        "question": "Q?",
+        "outcomes": '["Yes", "No"]',
+        "outcomePrices": '["0.4", "0.6"]',
+        "clobTokenIds": '["tok-yes", "tok-no"]',
+        "active": True,
+        "closed": False,
+        "acceptingOrders": True,
+    }
+
+
+class _SdkAccepted:
+    ok = True
+    status = "matched"
+    order_id = "oid-1"
+    making_amount = "2.00"  # dollars paid on a BUY
+    taking_amount = "4.00"  # shares received
+
+
+class _SdkClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def place_market_order(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        return _SdkAccepted()
+
+
+async def _poly_buy(*, bounded: bool) -> tuple[_SdkClient, object]:
+    from pathlib import Path
+
+    from mm_agent.domain import OrderRequest, OrderType, Side
+
+    venue = PolymarketVenue(make_settings(Path(".")))
+    market = venue.parse_gamma_market(_poly_market_raw())
+    venue._remember(market)
+    sdk = _SdkClient()
+
+    async def fake_secure() -> object:
+        return sdk
+
+    async def fake_market(_ref: object) -> object:
+        return market
+
+    venue._secure = fake_secure  # type: ignore[method-assign]
+    venue.get_market = fake_market  # type: ignore[method-assign,assignment]
+    req = OrderRequest(
+        venue=venue.id,
+        market_id=market.native_id,
+        outcome=Outcome.YES,
+        side=Side.BUY,
+        price=Decimal("0.99"),
+        size=Decimal("2.0203"),
+        client_order_id="pol-test-0001",
+        order_type=OrderType.FAK,
+        amount_usd=Decimal("2.00"),
+        bounded=bounded,
+    )
+    return sdk, await venue.place_order(req)
+
+
+@pytest.mark.asyncio
+async def test_polymarket_market_buy_sends_dollar_amount_and_no_price_bound() -> None:
+    sdk, result = await _poly_buy(bounded=False)
+    call = sdk.calls[0]
+    assert call["side"] == "BUY" and str(call["amount"]) == "2.00" and "shares" not in call
+    assert "max_price" not in call
+    # the average fill is dollars / shares actually moved, not the placeholder price
+    assert result.average_price == Decimal("0.5")  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_polymarket_market_buy_passes_price_bound_only_when_asked() -> None:
+    sdk, _ = await _poly_buy(bounded=True)
+    assert str(sdk.calls[0]["max_price"]) == "0.99"

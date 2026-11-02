@@ -6,6 +6,7 @@ Everything runs against the FakeVenue, so no real money is ever involved.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -872,3 +873,63 @@ def test_market_buy_under_one_dollar_is_still_refused(harness: Harness) -> None:
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "below_min_notional"
+
+
+def _spy_place_order(adapter: Any, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    seen: list[Any] = []
+    original = type(adapter).place_order
+
+    async def spy(self: Any, req: Any) -> Any:
+        seen.append(req)
+        return await original(self, req)
+
+    monkeypatch.setattr(type(adapter), "place_order", spy)
+    return seen
+
+
+def test_market_buy_by_amount_needs_no_ask_on_a_venue_that_takes_spend(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Polymarket-style market order: spend $X, no ask and no worst price required."""
+
+    adapter = harness.registry.get(VenueId.FAKE)
+    monkeypatch.setattr(type(adapter), "caps", adapter.caps.model_copy(update={"market_unbounded": True}))
+    seen = _spy_place_order(adapter, monkeypatch)
+    client = make_client(harness)
+    response = client.post(
+        "/v1/orders/market",
+        json={"market_id": "fed-cut", "outcome": "YES", "side": "BUY", "amount_usd": "2"},
+        headers={"Idempotency-Key": "mkt-noask"},
+    )
+    assert response.status_code == 200, response.text
+    assert seen and seen[0].bounded is False and seen[0].amount_usd == Decimal("2.00")
+    assert Decimal(response.json()["amount_usd"]) == Decimal("2.00")
+
+
+def test_market_buy_with_slippage_cap_is_bounded(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = harness.registry.get(VenueId.FAKE)
+    monkeypatch.setattr(type(adapter), "caps", adapter.caps.model_copy(update={"market_unbounded": True}))
+    seen = _spy_place_order(adapter, monkeypatch)
+    client = make_client(harness)
+    response = client.post(
+        "/v1/orders/market",
+        json={"market_id": "fed-cut", "outcome": "YES", "side": "BUY", "amount_usd": "2", "max_slippage_cents": "3"},
+        headers={"Idempotency-Key": "mkt-cap"},
+    )
+    assert response.status_code == 200, response.text
+    assert seen and seen[0].bounded is True
+
+
+def test_market_buy_keeps_a_book_bound_on_venues_that_need_a_price(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = harness.registry.get(VenueId.FAKE)
+    seen = _spy_place_order(adapter, monkeypatch)
+    client = make_client(harness)
+    response = client.post(
+        "/v1/orders/market",
+        json={"market_id": "fed-cut", "outcome": "YES", "side": "BUY", "amount_usd": "2"},
+        headers={"Idempotency-Key": "mkt-bound"},
+    )
+    assert response.status_code == 200, response.text
+    assert seen and seen[0].bounded is True

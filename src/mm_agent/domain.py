@@ -260,6 +260,8 @@ class VenueCaps(BaseModel):
     # Minutes an expiry must be at least away, for venues that document a floor.
     min_expiry_minutes: int = 0
     post_only: bool = False
+    # Market orders take a spend amount / share count with an optional worst price (no price needed).
+    market_unbounded: bool = False
     amend: bool = False
     batch_orders: bool = False
     approvals_needed: bool = False
@@ -488,6 +490,10 @@ class OrderRequest(BaseModel):
     order_type: OrderType = OrderType.GTC
     expires_at: datetime | None = None
     post_only: bool = False
+    # Market BUY sized as "spend $X": venues that take a spend amount (Polymarket) get it as is.
+    amount_usd: Decimal | None = None
+    # False: ``price`` is only a placeholder, the venue matches against resting liquidity with no worst-price bound.
+    bounded: bool = True
 
     @field_validator("price")
     @classmethod

@@ -848,7 +848,7 @@ function tkCalc(){
       out.rows=[["Spend",money(A)],["Est. shares",sh.toFixed(2)],["Avg price",cents(spent/sh)],["If it wins",money(sh)+" (profit "+money(sh-spent)+")"]];
       out.total=A;out.win=sh;out.avg=spent/sh;if(rem>0.01)out.warn="The visible book covers only "+money(spent)+" of this amount.";
       const cap=num(STATE&&STATE.limits&&STATE.limits.max_trade_usd);if(!Number.isNaN(cap)&&A>cap)out.warn=(out.warn?out.warn+" ":"")+"Above the per-trade cap of "+money(cap)+"; the server will refuse it.";
-      out.req={path:"/v1/orders/market",body:{...base,side:"BUY",amount_usd:String(TK.amount),max_slippage_cents:String(TK.slip||"2")}}}
+      out.req={path:"/v1/orders/market",body:{...base,side:"BUY",amount_usd:String(TK.amount),...(TK.slip?{max_slippage_cents:String(TK.slip)}:{})}}}
     else{
       const S=num(TK.shares);if(!(S>0)){out.err="Enter how many shares to sell.";return out}
       if(S>tkHeld()+1e-9){out.err="You hold only "+trimDec(tkHeld(),4)+" "+TK.outcome+" shares.";return out}

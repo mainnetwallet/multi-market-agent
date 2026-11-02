@@ -180,6 +180,7 @@ class PolymarketVenue(HttpVenue):
         # expires one minute before it.
         min_expiry_minutes=3,
         post_only=True,
+        market_unbounded=True,
         amend=False,
         batch_orders=True,
         approvals_needed=True,
@@ -739,15 +740,27 @@ class PolymarketVenue(HttpVenue):
         size = quantize_shares(req.size, 4)
         try:
             if req.order_type in (OrderType.FOK, OrderType.FAK):
-                # A market order is a limit order whose price bound rides in the signed
-                # amounts; the SDK takes that bound as max_price / min_price.
-                accepted = await client.place_market_order(
-                    asset_id=asset_id,
-                    side=req.side.value,
-                    shares=size,
-                    order_type="FOK" if req.order_type is OrderType.FOK else "FAK",
-                    **({"max_price": price} if req.side is Side.BUY else {"min_price": price}),
-                )
+                # Official market order: BUY takes the dollars to spend (``amount``), SELL the shares to sell.
+                # The price is only an optional worst-price bound (max_price / min_price); without it the SDK
+                # matches against the resting book itself, so no ask has to be read here.
+                kind = "FOK" if req.order_type is OrderType.FOK else "FAK"
+                if req.side is Side.BUY:
+                    spend = req.amount_usd if req.amount_usd is not None else (size * price).quantize(Decimal("0.01"))
+                    accepted = await client.place_market_order(
+                        asset_id=asset_id,
+                        side="BUY",
+                        amount=spend,
+                        order_type=kind,
+                        **({"max_price": price} if req.bounded else {}),
+                    )
+                else:
+                    accepted = await client.place_market_order(
+                        asset_id=asset_id,
+                        side="SELL",
+                        shares=size,
+                        order_type=kind,
+                        **({"min_price": price} if req.bounded else {}),
+                    )
             else:
                 expiration = int(req.expires_at.timestamp()) if req.expires_at else None
                 accepted = await client.place_limit_order(
@@ -781,10 +794,13 @@ class PolymarketVenue(HttpVenue):
             )
         status_raw = str(getattr(accepted, "status", "")).lower()
         filled = ZERO
+        paid = ZERO
         try:
             making = to_decimal(getattr(accepted, "making_amount", 0))
             taking = to_decimal(getattr(accepted, "taking_amount", 0))
             filled = taking if req.side is Side.BUY else making
+            # dollars moved / shares moved is the real average fill, not the order's price bound
+            paid = making if req.side is Side.BUY else taking
         except Exception:
             filled = ZERO
         if status_raw == "matched":
@@ -797,7 +813,12 @@ class PolymarketVenue(HttpVenue):
             status = ExecutionStatus.RESTING
         else:
             status = ExecutionStatus.RESTING
-        fee = self.fee(price, filled, req.side, market).fee_usd
+        fill_price = price
+        if filled > 0 and paid > 0 and req.order_type in (OrderType.FOK, OrderType.FAK):
+            avg = paid / filled
+            if ZERO < avg < ONE:
+                fill_price = avg
+        fee = self.fee(fill_price, filled, req.side, market).fee_usd
         order_id = str(getattr(accepted, "order_id", "")) or None
         if order_id:
             self._asset_index.setdefault(asset_id, (req.market_id, req.outcome))
@@ -809,7 +830,7 @@ class PolymarketVenue(HttpVenue):
             requested_size=req.size,
             filled_size=min(filled, req.size),
             remaining_size=max(ZERO, req.size - filled),
-            average_price=price if filled > 0 else None,
+            average_price=fill_price if filled > 0 else None,
             fee_usd=fee,
             raw_redacted={"status": status_raw, "order_id": order_id},
         )

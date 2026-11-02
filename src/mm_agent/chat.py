@@ -2098,9 +2098,7 @@ class ChatService:
                 expires_at=datetime.fromisoformat(str(expires).replace("Z", "+00:00")) if expires else None,
                 post_only=bool(args.get("post_only", False)),
                 actor=actor,
-                max_slippage_cents=(self._dec(args.get("max_slippage_cents")) or Decimal("2"))
-                if market_order
-                else None,
+                max_slippage_cents=self._dec(args.get("max_slippage_cents")) if market_order else None,
             )
         )
 
@@ -2728,8 +2726,8 @@ class ChatService:
             ),
             ToolDef(
                 "place_market_order",
-                "Plain buy/sell: fills at once with a slippage cap (cents), reads the book itself. "
-                "Give shares or amount_usd",
+                "Plain buy/sell: fills at once against the venue's resting orders, no ask or price needed. "
+                "Give amount_usd (BUY) or shares (SELL); max_slippage_cents only if the user asks for a cap",
                 {
                     "market": market,
                     "outcome": {"type": "string", "enum": ["YES", "NO"]},
