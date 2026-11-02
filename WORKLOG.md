@@ -65,7 +65,7 @@ Not done / LIVE_VERIFIED=false:
   `00_CONTEXT.md`; record differences in `DOCS_FINDINGS.md`.
 - PolyBolt is not wired: it needs CLOB API credentials, which only `*_signing` modules may read, and its auth-frame layout is unverified.
   `CryptoPrices` therefore reports `source: "coinbase"`. Wiring is a small follow-up that injects `auth_frame` from the signing module.
-- Kalshi and Limitless have no feed (P2b): their events are REST-polled every 5 s per event (budgeted) and say `source: "rest"`.
+- Kalshi and Limitless have no feed (P2b): their events are REST-polled every 5 s per event (budgeted) and say `source: "rest"`. (Superseded in P2b: both have feeds; Kalshi scores are polled, see Handoff - P6 audit.)
 - History interval names `1m` (month) and `all` for the longer ranges are from the docs, unverified.
 - Sibling chips / related list are still empty (P1 gap). The PWA and Android do not use `/v1/stream` yet (P3/P4).
 Decisions: hub follows YES tokens only (NO = 1 - YES, the same complement the REST builder uses); a client that subscribes while
@@ -102,7 +102,7 @@ Not done / deviations (log):
   top of book, the ladder needs depth, and list cards would need their own stream subscriptions. Both are fallbacks of the old UI, not of the new views.
   Candidate follow-up: subscribe visible sport cards through `MMLive.client` and drop `dvSportTick`.
 - Legacy `svgLines`/`mkChart` timers remain for non-live events (binary markets, flag off).
-- Kalshi / Limitless events render and update via the REST poll (hub `source: "rest"` -> indicator DELAYED) until P2b adds their feeds.
+- Kalshi / Limitless events render and update via the REST poll (hub `source: "rest"` -> indicator DELAYED) until P2b adds their feeds. (Superseded: P2b added their feeds.)
 - Not run in a real browser or against real venues (LIVE_VERIFIED=false still applies); only jsdom + fakes. Owner: open a soccer game, a bracket market
   and an Up/Down window once on the deployed PWA and watch the indicator.
 Decisions: sports indicator is LIVE while the stream delivers and always shows the vendor "may be delayed" note; REST fallback never faster than 5 s.
@@ -130,7 +130,7 @@ Done (written; the Android UI layer is NOT compiled, see below):
 Not done / deviations:
 - Not compiled with Gradle (no Android SDK or Maven access in the sandbox): `LiveStream`, `EventViewModel`, all Compose screens and the MainActivity wiring are syntax-checked only (kotlinc parse, no errors).
   First real build may need small import fixes. Owner: `gradle -p android testDebugUnitTest assembleDebug`.
-- Candidates and Up/Down use the shared `GenericScreen` list (PWA has dedicated layouts); no tab/crest image cache beyond Coil defaults; chart has no hover tip; sibling chips / related list absent (server still sends none).
+- Candidates and Up/Down use the shared `GenericScreen` list (PWA has dedicated layouts); no tab/crest image cache beyond Coil defaults; chart has no hover tip; sibling chips / related list absent (server still sends none). (Superseded in P6: `CandidatesScreen` and `UpDownScreen` exist, not compiled.)
 - `AUTO_REFRESH_MS` untouched (it is the account safety net, not an event poller).
 - PriceButton in `DiscoverScreen.kt` changed from private to internal (reused for the Yes/No buttons).
 Next step: P5 (hardening, load test, docs) - and first the owner builds the Android app once and runs the live probes (`scripts/probe_live_shapes.py`, `scripts/live_hub_check.py`).
@@ -165,10 +165,88 @@ Not done / gaps:
   exist; only the hub-internal figure above. The 429 handling is tested with a fake exception, not a real 429.
 - Android UI layer (P4) is still not compiled with Gradle.
 - `/v1/event/view` has no per-user rate limit of its own.
-- `tests/test_live_hub_venues.py` (multi-venue hub tests) is still unwritten.
+- `tests/test_live_hub_venues.py` (multi-venue hub tests) is still unwritten. (Written in P6.)
 - Socket release after a client leaves was seen working in isolation, but the TestClient did not reliably show it in the full suite, so
   the test only asserts the 4429 rejection.
 Owner must still run once: `gradle -p android testDebugUnitTest assembleDebug`; `scripts/probe_live_shapes.py` and `scripts/live_hub_check.py`
 on a real machine; open a soccer game, a bracket and an Up/Down on the deployed PWA and watch the indicator; `scripts/live_load_test.py`
 on the production-size host. Also revoke the GitHub token pasted in chat.
 Next step: owner runs the items above and reports back; then fix what the real build/probes show. STOP.
+
+
+## Handoff - P6 audit (2026-11-02, PR #33)
+
+Audit of docs/live-views P0-P5 against code, tests and docs. How each fact is known: **fakes** = tests with fake servers or fake
+adapters (no network); **docs** = from venue documentation or synthetic fixtures only; **live** = seen on a real venue (nothing is).
+`LIVE_VERIFIED=false`: no venue was reachable from this sandbox, so every venue shape stays unverified. No Android SDK, Gradle or browser here.
+Baseline before the audit: ruff, format, mypy clean, 514 tests passed. After: 590 Python tests + 25 JS tests pass, gate green on every commit.
+
+Status words: done / partial / missing / cannot verify here. "(fixed in P6)" marks gaps this audit closed.
+
+| Item | Spec says | Status | Evidence |
+|---|---|---|---|
+| P0 probe script | read-only async httpx, scrubbed JSON, findings summary | done (never run live) | scripts/probe_live_shapes.py, tests/test_probe_live_shapes.py; Kalshi `milestones_for_event` capture added in P6 |
+| P0 capture list | real shapes for soccer + companions, NBA, tennis, MMA, esports, bracket + siblings, candidates, mentions, weather, yes/no, Up/Down 5m and 1h, events vs keyset, Kalshi sports/milestone/live_data/range/binary, Limitless group/CLOB/recurring | partial | 20 synthetic fixtures, 0 real; tennis, MMA, esports, mentions, weather, Kalshi sports/binary/live_data, Limitless CLOB/recurring added in P6 (tests/test_live_fixture_layouts.py); still no synthetic Up/Down 1h, bracket sibling events or Kalshi milestone object |
+| P0 DOCS_FINDINGS | answer the checklist (sibling fields, logo field, version, sportsMarketType, WS asset cap, PolyBolt auth, Limitless intervals, Kalshi milestone link) | cannot verify here | sections 7 and 9 list what to confirm; no answers possible offline |
+| P0 no-network fallback | synthetic fixtures marked synthetic, LIVE_VERIFIED=false | done | every fixture has `"synthetic": true`; test_every_new_fixture_is_marked_synthetic_and_scrubbed, test_fixture_directory_has_nothing_unaccounted_for |
+| P1 builders + 7-rule chooser | pure, Decimal-as-string, three venues | done (fakes/docs) | src/mm_agent/eventview.py; test_layout_per_fixture, test_prices_are_decimal_strings |
+| P1 sports sections, companions, score orientation | companions by game_id, label map + prettify, `teams[].ordering` | done (fakes/docs); logo field name unverified | eventview_source.py (keyset only for game_id); test_soccer_score_follows_ordering_not_list_order, test_two_way_outcome_order_differs_from_home_away, test_unknown_market_type_gets_its_own_prettified_tab |
+| P1 brackets, chips, related | ascending rows; chips and related from confirmed fields | partial | test_bracket_rows_ascending_and_chart_shell; builder makes chips (test_bracket_chips_from_siblings) but the source passes no siblings and no related list, so the server sends none (field not confirmed) |
+| P1 discovery on keyset + version | `/events/keyset` with `version=v1&version=v2`, old path as fallback | missing (logged, not done) | discover.py and venues/polymarket.py still use `/events`; keyset reply shape unverified, a guess could break Discover. Probe captures both for the owner |
+| P1 Kalshi / Limitless rows | strike/range rows in contracts; group children as rows | done (fakes/docs) | test_kalshi_ladder_in_contracts, test_limitless_group_children_are_rows |
+| P1 /v1/event/view + URL parser | host allow-list, slug regexes, unknown layout never 404 | done (fakes) | test_parse_event_url_accepts/rejects, test_route_*, test_unknown_shape_is_generic_list_and_never_raises |
+| P1 old routes unchanged | /v1/discover, /v1/market, /v1/live/event | done | existing suites still green |
+| P1 tests | one per fixture, orientation, ordered brackets, shuffled/stripped, unknown shape, URL parser | done | tests/test_eventview.py, tests/test_live_fixture_layouts.py (stripped-field robustness for the new fixtures too) |
+| P2a hub | ref-counted, 4/s coalescing, seq/source/source_ts/server_ts, bounded queues, caps, idle eviction, stale + REST fallback, backoff | done (fakes) | tests/test_live_hub.py, test_live_hardening.py (coalescing, ref count, slow client, stale/recovery, 429 pause) |
+| P2a Polymarket market WS | book from book + price_change, size 0 removes, last_trade/tick_size/best_bid_ask/new_market/market_resolved, PING 10 s | done (fakes) | tests/test_live_feeds.py (size-zero removal, ping/pong, reconnect, tick size, resolved) |
+| P2a sports WS | ping/pong, index by gameId, join by id and names, home/away, periods | done (fakes) | test_sports_ping_pong_and_home_away_score_orientation, test_game_score_follows_the_names_the_sports_feed_sends |
+| P2a PolyBolt | only with CLOB creds, else Coinbase labelled `coinbase` | partial | polybolt.py exists but is not wired (needs credentials only the signing modules may read; auth frame unverified). Source label pinned in P6: tests/test_live_hub_spot.py (fixed in P6) |
+| P2a charts | batch-prices-history, at most 20 tokens, live tail | done (fakes) | test_history_is_fetched_in_chunks_of_twenty_and_a_failed_chunk_is_skipped, test_chart_history_then_live_tail |
+| P2a /v1/stream, /status, flag | same auth as /v1/ws, frames, seq gap -> snapshot, per-feed metrics, LIVE_VIEWS_ENABLED | done (fakes) | test_stream_*, test_status_reports_per_feed_metrics; close codes 4401/4404/4408/4429 in control_api.py |
+| P2a against real feeds | how to run the hub on the real feeds | cannot verify here | scripts/live_hub_check.py exists, never run |
+| P2b Kalshi WS | signed handshake, ticker/trade/orderbook_delta, local book, add/remove, get_snapshot after gap, lifecycle, no key -> unavailable | done (fakes) | tests/test_live_venue_feeds.py (kalshi_*), service.py `unavailable` |
+| P2b Kalshi sports poll | GET /live_data/batch, at most 100 ids, every 2-3 s, source `kalshi_rest_polled` | done in P6 (fakes; reply layout docs only) | src/mm_agent/live/kalshi_sports.py, hub.on_kalshi_game, eventview_source milestone lookup; tests/test_live_kalshi_sports.py (38 tests) |
+| P2b Kalshi play-by-play | `game_stats` where supported | missing | not built; endpoint unverified |
+| P2b Kalshi charts | batch candlesticks | done (fakes) | test_kalshi_history_batches_tickers_and_uses_the_range |
+| P2b Limitless WS | Socket.IO /markets, subscribe_market_prices, orderbookUpdate, lifecycle | done (fakes) | test_limitless_* in tests/test_live_venue_feeds.py |
+| P2b Limitless navigation endpoints | replace the `categories[0]` trick if P0 confirmed them | missing (P0 confirmed nothing) | discover.py:228, venues/limitless.py:175,322 unchanged; recurring markets via Market Timeline also not built |
+| P2b Limitless charts, README claim | historical-price; fix "no history endpoint" | done | test_limitless_history_*; README and DOCS_FINDINGS section 8 corrected |
+| P2b hub-level tests | Kalshi/Limitless through the hub, per-venue staleness, (venue, asset) index, on_settled | done in P6 (fakes) | tests/test_live_hub_venues.py (11 tests) |
+| P2b no credential in payloads or logs | secrets stay out | done (fakes) | test_kalshi_secrets_never_travel_in_payloads_or_logs; poller logs the error class only (test in test_live_kalshi_sports.py) |
+| P3 modules + CSS | live.js, chart.js, views/*, CSS file | done | static/js/{live,chart,view,main}.js, views/*, static/css/live.css |
+| P3 every layout renders from the stream | crests with initials, bracket rows, legend, chart ranges | done (fakes; no browser) | tests/js/views.test.mjs (6 layouts from a fake stream); Kalshi score line on candidates added in P6 |
+| P3 sibling chips, related list | rendered | partial | PWA draws them when sent; server sends none (see P1) |
+| P3 remove per-view setIntervals | none left except UI clocks and the REST fallback | partial (justified deviation) | `dvSportTick` (8 s, index.html about 626) and `tkPoll` (2 s ticket ladder) remain, plus legacy muLive/spLive/cpTick used only when LIVE_VIEWS_ENABLED is off. Not moved: the hub allows 12 subscriptions per socket and 30 new lookups per minute per socket, a Discover list shows more cards than that and each uncached card would cost the venue a lookup; the ladder needs book depth the stream does not carry |
+| P3 indicator, delayed note, trade sheet, flag | LIVE/DELAYED/OFFLINE with age and source; Yes/No opens the sheet; respects LIVE_VIEWS_ENABLED | done (fakes; no browser) | tests/js/live.test.mjs, view.js, index.html flag comment |
+| P3 paste a venue URL | opens via /v1/event/view | done | static/js/main.js, test_route_accepts_pasted_url_and_rejects_foreign_hosts |
+| P3 done-when | PWA loads and signs in | cannot verify here | no browser; owner check below |
+| P4 stream + reducer | LiveStream.kt, EventViewModel, pure reducer, unit tests | done, not compiled | data/LiveStream.kt, EventViewModel.kt, EventStore.kt; EventStoreTest.kt written, never run by Gradle |
+| P4 screens | Game, Bracket, Candidates, UpDown, Generic | done in P6, NOT COMPILED | ui/event/*.kt; Candidates and UpDown were missing (shared GenericScreen). Helpers in data/EventLayout.kt: EventLayoutTest (9 tests) compiled with kotlinc 2.0.21 and passed on a plain JVM against shims of org.json and JUnit, not the real libraries; the Compose files only parse (no syntax errors) |
+| P4 Up/Down details | countdown, price to beat vs spot, Up/Down at the ask | partial | "next window" chips not built on Android (PWA has them) |
+| P4 crests, indicator, trade sheet, URL, AUTO_REFRESH_MS | Coil with initials, LIVE/DELAYED/OFFLINE, preset sheet, paste URL, 5 s safety net | done, not compiled | EventCommon.kt, EventTarget.fromPaste, MainActivity.kt (AUTO_REFRESH_MS = 5000) |
+| P4 done-when | compiled where a toolchain exists | cannot verify here | no Android SDK or Gradle |
+| P5 load test | about 200 clients on 50 events, CPU and memory | done (in-process, no network) | scripts/live_load_test.py; numbers in the P5 handoff |
+| P5 REST calls before/after | numbers in WORKLOG | partial | computed from timers, not measured (P5 handoff); Discover cards and ticket ladder still poll |
+| P5 failure drills | silent feed, reconnect storm, 429 Retry-After, malformed frames | done (fakes) | tests/test_live_hardening.py |
+| P5 security review | auth, allow-list, no secrets, caps | done | SECURITY.md live section (updated in P6 with close codes and the new Kalshi reads) |
+| P5 docs | README table, live section, endpoints, Limitless claim, flag; DOCS_FINDINGS | done | README, DOCS_FINDINGS sections 7-9; synced to the code in P6 (close codes 4401/4404/4408/4429, limits, LIVE_VIEWS_ENABLED, feed names) |
+| P5 measured latency venue -> client paint | final report | cannot verify here | only the hub-internal p50 51 ms / p95 156 ms exists |
+
+### Commits made in P6 (all on feat/live-category-views, gate green after each)
+1. `8606ed8` P2b hub-level Kalshi/Limitless tests. 2. `63dd8d9` P0 second synthetic fixture set + layout tests.
+3. `8354f87` P2b Kalshi score poller (`/live_data/batch`, `kalshi_rest_polled`), hub hook, milestone lookup, probe capture.
+4. `0236eb2` P4 CandidatesScreen + UpDownScreen (not compiled). 5. `ca18e3d` P2a spot-source tests (PolyBolt gap pinned).
+6. `2438d33` one-line score on multi_candidates (PWA + Android), service worker cache v8. 7. docs sync. 8. this handoff.
+
+### Findings worth knowing
+- `label_number` needs a non-letter after the digits: `49F` gives no threshold (candidate list), `49°F` works (bracket). Real labels unknown.
+- Section id/label `game_lines` / "Game Lines" is used for non-game events too (bracket, mentions); the PWA and Android draw tabs only when there are several sections, so it is hidden today.
+- structlog output goes to stdout, not the `logging` module, so a `caplog` assertion about logs proves nothing; the new tests read stdout.
+- The Polymarket sports feed used to write into any event with a game block; it is now limited to Polymarket events so Kalshi scores keep their own source.
+- Kalshi score line is shown on candidates only (the Kalshi sports layout today); the milestone link and the reply layout are docs-only guesses.
+
+### Owner must still run
+- `gradle -p android testDebugUnitTest assembleDebug` (nothing in android/ was built here).
+- `python scripts/probe_live_shapes.py` and `python scripts/live_hub_check.py` on a machine that reaches the venues; replace the synthetic fixtures with the scrubbed real ones; check `/live_data/batch` parameter style (comma-joined vs repeated) and `/milestones?related_event_ticker=`; then set `LIVE_VERIFIED` only if they match.
+- PWA by hand: a soccer game (score, tabs, delayed note), a bracket (ordered rows, chart ranges), an Up/Down (countdown, spot vs price to beat), a Kalshi sports event (score line); cut the network and watch the indicator flip.
+- Revoke the GitHub token that was pasted into the chat; it was never used by this audit (GH_TOKEN was not set in the sandbox).
