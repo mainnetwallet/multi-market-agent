@@ -344,9 +344,8 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 
           <div class="search"><svg class="i"><use href="#i-search"/></svg><input id="histSearch" placeholder="Search chats…" autocomplete="off"></div>
           <div class="histlist" id="histList"><div class="muted small" style="padding:10px">Loading…</div></div>
         </aside>
-        <div class="card chatcard"><div class="chathead"><button class="iconbtn histonly" id="histBtn" aria-label="Chat history" title="History"><svg class="i"><use href="#i-history"/></svg></button><div class="ttl" id="chatTitle">New chat</div><button class="btn small" id="newChatBtn">New chat</button></div><div class="chatlog" id="chatlog"><div class="msg bot">Slash commands are handled server-side. Send /help. Real order statuses are reported verbatim.</div></div>
-          <div class="chips"><button class="chip" data-cmd="/status">/status</button><button class="chip" data-cmd="/positions">/positions</button><button class="chip" data-cmd="/orders">/orders</button><button class="chip" data-cmd="/limits">/limits</button><button class="chip" data-cmd="/help">/help</button></div>
-          <div class="composer"><input class="grow" id="chatInput" placeholder="/status or ask about a market" autocomplete="off"><button class="btn primary" id="sendBtn" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button></div>
+        <div class="card chatcard"><div class="chathead"><button class="iconbtn histonly" id="histBtn" aria-label="Chat history" title="History"><svg class="i"><use href="#i-history"/></svg></button><div class="ttl" id="chatTitle">New chat</div><button class="btn small" id="newChatBtn">New chat</button></div><div class="chatlog" id="chatlog"><div class="msg bot">Ask me anything about your account or a market; I check it myself and tell you. Real order statuses are reported verbatim.</div></div>
+          <div class="composer"><input class="grow" id="chatInput" placeholder="Ask anything" autocomplete="off"><button class="btn primary" id="sendBtn" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button></div>
           <div class="tiny muted" style="margin-top:8px">The LLM sees structured data only, never keys or auth headers. Tool output is treated as data.</div>
         </div>
         </div>
@@ -454,7 +453,7 @@ $("#loginScreen").classList.remove("hidden");if("serviceWorker" in navigator)nav
 function apply(t){root.dataset.theme=t;meta.content=t==="light"?"#ffffff":"#1d2b39";try{localStorage.setItem("mm-theme",t)}catch(e){}}
 apply(root.dataset.theme==="light"?"light":"dark");
 document.querySelectorAll(".js-theme").forEach(b=>b.addEventListener("click",()=>apply(root.dataset.theme==="light"?"dark":"light")));
-document.querySelectorAll(".chip[data-cmd]").forEach(c=>c.addEventListener("click",()=>{document.getElementById("chatInput").value=c.dataset.cmd;sendChat()}));})();
+})();
 </script>
 <script>
 /* ===== v5 additions: Discover, trade ticket, open orders, wallet, chat history ===== */
@@ -1104,7 +1103,7 @@ async function loadFundsHistory(){
 /* ---------- Chat history ---------- */
 const CHAT={id:null,list:[],q:"",restored:false,busy:false,oldest:null,timer:null};
 try{CHAT.id=localStorage.getItem("mm-chat-id")||null}catch(e){}
-const CHAT_GREETING="Slash commands are handled server-side. Send /help. Real order statuses are reported verbatim.";
+const CHAT_GREETING="Ask me anything about your account or a market; I check it myself and tell you. Real order statuses are reported verbatim.";
 function chatSaveId(){try{if(CHAT.id)localStorage.setItem("mm-chat-id",CHAT.id);else localStorage.removeItem("mm-chat-id")}catch(e){}}
 function chatHistOpen(){$("#chatHist").classList.add("open");$("#histScrim").classList.add("show")}
 function chatHistClose(){const h=$("#chatHist");if(h)h.classList.remove("open");const s=$("#histScrim");if(s)s.classList.remove("show")}
