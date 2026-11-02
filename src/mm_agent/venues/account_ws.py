@@ -16,13 +16,14 @@ connection attempt because both venues reject an old timestamp.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from websockets.asyncio.client import connect
+
+from mm_agent.util.aio import wait_for
 
 from ..util import get_logger
 
@@ -56,7 +57,7 @@ async def kalshi_account_events(url: str, headers: HeadersFactory) -> AsyncItera
         while True:
             timeout = max(0.1, deadline - time.monotonic()) if acked == 0 else None
             try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+                raw = await wait_for(ws.recv(), timeout=timeout)
             except TimeoutError as exc:
                 raise AccountStreamError("Kalshi did not acknowledge the subscription") from exc
             message = _json(raw)
@@ -93,7 +94,7 @@ async def limitless_account_events(
     """
 
     async with connect(url, additional_headers=headers(), open_timeout=ACK_TIMEOUT_SECONDS) as ws:
-        opened = await asyncio.wait_for(ws.recv(), timeout=ACK_TIMEOUT_SECONDS)
+        opened = await wait_for(ws.recv(), timeout=ACK_TIMEOUT_SECONDS)
         opened_text = opened.decode() if isinstance(opened, bytes) else opened
         if not opened_text.startswith("0"):
             raise AccountStreamError(f"Limitless sent an unexpected first frame: {opened_text[:40]!r}")
@@ -109,7 +110,7 @@ async def limitless_account_events(
         last_check = 0.0
         while True:
             try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=LIMITLESS_RESUBSCRIBE_CHECK_SECONDS)
+                raw = await wait_for(ws.recv(), timeout=LIMITLESS_RESUBSCRIBE_CHECK_SECONDS)
             except TimeoutError:
                 raw = None
             now = time.monotonic()

@@ -796,6 +796,10 @@ class AgentService:
                 logger.exception("auto_loop_error")
             await asyncio.sleep(120)
 
+    def _research_available(self) -> bool:
+        """Re-read the flag on every call: a property read after the guard in auto_cycle would be narrowed to True."""
+        return self.research_service.available
+
     async def auto_cycle(self) -> list[dict[str, Any]]:
         if self.paused or not self.unit_guard.ok or self.registry.active_or_none is None:
             return []
@@ -812,7 +816,7 @@ class AgentService:
                 continue
             if self.books.has_no_book(market.venue.value, market.native_id):
                 continue
-            if not self.research_service.available:
+            if not self._research_available():
                 break  # search got paused mid-cycle (quota/key): stop instead of failing every market
             outcome = await self.analyze_market(market, create_proposal=True)
             results.append(outcome)

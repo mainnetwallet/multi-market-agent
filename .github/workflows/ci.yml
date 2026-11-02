@@ -40,7 +40,7 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -55,7 +55,7 @@ jobs:
       - name: Pytest
         run: |
           set +e
-          pytest -q --tb=short -rfE 2>&1 | tee /tmp/pytest.log
+          pytest -q --tb=short -rfE --durations=10 2>&1 | tee /tmp/pytest.log
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
             python - <<'PYEOF'

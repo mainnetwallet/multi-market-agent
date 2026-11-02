@@ -36,6 +36,7 @@ dev = [
   "pip-audit==2.10.1",
   "pytest==9.2.0",
   "pytest-asyncio==1.4.1",
+  "pytest-timeout==2.4.0",
   "ruff==0.17.3",
 ]
 postgres = ["asyncpg==0.30.0", "psycopg[binary]==3.2.10"]
@@ -55,6 +56,9 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q"
+# A hung test must fail fast with a stack dump instead of burning the whole CI job timeout.
+timeout = 60
+timeout_method = "thread"
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]

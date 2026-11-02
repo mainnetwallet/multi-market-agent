@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 
+from mm_agent.util.aio import wait_for
+
 from .agent import AgentService
 from .books import BookCache
 from .config import Settings
@@ -67,7 +69,7 @@ class RulesEngine:
             except Exception:
                 logger.exception("rules_loop_error")
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=5)
+                await wait_for(self._stop.wait(), timeout=5)
             except TimeoutError:
                 continue
 

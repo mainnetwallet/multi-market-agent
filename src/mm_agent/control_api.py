@@ -33,6 +33,8 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 
+from mm_agent.util.aio import wait_for
+
 from . import discover as discover_lib
 from . import eventview, eventview_source
 from .agent import AgentService
@@ -515,7 +517,7 @@ def create_app(
         if not event_id and not slug:
             return None
         try:
-            item: dict[str, Any] | None = await asyncio.wait_for(adapter.event_live(event_id, slug=slug), 4.0)
+            item: dict[str, Any] | None = await wait_for(adapter.event_live(event_id, slug=slug), 4.0)
             return item
         except Exception:
             return None

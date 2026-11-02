@@ -32,6 +32,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
+from mm_agent.util.aio import wait_for
+
 from ..util import get_logger
 from .books import to_dec
 from .common import FeedStats, Quote, backoff_delay
@@ -265,11 +267,11 @@ class KalshiMarketFeed:
 
         while True:
             try:
-                await asyncio.wait_for(self._wake.wait(), timeout=self._heartbeat)
+                await wait_for(self._wake.wait(), timeout=self._heartbeat)
             except TimeoutError:
                 waiter = await ws.ping()
                 try:
-                    await asyncio.wait_for(waiter, timeout=self._heartbeat)
+                    await wait_for(waiter, timeout=self._heartbeat)
                 except TimeoutError as exc:
                     raise ConnectionError("kalshi feed did not answer a ping") from exc
                 self.stats.heartbeat()

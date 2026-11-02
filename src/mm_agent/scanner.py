@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 
+from mm_agent.util.aio import wait_for
+
 from .config import Settings
 from .domain import FeedDiag, FeedVenueDiag, MarketRef, MarketStatus, VenueId, utcnow
 from .events import EventBus
@@ -49,7 +51,7 @@ class Scanner:
                 self.last_error = f"{type(exc).__name__}: {exc}"
                 logger.exception("scan_loop_error")
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self.settings.scan_interval_seconds)
+                await wait_for(self._stop.wait(), timeout=self.settings.scan_interval_seconds)
             except TimeoutError:
                 continue
 
