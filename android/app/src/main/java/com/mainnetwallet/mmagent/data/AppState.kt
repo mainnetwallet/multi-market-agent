@@ -14,6 +14,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -25,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.math.BigDecimal
 
 /** What the app knows about the server right now. */
@@ -727,8 +729,9 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
         saveActiveChat()
         chatJob = viewModelScope.launch {
             var reply: String? = null
+            var serverId: String? = null
             try {
-                val serverId = ensureServerChat()
+                serverId = ensureServerChat()
                 api.stream("/v1/chat/stream", ApiClient.jsonOf("message" to message, "conversation_id" to serverId)) { event, data ->
                     when (event) {
                         "delta" -> updateReply { it.copy(text = it.text + data.optString("text")) }
@@ -749,9 +752,62 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                 finishTurn(null, "Stopped.", isError = false)
                 throw e
             } catch (e: Exception) {
-                finishTurn(null, e.message ?: "Chat failed.", isError = true)
+                // Android cuts the socket of an app that went to the background ("Software caused
+                // connection abort"), and right after coming back the network may not resolve names
+                // yet. The server keeps the chat, so ask it what happened instead of showing the raw error.
+                val id = serverId
+                if (e is IOException && id != null && recoverDroppedReply(id, message)) return@launch
+                val text = if (e is IOException) {
+                    "The connection was lost (the app was in the background or the network dropped). " +
+                        "Open this chat again to see what the server saved."
+                } else {
+                    e.message ?: "Chat failed."
+                }
+                finishTurn(null, text, isError = true)
             }
         }
+    }
+
+    /**
+     * The stream broke after the message was sent. Wait until the server has finished whatever step it
+     * was in and the network is back, then show the chat as the server stored it. Returns false if the
+     * server never received the message or could not be reached for about a minute.
+     * The server does not start new steps once the stream is gone, so a cut-off answer is not resumed
+     * by itself: the note tells the operator to say "continue".
+     */
+    private suspend fun recoverDroppedReply(serverId: String, message: String): Boolean {
+        var wait = 1500L
+        repeat(15) {
+            try {
+                val open = api.get("/v1/conversations/$serverId")
+                val status = open.optJSONObject("conversation")?.optString("status").orEmpty()
+                if (status != "running") {
+                    val stored = ApiClient.arrayOf(open, "messages").objects().map { messageFromServer(it) }
+                    val lastUser = stored.lastOrNull { it.role == "user" }
+                    if (lastUser == null || lastUser.text.trim() != message) return false
+                    val answered = stored.lastOrNull()?.role.let { it != null && it != "user" }
+                    _chat.update { s ->
+                        if (s.activeId == serverId) s.copy(messages = stored, hasEarlier = open.optBoolean("has_more")) else s
+                    }
+                    finishTurn(
+                        null,
+                        if (answered) null else "The connection dropped while the app was in the background, so this answer stopped. " +
+                            "Check Orders and Positions, then send \"continue\" to resume.",
+                        isError = false,
+                    )
+                    return true
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiClient.ApiException) {
+                return false
+            } catch (e: Exception) {
+                // Still offline or the name does not resolve yet: try again.
+            }
+            delay(wait)
+            wait = minOf(wait * 2, 6000L)
+        }
+        return false
     }
 
     /** The open chat's server id; a new or device-only chat is created on the server first and takes its id. */
