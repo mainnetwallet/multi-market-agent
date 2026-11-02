@@ -63,4 +63,32 @@ class EventLayoutTest {
         assertNull(EventLayout.spotDiff("100", null))
         assertNull(EventLayout.spotDiff("x", "100"))
     }
+
+    private fun game(homeScore: Any?, awayScore: Any?, period: String? = "Q3", source: String? = "kalshi_rest_polled"): JSONObject {
+        val g = JSONObject()
+            .put("home", JSONObject().put("name", "Boston").put("score", homeScore))
+            .put("away", JSONObject().put("name", "Los Angeles L").put("score", awayScore))
+        if (period != null) g.put("period", period)
+        if (source != null) g.put("source", source)
+        return g
+    }
+
+    @Test
+    fun scoreLineNamesTheTeamsTheScoresThePeriodAndTheSource() {
+        assertEquals(
+            "Boston 91 – 88 Los Angeles L · Q3 · score: kalshi_rest_polled",
+            EventLayout.scoreLine(game(91, 88)),
+        )
+    }
+
+    @Test
+    fun scoreLineUsesADashForAMissingScoreAndSkipsEmptyParts() {
+        assertEquals("Boston – – 4 Los Angeles L", EventLayout.scoreLine(game(null, 4, period = null, source = null)))
+    }
+
+    @Test
+    fun scoreLineIsNullWithoutAGameOrWithoutTwoTeams() {
+        assertNull(EventLayout.scoreLine(null))
+        assertNull(EventLayout.scoreLine(JSONObject().put("home", JSONObject().put("name", "Boston"))))
+    }
 }

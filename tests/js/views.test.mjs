@@ -5,6 +5,7 @@ import { LAYOUTS, layoutFor } from "../../src/mm_agent/static/js/view.js";
 import { pickSeries, toMs } from "../../src/mm_agent/static/js/chart.js";
 import { initials, badge, pct, cents, change, esc } from "../../src/mm_agent/static/js/views/common.js";
 import { countdown } from "../../src/mm_agent/static/js/views/updown.js";
+import * as candidates from "../../src/mm_agent/static/js/views/candidates.js";
 import { loadView, FakeWS, snapshotFrame } from "./helpers.mjs";
 
 /* every layout renders from an EventView that came over a fake stream */
@@ -95,4 +96,23 @@ test("hostile labels are escaped in every layout", () => {
   v.title = "<b>x</b>";
   const html = LAYOUTS.multi_candidates.render(v);
   assert.ok(!html.includes("<script>"));
+});
+
+test("candidates show a one-line score only when the event has a game block, and a game patch repaints it", () => {
+  const v = loadView("candidates");
+  assert.ok(!candidates.render(v).includes("data-scoreline"), "no game, no score line");
+  v.game = { home: { name: "Boston", score: 91 }, away: { name: "Los Angeles L", score: null }, period: "Q3", source: "kalshi_rest_polled" };
+  const html = candidates.render(v);
+  assert.ok(html.includes("data-scoreline"));
+  assert.equal(candidates.scoreText(v), "Boston 91 – – Los Angeles L · Q3 · score: kalshi_rest_polled");
+  const el = { textContent: "" };
+  const root = { querySelector: (sel) => (sel === "[data-scoreline]" ? el : null), querySelectorAll: () => [] };
+  v.game.away.score = 88;
+  candidates.update(root, v, { game: true, rows: [] });
+  assert.equal(el.textContent, "Boston 91 – 88 Los Angeles L · Q3 · score: kalshi_rest_polled");
+  el.textContent = "untouched";
+  candidates.update(root, v, { game: false, rows: [] });
+  assert.equal(el.textContent, "untouched", "a price-only patch leaves the score line alone");
+  v.game.home.name = "<b>x</b>";
+  assert.ok(!candidates.render(v).includes("<b>x</b>"), "team names are escaped");
 });

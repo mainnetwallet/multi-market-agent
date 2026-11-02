@@ -27,6 +27,27 @@ object EventLayout {
         return "${left / 60L}:${(left % 60L).toString().padStart(2, '0')}"
     }
 
+    /**
+     * One line for an event that carries a `game` block outside the game layouts (Kalshi sports scores): "Boston 91 – 88
+     * Los Angeles L · Q3 · score: kalshi_rest_polled". Null when there is no game or no two teams. Mirrors scoreText()
+     * in views/candidates.js.
+     */
+    fun scoreLine(game: JSONObject?): String? {
+        if (game == null) return null
+        val home = game.optJSONObject("home") ?: return null
+        val away = game.optJSONObject("away") ?: return null
+        val period = text(game, "period")
+        val source = text(game, "source")
+        return text(home, "name").ifBlank { "Home" } + " " + score(home) + " – " + score(away) + " " +
+            text(away, "name").ifBlank { "Away" } +
+            (if (period.isBlank()) "" else " · $period") +
+            (if (source.isBlank()) "" else " · score: $source")
+    }
+
+    private fun score(team: JSONObject): String = if (team.isNull("score")) "–" else team.optString("score")
+
+    private fun text(o: JSONObject, key: String): String = if (o.isNull(key)) "" else o.optString(key)
+
     /** Live spot minus the price to beat; null when either is missing or not a number. Positive means "up" is ahead. */
     fun spotDiff(spot: String?, beat: String?): BigDecimal? {
         val s = spot?.trim()?.toBigDecimalOrNull() ?: return null
