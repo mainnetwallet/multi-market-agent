@@ -489,30 +489,61 @@ private fun AgentMessage(message: ChatMessage, plain: Boolean, onCopy: (String) 
     }
 }
 
-/** What the assistant is doing, in words. Colour is never the only signal. */
+/**
+ * What the assistant is doing, in words. Tap a finished step to see exactly what it sent (input) and what
+ * came back (output). Colour is never the only signal.
+ */
 @Composable
 private fun ToolStepRow(step: ToolStep) {
+    var open by remember { mutableStateOf(false) }
+    val hasDetail = step.input.isNotBlank() || step.output.isNotBlank()
     val label = toolLabel(step.name) + when (step.state) {
         "error" -> " failed"
         "unknown" -> " (may have run)"
         else -> ""
     }
-    Row(
+    Column(
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surface)
+            .then(if (hasDetail) Modifier.clickable(role = Role.Button) { open = !open } else Modifier)
             .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        when (step.state) {
-            "running" -> CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-            "error" -> Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = Palette.Danger, modifier = Modifier.size(16.dp))
-            "unknown" -> Icon(Icons.Filled.Warning, contentDescription = null, tint = Palette.Alert, modifier = Modifier.size(16.dp))
-            else -> Icon(Icons.Filled.Check, contentDescription = null, tint = Palette.Long, modifier = Modifier.size(16.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            when (step.state) {
+                "running" -> CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                "error" -> Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = Palette.Danger, modifier = Modifier.size(16.dp))
+                "unknown" -> Icon(Icons.Filled.Warning, contentDescription = null, tint = Palette.Alert, modifier = Modifier.size(16.dp))
+                else -> Icon(Icons.Filled.Check, contentDescription = null, tint = Palette.Long, modifier = Modifier.size(16.dp))
+            }
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+            if (hasDetail) {
+                Text(
+                    if (open) "hide" else "details",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+        if (open) {
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (step.input.isNotBlank()) ToolDetail("Input", step.input)
+                    if (step.output.isNotBlank()) ToolDetail("Output", step.output)
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun ToolDetail(title: String, body: String) {
+    Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(body, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface)
 }
 
 @Composable

@@ -1640,6 +1640,7 @@ class ChatService:
         stall_limit = int(getattr(self.settings, "llm_stall_rounds", 0) or 0)
         seen_calls: set[tuple[str, str]] = set()  # (tool, arguments) already requested in this answer
         stalled = 0  # consecutive rounds that only repeated earlier calls
+        failures: dict[tuple[str, str], int] = {}  # (tool, error) -> times it failed in this answer
         must_answer = False  # tools are switched off for the next request: it has to be the final answer
         wrap_up = ""  # appended to the system message when the round budget is nearly used or exhausted
         round_text = False  # the current model request streamed some text to the app
@@ -1655,14 +1656,30 @@ class ChatService:
             round_text = round_text or bool(piece.strip())
             await on_event("delta", {"text": piece})
 
-        async def step(call: dict[str, Any], state: str) -> None:
-            entry = {"id": call["id"], "name": call["name"], "state": state}
+        detail_chars = int(getattr(self.settings, "chat_step_detail_chars", 0) or 0)
+
+        def detail(value: Any) -> str:
+            """What the app shows for a tool's input or output: redacted first, then cut."""
+            if not detail_chars or value is None:
+                return ""
+            safe = redact(value)  # strings too: a malformed argument string can still hold a secret
+            text = safe if isinstance(safe, str) else json.dumps(safe, default=str, ensure_ascii=False)
+            return clip_chars(text, detail_chars)
+
+        async def step(call: dict[str, Any], state: str, *, input: Any = None, output: Any = None) -> None:
+            entry: dict[str, Any] = {"id": call["id"], "name": call["name"], "state": state}
             for i, known in enumerate(steps):
                 if known["id"] == entry["id"]:
+                    # keep what an earlier event of this step already carried (its input)
+                    entry = {**known, **entry}
                     steps[i] = entry
                     break
             else:
                 steps.append(entry)
+            if input is not None:
+                entry["input"] = detail(input)
+            if output is not None:
+                entry["output"] = detail(output)
             if on_event is not None:
                 await on_event("tool", entry)
 
@@ -1680,11 +1697,11 @@ class ChatService:
         async def execute(call: dict[str, Any]) -> dict[str, Any]:
             """Run one model-requested tool and report its progress; never raises."""
 
-            await step(call, "running")
             try:
                 args = json.loads(call["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = None
+            await step(call, "running", input=args if args is not None else call["arguments"])
             live = self._tool_view(in_conversation=in_chat)  # an earlier call may have changed what is possible
             tool = live.by_name.get(call["name"])
             if args is None:
@@ -1714,7 +1731,7 @@ class ChatService:
                 except Exception as exc:
                     result = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
             failed = isinstance(result, dict) and (result.get("ok") is False or "error" in result)
-            await step(call, "error" if failed else "done")
+            await step(call, "error" if failed else "done", output=result)
             return result
 
         while True:
@@ -1799,6 +1816,22 @@ class ChatService:
                         results.append(await execute(call))
                 for call, result in zip(reply.tool_calls, results, strict=True):
                     last_data = result
+                    if isinstance(result, dict) and (result.get("ok") is False or "error" in result):
+                        # The same tool failing the same way again will not succeed on a blind retry (a
+                        # blocked region, missing credentials, a missing allowance): say so, once, to the model.
+                        fkey = (str(call["name"]), str(result.get("error", ""))[:120])
+                        failures[fkey] = failures.get(fkey, 0) + 1
+                        if failures[fkey] >= 2:
+                            result = {
+                                **result,
+                                "stop_retrying": True,
+                                "note": (
+                                    f"{call['name']} has now failed {failures[fkey]} times with this same error in "
+                                    "this answer. Do not call it again with the same cause. Tell the operator the "
+                                    "exact error and what must be fixed (venue, credentials, allowance, region)."
+                                ),
+                            }
+                            last_data = result
                     body = clip_chars(json.dumps(redact(result), default=str), result_chars)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": "DATA: " + body})
                 rounds += 1

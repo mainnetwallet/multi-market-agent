@@ -481,3 +481,85 @@ async def test_tool_choice_none_is_sent_only_when_asked(tmp_path: Path, monkeypa
     await client.chat([{"role": "user", "content": "x"}], tools=tools)
     await client.chat([{"role": "user", "content": "x"}], tools=tools, tool_choice="none")
     assert [b["tool_choice"] for b in bodies] == ["auto", "none"]
+
+
+# ------------------------------------------------- the app can see what each tool was sent and returned
+async def test_tool_steps_carry_their_input_and_output_with_secrets_redacted(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def run(name: str, args: Any, **_: Any) -> dict[str, Any]:
+        return {"ok": False, "error": "venue geoblocked", "api_key": "sk-live-123456789"}
+
+    monkeypatch.setattr(harness.chat, "_run_tool", run)
+    call = {"id": "c1", "name": "place_limit_order", "arguments": json.dumps({"price": "0.72", "private_key": "0xabc"})}
+    model = _Script(lambda n, _m, _t: LLMReply(content="", tool_calls=(call,)) if n == 1 else LLMReply(content="done"))
+    harness.chat.llm = model  # type: ignore[assignment]
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def on_event(name: str, data: dict[str, Any]) -> None:
+        events.append((name, dict(data)))
+
+    await _ask(harness, on_event=on_event)
+    steps = [d for n, d in events if n == "tool"]
+    assert [s["state"] for s in steps] == ["running", "error"]
+    assert "0.72" in steps[0]["input"] and "0xabc" not in steps[0]["input"]
+    assert steps[1]["input"] == steps[0]["input"]  # the finished event still carries what was sent
+    assert "geoblocked" in steps[1]["output"] and "sk-live-123456789" not in steps[1]["output"]
+
+
+async def test_step_detail_can_be_switched_off(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    _set(harness, chat_step_detail_chars=0)
+
+    async def run(*_: Any, **__: Any) -> dict[str, Any]:
+        return {"ok": True, "x": 1}
+
+    monkeypatch.setattr(harness.chat, "_run_tool", run)
+    model = _Script(lambda n, _m, _t: LLMReply(content="", tool_calls=(_call(),)) if n == 1 else LLMReply(content="ok"))
+    harness.chat.llm = model  # type: ignore[assignment]
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def on_event(name: str, data: dict[str, Any]) -> None:
+        events.append((name, dict(data)))
+
+    await _ask(harness, on_event=on_event)
+    assert all(not d.get("input") and not d.get("output") for n, d in events if n == "tool")
+
+
+# ------------------------------------------------- the same failure twice stops blind retries
+async def test_the_same_failure_twice_tells_the_model_to_stop_retrying(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set(harness, llm_stall_rounds=0)
+
+    async def run(*_: Any, **__: Any) -> dict[str, Any]:
+        return {"ok": False, "error": "region blocked"}
+
+    monkeypatch.setattr(harness.chat, "_run_tool", run)
+
+    def plan(n: int, _m: list[dict[str, Any]], _t: str) -> LLMReply:
+        if n <= 3:
+            args = json.dumps({"price": f"0.7{n}"})  # different arguments each time: not a stall
+            return LLMReply(content="", tool_calls=({"id": f"c{n}", "name": "place_limit_order", "arguments": args},))
+        return LLMReply(content="It is blocked.")
+
+    model = _Script(plan)
+    harness.chat.llm = model  # type: ignore[assignment]
+    await _ask(harness)
+    sent = [m["content"] for m in model.requests[-1]["messages"] if m["role"] == "tool"]
+    assert "stop_retrying" not in sent[0]
+    assert "stop_retrying" in sent[1] and "stop_retrying" in sent[2]
+
+
+# ------------------------------------------------- the output cap is sent only when configured
+async def test_max_tokens_is_sent_only_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    client = _client(tmp_path, monkeypatch, handler)
+    await client.chat([{"role": "user", "content": "x"}])
+    client.max_output_tokens = 16000
+    await client.chat([{"role": "user", "content": "x"}])
+    assert "max_tokens" not in bodies[0] and bodies[1]["max_tokens"] == 16000

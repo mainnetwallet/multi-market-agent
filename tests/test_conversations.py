@@ -535,7 +535,9 @@ async def test_tool_steps_and_failures_are_stored(harness: Harness) -> None:
     cid = store.chat_create(OWNER)["id"]
     await harness.chat.handle("how are we doing", actor=OWNER, conversation_id=cid)
     reply = store.chat_messages(OWNER, cid)[-1]
-    assert reply["tools"] == [{"id": "c1", "name": "get_status", "state": "done"}]
+    (step,) = reply["tools"]
+    assert (step["id"], step["name"], step["state"]) == ("c1", "get_status", "done")
+    assert step["input"] == "{}" and "active_venue" in step["output"]  # what was sent and what came back are kept
     got = store.chat_get(OWNER, cid)
     assert got["status"] == "idle" and got["state"]["tools"] == reply["tools"] and got["state"]["finished_at"]
 

@@ -49,7 +49,24 @@ data class AgentStatus(
 )
 
 /** One thing the assistant did while answering. [state] is "running", "done", "error" or "unknown". */
-data class ToolStep(val id: String, val name: String, val state: String)
+data class ToolStep(
+    val id: String,
+    val name: String,
+    val state: String,
+    /** The arguments the assistant sent to the tool (secrets redacted by the server, cut to a few thousand characters). */
+    val input: String = "",
+    /** What the tool returned, redacted and cut the same way; empty while it is still running. */
+    val output: String = "",
+)
+
+/** A step from a server `tool` event or a stored message's `tools` entry. */
+internal fun toolStepFrom(o: JSONObject): ToolStep = ToolStep(
+    id = o.optString("id"),
+    name = o.optString("name"),
+    state = o.optString("state").ifBlank { "done" },
+    input = o.optString("input"),
+    output = o.optString("output"),
+)
 
 /** One line of the chat tab. [role] is "user", "agent" or "error". */
 data class ChatMessage(
@@ -91,7 +108,12 @@ internal fun mergeToolStep(steps: List<ToolStep>, step: ToolStep): List<ToolStep
     val index = steps.indexOfLast {
         if (step.id.isNotBlank()) it.id == step.id else it.name == step.name && it.state == "running"
     }
-    return if (index >= 0) steps.toMutableList().also { it[index] = step } else steps + step
+    return if (index >= 0) {
+        val old = steps[index]
+        steps.toMutableList().also { it[index] = step.copy(input = step.input.ifBlank { old.input }, output = step.output.ifBlank { old.output }) }
+    } else {
+        steps + step
+    }
 }
 
 /**
@@ -134,7 +156,7 @@ internal fun messageFromServer(o: JSONObject): ChatMessage = ChatMessage(
     seq = o.optInt("seq"),
     tools = ApiClient.arrayOf(o, "tools").objects()
         .filter { it.optString("name").isNotBlank() }
-        .map { ToolStep(it.optString("id"), it.optString("name"), it.optString("state").ifBlank { "done" }) },
+        .map { toolStepFrom(it) },
 )
 
 /** The two read-only server documents Settings can show. */
@@ -736,7 +758,7 @@ class AppViewModel(context: Context, private val api: ApiClient) : ViewModel() {
                     when (event) {
                         "delta" -> updateReply { it.copy(text = it.text + data.optString("text")) }
                         "tool" -> updateReply {
-                            val step = ToolStep(data.optString("id"), data.optString("name"), data.optString("state"))
+                            val step = toolStepFrom(data)
                             it.copy(tools = mergeToolStep(it.tools, step))
                         }
                         "message" -> reply = data.optString("reply").ifBlank { "(no reply)" }

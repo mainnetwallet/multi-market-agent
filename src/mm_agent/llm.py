@@ -104,6 +104,7 @@ class LLMClient:
         self.timeout = settings.llm_timeout_seconds
         self.api_key = __import__("os").environ.get("LLM_API_KEY", "").strip()
         self.enabled = bool(self.base_url and self.model)
+        self.max_output_tokens = int(getattr(settings, "llm_max_output_tokens", 0) or 0)
 
     @property
     def name(self) -> str:
@@ -126,6 +127,8 @@ class LLMClient:
             "messages": messages,
             "temperature": temperature,
         }
+        if self.max_output_tokens:
+            payload["max_tokens"] = self.max_output_tokens
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice

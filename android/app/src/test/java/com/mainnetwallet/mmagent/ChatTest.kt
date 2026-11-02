@@ -95,6 +95,14 @@ class ChatTest {
     }
 
     @Test
+    fun aFinishedToolStepKeepsTheInputItWasSentWithAndShowsTheOutput() {
+        val running = mergeToolStep(emptyList(), ToolStep("c1", "place_limit_order", "running", input = "{\"price\":\"0.72\"}"))
+        val failed = mergeToolStep(running, ToolStep("c1", "place_limit_order", "error", output = "{\"error\":\"geoblocked\"}"))
+        assertEquals("{\"price\":\"0.72\"}", failed.single().input)
+        assertEquals("{\"error\":\"geoblocked\"}", failed.single().output)
+    }
+
+    @Test
     fun aToolStepWithoutAnIdMatchesTheRunningStepOfTheSameName() {
         val running = mergeToolStep(emptyList(), ToolStep("", "get_status", "running"))
         assertEquals(listOf(ToolStep("", "get_status", "error")), mergeToolStep(running, ToolStep("", "get_status", "error")))
