@@ -25,7 +25,7 @@ The app can now place orders, cancel them and move money. What protects that:
 | Wrong withdrawal address | The address format and its EIP-55 checksum are validated, and the chain and token must be on the bridge's own list (EVM chains only). With `FUNDS_REQUIRE_ALLOWLIST=true` only allowlisted addresses may be used, and a new address waits out a cooling period (default 24 h) before first use. With it `false` (the default), the Withdraw page takes a typed-in receiver, chain and token, so a stolen session could send funds to any address: the hold window (cancellable), the daily limit and the quote shown before confirming are then the only guards. Turn the setting on if that is not acceptable. |
 | Double submit | One client id per user intent, one idempotency key per intent, and the venue's own client order id where it has one. UNKNOWN outcomes are never resent. |
 | Key custody | The funds module uses its own signer secret (`FUNDS_SIGNER_PRIVATE_KEY`), never a trading key. Trading keys keep no withdrawal permission. |
-| Backend restart | Resting orders belong to the venue, not to the backend. The Polymarket order heartbeat is deliberately **not** used, because its first accepted send enables timeout cancellation for every open order with no disarm — a restart would silently cancel resting orders. The app shows the heartbeat state in Settings. |
+| Backend restart | Resting orders belong to the venue, not to the backend. The Polymarket order heartbeat is **off** by default, because its first accepted send enables timeout cancellation for every open order with no disarm — a restart would silently cancel resting orders. An operator can opt in (`POLYMARKET_WRITE_API` and `POLYMARKET_HEARTBEAT_ENABLED`, a step-up token and a typed acknowledgement); nothing starts it automatically. The app shows the heartbeat state in Settings and under Markets > Data > System. |
 | Stale data | Money-adding and money-out actions are disabled when the server is unreachable or a refresh is in flight: the price and the balance on screen are then unknown. Cancel and Pause stay available whenever the server is reachable. |
 | Price/unit drift | One normalizer for every venue price; the startup unit guard halts all trading on a mismatch. |
 | Venue silent failure | Order and withdrawal states are reported exactly as the server reports them. The app never says "sent" or "filled" unless the server did. |
@@ -132,3 +132,14 @@ manually on each venue, rotate all secrets, and rebuild the host.
   text, and a venue 429 pauses the poller for its `Retry-After`. The response layouts are from the docs only (`DOCS_FINDINGS.md`
   section 9). Display data only: nothing in the stream or the poller can place an order.
 - Secrets: nothing in `live/` reads or logs a key, token or cookie; do not put a GitHub or API token in a URL, a remote or a log.
+
+## Polymarket write-class API (`polymarket_write.py`)
+
+Every write route is off until an operator sets `POLYMARKET_WRITE_API=true` **and** the family flag
+(`POLYMARKET_WRITE_ORDERS`, `_KEYS`, `_COMBOS_RFQ`, `POLYMARKET_HEARTBEAT_ENABLED`). Each call also needs a
+session, an `Idempotency-Key`, a single-use step-up token for action `polymarket_write`, and for actions that
+cannot be undone a typed `confirm` text. Every attempt is audited before the venue is called. An unknown
+outcome is reported as `UNKNOWN`, stored under the idempotency key and never resent. None of it is a chat tool.
+Not built on purpose (see `GET /v1/polymarket/write`, `not_built`): key creation (the secret would travel over
+HTTP), raw relayer submit, withdrawals/transfers/approvals (stay in `mm_agent.funds`), combo quote accept,
+Perps trading.

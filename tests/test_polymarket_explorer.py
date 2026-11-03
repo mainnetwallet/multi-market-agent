@@ -60,8 +60,8 @@ def test_every_route_has_known_group_host_and_placeholders() -> None:
 def test_catalog_lists_every_route_with_class_and_evidence() -> None:
     cat = PolymarketExplorer.catalog()
     assert len(cat["routes"]) == len(ROUTES)
-    assert {r["class"] for r in cat["routes"]} == {"R0"}
-    assert {r["evidence"] for r in cat["routes"]} <= {"V", "U"}
+    assert {r["class"] for r in cat["routes"]} == {"R0", "X"}
+    assert {r["evidence"] for r in cat["routes"]} <= {"V", "U", "S"}
 
 
 # ── request shape ───────────────────────────────────────────────────────────────────────────
@@ -305,7 +305,7 @@ def test_catalog_route_merges_registry_account_and_data_rows(harness: Any, monke
     body = client.get("/v1/polymarket/catalog").json()
     keys = {r["key"] for r in body["routes"]}
     assert {"gamma.sports", "clob.books", "account.rewards.day", "data.positions", "data.leaderboard"} <= keys
-    assert {r["class"] for r in body["routes"]} == {"R0", "R1"}
+    assert {r["class"] for r in body["routes"]} == {"R0", "R1", "X"}
     assert body["groups"][0]["id"] == "wallet"
 
 
@@ -357,3 +357,49 @@ def test_adapter_has_the_new_clients_and_does_not_advertise_batch_orders(tmp_pat
     venue = PolymarketVenue(make_settings(tmp_path))
     assert isinstance(venue.explorer, PolymarketExplorer) and isinstance(venue.account, PolymarketAccount)
     assert venue.caps.batch_orders is False
+
+
+# ── perps public reads, combos and relayer reads ───────────────────────────────────────────
+
+
+def test_perps_combos_and_relayer_rows_hit_their_own_hosts() -> None:
+    rec = _Rec([{"id": 1}])
+    ex = rec.explorer()
+    run(ex.call("perps.tickers", {"instrument_id": "3"}))
+    run(ex.call("perps.book", {"instrument_id": "3", "depth": "100"}))
+    run(ex.call("perps.klines", {"instrument_id": "3", "interval": "1H", "start_timestamp": "1700000000000"}))
+    run(ex.call("combos.markets", {"exclude": "a,b"}))
+    run(ex.call("relayer.relay_payload", {"address": USER, "type": "safe"}))
+    run(ex.call("relayer.tx", {"transaction_id": "abc-1"}))
+    urls = [str(r.url) for r in rec.requests]
+    assert urls[0] == "https://api.perpetuals.polymarket.com/v1/info/tickers?instrument_id=3"
+    assert urls[1].endswith("/v1/info/book?instrument_id=3&depth=100")
+    assert "interval=1h" in urls[2] and "start_timestamp=1700000000000" in urls[2]
+    assert urls[3].startswith("https://combos-rfq-api.polymarket.com/v1/rfq/combo-markets?exclude=a%2Cb")
+    assert urls[4].startswith("https://relayer-v2.polymarket.com/relay-payload?") and "type=SAFE" in urls[4]
+    assert urls[5] == "https://relayer-v2.polymarket.com/v1/account/transactions/abc-1"
+
+
+def test_perps_rows_are_class_x_and_validate_before_sending() -> None:
+    rec = _Rec()
+    ex = rec.explorer()
+    assert {r["class"] for r in ex.catalog()["routes"] if r["host"] == "perps"} == {"X"}
+    for key, bad in (
+        ("perps.book", {"instrument_id": "3", "depth": "7"}),
+        ("perps.book", {}),
+        ("perps.klines", {"instrument_id": "3", "interval": "2h"}),
+        ("perps.tickers", {"instrument_id": "-1"}),
+        ("perps.registered", {"address": "nope"}),
+        ("combos.markets", {"nope": "1"}),
+    ):
+        with pytest.raises(ValueError):
+            run(ex.call(key, bad))
+    assert rec.requests == []
+
+
+def test_unverified_sdk_rows_report_not_available_on_404() -> None:
+    rec = _Rec({"error": "not found"}, status=404)
+    ex = rec.explorer()
+    with pytest.raises(DataAPIError) as err:
+        run(ex.call("perps.tickers", {}))
+    assert err.value.status == 404 and "not available" in str(err.value)

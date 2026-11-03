@@ -50,10 +50,20 @@ HOSTS: dict[str, str] = {
     "data": "https://data-api.polymarket.com",
     "relayer": "https://relayer-v2.polymarket.com",
     "site": "https://polymarket.com",
+    "perps": "https://api.perpetuals.polymarket.com",
+    "combos": "https://combos-rfq-api.polymarket.com",
 }
 
 # Official limits, requests per 10 seconds (docs.polymarket.com/api-reference/rate-limits).
-HOST_LIMITS: dict[str, int] = {"gamma": 4000, "clob": 9000, "data": 1000, "relayer": 100, "site": 100}
+HOST_LIMITS: dict[str, int] = {
+    "gamma": 4000,
+    "clob": 9000,
+    "data": 1000,
+    "relayer": 100,
+    "site": 100,
+    "perps": 1000,
+    "combos": 500,
+}
 WINDOW = 10.0
 
 _SLUG = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_.]{0,199}")
@@ -122,6 +132,8 @@ def tokens_side_pairs(name: str, value: Any) -> str:
 
 
 _LIMIT = integer(1, 1000)
+_PINT = integer(0, 1_000_000)
+_MS = integer(0, 18_446_744_073_709)
 _OFFSET = integer(0, 1_000_000)
 _ORDER = word
 _BOOL = boolean
@@ -161,7 +173,7 @@ class Route:
             "host": self.host,
             "method": self.method,
             "path": self.path,
-            "class": "R0",
+            "class": "X" if self.host == "perps" else "R0",
             "path_params": list(self.path_params),
             "params": [
                 {"name": name, "type": label(check), "hint": self.hint.get(name, "")}
@@ -779,6 +791,166 @@ ROUTES: dict[str, Route] = dict(
             needs_any=("address",),
             evidence="V",
         ),
+        # ── Relayer reads (path read in SDK 0.15.0; 404 is reported as "not available") ───
+        _r(
+            "relayer.relay_payload",
+            "wallet",
+            "Relayer payload (nonce and address)",
+            "relayer",
+            "/relay-payload",
+            params={"address": address, "type": enum("SAFE", "PROXY", "SAFE-CREATE", "WALLET", "WALLET-CREATE")},
+            needs_any=("address", "type"),
+            evidence="S",
+        ),
+        _r(
+            "relayer.tx_params",
+            "wallet",
+            "Relayer execute params",
+            "relayer",
+            "/v1/account/transactions/params",
+            params={"address": address, "type": enum("SAFE", "PROXY", "SAFE-CREATE", "WALLET", "WALLET-CREATE")},
+            needs_any=("address", "type"),
+            evidence="S",
+        ),
+        _r(
+            "relayer.tx",
+            "wallet",
+            "Relayer transaction by id",
+            "relayer",
+            "/v1/account/transactions/{transaction_id}",
+            path_params={"transaction_id": ident},
+            evidence="S",
+        ),
+        # ── Combos (public maker REST) ────────────────────────────────────────────────────
+        _r(
+            "combos.markets",
+            "combos",
+            "Combo markets",
+            "combos",
+            "/v1/rfq/combo-markets",
+            params={"exclude": csv_of(ident, 100), "cursor": cursor},
+            ttl=30,
+            paging="keyset",
+            result="table",
+            evidence="S",
+            note="Keyset paging: pass next_cursor as cursor. 100 per page.",
+        ),
+        # ── Perps public market data (separate product, own host) ─────────────────────────
+        _r(
+            "perps.registered",
+            "perps",
+            "Is an address registered",
+            "perps",
+            "/v1/info/registered",
+            params={"address": address},
+            needs_any=("address",),
+            evidence="S",
+        ),
+        _r(
+            "perps.instruments",
+            "perps",
+            "Instruments",
+            "perps",
+            "/v1/info/instruments",
+            params={"instrument_id": _PINT, "category": word},
+            ttl=300,
+            result="table",
+            evidence="S",
+        ),
+        _r(
+            "perps.tickers",
+            "perps",
+            "Tickers",
+            "perps",
+            "/v1/info/tickers",
+            params={"instrument_id": _PINT},
+            ttl=5,
+            result="table",
+            evidence="S",
+        ),
+        _r(
+            "perps.statistics",
+            "perps",
+            "24h statistics",
+            "perps",
+            "/v1/info/statistics",
+            params={"instrument_id": _PINT},
+            ttl=5,
+            result="table",
+            evidence="S",
+        ),
+        _r(
+            "perps.book",
+            "perps",
+            "Order book",
+            "perps",
+            "/v1/info/book",
+            params={"instrument_id": _PINT, "depth": enum("10", "100", "500", "1000")},
+            needs_any=("instrument_id",),
+            evidence="S",
+        ),
+        _r(
+            "perps.fees",
+            "perps",
+            "Fee schedule",
+            "perps",
+            "/v1/info/fees",
+            params={"instrument_id": _PINT},
+            ttl=300,
+            result="table",
+            evidence="S",
+        ),
+        _r(
+            "perps.klines",
+            "perps",
+            "Candles",
+            "perps",
+            "/v1/info/klines",
+            params={
+                "instrument_id": _PINT,
+                "interval": enum("1s", "1m", "5m", "15m", "1h", "4h", "1d", "1w", fold="lower"),
+                "start_timestamp": _MS,
+                "end_timestamp": _MS,
+            },
+            needs_any=("instrument_id",),
+            result="table",
+            evidence="S",
+            hint={"start_timestamp": "epoch ms", "end_timestamp": "epoch ms"},
+        ),
+        _r(
+            "perps.trades",
+            "perps",
+            "Recent trades",
+            "perps",
+            "/v1/info/trades",
+            params={"instrument_id": _PINT, "start_timestamp": _MS, "end_timestamp": _MS},
+            needs_any=("instrument_id",),
+            result="table",
+            evidence="S",
+            hint={"start_timestamp": "epoch ms", "end_timestamp": "epoch ms"},
+        ),
+        _r(
+            "perps.funding",
+            "perps",
+            "Funding history",
+            "perps",
+            "/v1/info/funding",
+            params={"instrument_id": _PINT, "start_timestamp": _MS, "end_timestamp": _MS},
+            needs_any=("instrument_id",),
+            result="table",
+            evidence="S",
+            hint={"start_timestamp": "epoch ms", "end_timestamp": "epoch ms"},
+        ),
+        _r(
+            "perps.builder",
+            "perps",
+            "Builder status",
+            "perps",
+            "/v1/info/builder",
+            params={"address": address},
+            needs_any=("address",),
+            evidence="S",
+        ),
         # ── Misc ──────────────────────────────────────────────────────────────────────────
         _r(
             "site.geoblock",
@@ -802,6 +974,8 @@ GROUPS: tuple[tuple[str, str], ...] = (
     ("comments", "Comments"),
     ("rewards", "Rewards"),
     ("markets", "Markets"),
+    ("perps", "Perps"),
+    ("combos", "Combos"),
     ("system", "System"),
 )
 
@@ -898,7 +1072,7 @@ class PolymarketExplorer:
         try:
             result = await self._send(route, url, query)
         except DataAPIError as exc:
-            if exc.status == 404 and route.evidence == "U":
+            if exc.status == 404 and route.evidence in {"U", "S"}:
                 raise DataAPIError(404, "not available on the venue (path not verified)", url=url) from exc
             raise
         if cache_key:

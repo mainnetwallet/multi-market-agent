@@ -700,6 +700,17 @@ assistant (or anything it reads) to be able to name a new receiver.
 
 ---
 
+## Polymarket write-class API (off by default)
+
+`GET /v1/polymarket/write` lists every write action, whether it is enabled and which flags turn it on.
+`POST /v1/polymarket/write/{action}` runs one. Actions: `orders.cancel_ids`, `orders.batch` (up to 15 limit
+orders, each through the normal risk checks, stops at the first failure), `notifications.drop`,
+`keys.api.delete`, `keys.builder.revoke`, `session.authorize`, `session.revoke`, `combos.request_quote`,
+`combos.collateral_plan`, `heartbeat.send`. The order heartbeat loop has its own routes
+(`/v1/polymarket/heartbeat/start|stop`). Gates: `POLYMARKET_WRITE_API` plus the family flag (both default
+`false`), `Idempotency-Key`, step-up token (action `polymarket_write`), typed `confirm` where needed, audit row.
+Perps public data and combo markets are read-only rows in Markets > Data (groups Perps and Combos).
+
 ## Known gaps / limitations
 
 - **No real order has been attempted.** Live executors are implemented and

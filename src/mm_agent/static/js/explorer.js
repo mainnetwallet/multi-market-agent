@@ -235,7 +235,13 @@ export function mountExplorer(root, opts = {}) {
         const val = v.value !== undefined ? (typeof v.value === "object" ? JSON.stringify(v.value).slice(0, 60) : String(v.value).slice(0, 60)) : v.detail || (v.skew_seconds !== undefined ? v.skew_seconds + "s skew" : "");
         return `<div class="xp-kv"><span>${esc(k)}</span><b style="color:var(${v.ok ? "--accent" : "--danger"})">${v.ok ? "ok" : "problem"} ${esc(val)}</b></div>`;
       });
-      out(`<div class="xp-obj">${rows.join("")}</div>`);
+      let writes = "";
+      try {
+        writes = writeStatusHtml(await getJson("/v1/polymarket/write"));
+      } catch (e) {
+        writes = "";
+      }
+      out(`<div class="xp-obj">${rows.join("")}</div>${writes}`);
     } catch (e) {
       out(`<div style="color:var(--danger)">${esc(e.message)}</div>`);
     }
@@ -266,6 +272,18 @@ export function mountExplorer(root, opts = {}) {
 
   load();
   return { reload: load };
+}
+
+/** Read-only status of the write-class API. There are no buttons here on purpose: it is a status list. */
+export function writeStatusHtml(j) {
+  if (!j || !Array.isArray(j.actions)) return "";
+  const rows = j.actions.map(
+    (a) =>
+      `<div class="xp-kv"><span>${esc(a.key)}</span><b style="color:var(${a.enabled ? "--accent" : "--muted"})">${a.enabled ? "enabled" : "off"}${a.ack ? " · typed text" : ""}</b></div>`,
+  );
+  const hb = j.heartbeat || {};
+  const head = `<div class="muted tiny" style="margin-top:12px">Write API ${j.enabled ? "on" : "off"} (env flags, step-up and Idempotency-Key needed). Heartbeat ${hb.running ? "running" : "off"}.</div>`;
+  return head + `<div class="xp-obj">${rows.join("")}</div>`;
 }
 
 /** Collapsible "Market insights" for the market sheet: holders, open interest, resolution, fee, tick, CLOB info. */

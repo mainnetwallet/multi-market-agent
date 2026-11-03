@@ -11,6 +11,7 @@ import {
   renderResult,
   tableHtml,
   mountMarketInsights,
+  writeStatusHtml,
 } from "../../src/mm_agent/static/js/explorer.js";
 
 const route = (o = {}) => ({ key: "data.trades", params: [{ name: "user" }, { name: "limit" }], path_params: [], needs_any: [], needs_one: [], paging: "cursor", host: "data", result: "table", ...o });
@@ -91,4 +92,21 @@ test("market insights: asks holders, oi, resolutions, info, fee and tick", async
   assert.ok(seen.some((u) => u.includes("data.holders") && u.includes("include_pnl=true")));
   assert.ok(seen.some((u) => u.includes("clob.fee_rate") && u.includes("token_id=777")));
   assert.match(el.innerHTML, /Top holders/);
+});
+
+test("writeStatusHtml lists every action as a status line, never a button", () => {
+  const html = writeStatusHtml({
+    enabled: false,
+    heartbeat: { running: false },
+    actions: [
+      { key: "orders.cancel_ids", enabled: false, ack: "" },
+      { key: "keys.api.delete", enabled: true, ack: "DELETE API KEY" },
+    ],
+  });
+  assert.match(html, /Write API off/);
+  assert.match(html, /orders\.cancel_ids/);
+  assert.match(html, /enabled · typed text/);
+  assert.doesNotMatch(html, /<button|<form|<input/);
+  assert.equal(writeStatusHtml(null), "");
+  assert.equal(writeStatusHtml({}), "");
 });

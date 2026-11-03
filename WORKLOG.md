@@ -263,3 +263,19 @@ Status words: done / partial / missing / cannot verify here. "(fixed in P6)" mar
 - Tests: `tests/test_polymarket_explorer.py` (30 cases), `tests/js/explorer.test.mjs` (10), security canary.
 - Not done: write routes, Perps, PolyBolt rewrite (F1), Android screen, live fixtures (sandbox cannot reach polymarket.com).
 - Owner must run: `python scripts/pm_api_smoke.py`; open Markets > Data on a phone; revoke the GitHub token pasted in chat.
+
+
+## Polymarket write-class API and remaining read rows
+
+- Read rows added to the explorer registry: Perps public (`/v1/info/*`, class X, own host), combo markets
+  (`combos-rfq-api`), relayer `/relay-payload`, `/v1/account/transactions/params` and `/transactions/{id}`.
+  Evidence `S` = path read in SDK 0.15.0, not seen live; a 404 is shown as "not available".
+- New `polymarket_write.py`: ten flag-gated write actions plus an opt-in `HeartbeatLoop`. New flags in `config.py`
+  and `.env.example`, step-up action `polymarket_write`, routes under `/v1/polymarket/write` and `/heartbeat`.
+  Capabilities now report the heartbeat from the flags. Markets > Data > System shows a read-only status list.
+- `orders.batch` goes through `full.place_manual_order` per order (caps, ceilings, UNKNOWN handling), not the
+  venue's atomic `/orders`, so `caps.batch_orders` stays `False`.
+- Not built, with reasons: see `not_built` in `GET /v1/polymarket/write` and SECURITY.md.
+- Tests: `tests/test_polymarket_write.py` (22), new cases in `test_polymarket_explorer.py` and `explorer.test.mjs`.
+  Service worker cache `mm-agent-v10`.
+- Owner must: set the flags only when ready, revoke the GitHub token pasted in chat, run `scripts/pm_api_smoke.py`.

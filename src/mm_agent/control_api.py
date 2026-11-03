@@ -792,6 +792,133 @@ def create_app(
             checks["clock"] = clock_skew(checks["time"]["value"], _time.time())
         return {"ok": True, "checks": checks}
 
+    # ── Polymarket write-class API: off by default, every gate in polymarket_write.py ──────────
+    from .polymarket_write import HeartbeatLoop, PolymarketWriter, WriteError
+    from .polymarket_write import catalog as write_catalog
+
+    async def _pm_secure() -> Any:
+        secure = getattr(registry.adapters.get(VenueId.POLYMARKET), "_secure", None)
+        if secure is None:
+            raise WriteError(404, "no_venue", "polymarket is not enabled")
+        return await secure()
+
+    async def _pm_guarded_order(
+        *,
+        actor: str,
+        market_id: str,
+        outcome: str,
+        side: str,
+        price: Any,
+        shares: Any,
+        post_only: bool = False,
+        client_id: str | None = None,
+    ) -> dict[str, Any]:
+        """One order of a batch: the same checks and caps as POST /v1/orders/limit."""
+
+        return await full.place_manual_order(
+            venue=VenueId.POLYMARKET,
+            market_id=str(market_id),
+            outcome=Outcome(str(outcome).upper()),
+            side=Side(str(side).upper()),
+            price=Decimal(str(price)),
+            shares=Decimal(str(shares)),
+            amount_usd=None,
+            order_type=OrderType.GTC,
+            post_only=bool(post_only),
+            client_id=client_id,
+            actor=actor,
+        )
+
+    pm_writer = PolymarketWriter(_pm_secure, place_order=_pm_guarded_order)
+    pm_heartbeat = HeartbeatLoop(_pm_secure)
+
+    def _write_fail(exc: WriteError | FullControlError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status,
+            content={"ok": False, "error": {"code": exc.code, "message": str(exc)}},
+        )
+
+    @app.get("/v1/polymarket/write")
+    async def polymarket_write_catalog(_: str = Depends(require_auth)) -> dict[str, Any]:
+        """Every write-class action, whether it is enabled, the flags that turn it on, and the endpoints
+        that are deliberately not built. Read-only: this route changes nothing."""
+
+        return {"ok": True, **write_catalog(settings), "heartbeat": pm_heartbeat.state(settings)}
+
+    @app.post("/v1/polymarket/write/{action}")
+    async def polymarket_write(
+        action: str,
+        request: Request,
+        user: str = Depends(require_auth),
+        x_stepup: str | None = Header(None, alias="X-Stepup-Token"),
+    ) -> Any:
+        """Needs the global flag, the family flag, an Idempotency-Key, a step-up token (action
+        ``polymarket_write``) and, for irreversible actions, the typed ``confirm`` text. Never retried."""
+
+        from .polymarket_write import ACTIONS, gate_state
+
+        spec = ACTIONS.get(action)
+        if spec is None:
+            raise HTTPException(status_code=404, detail="unknown write action; see GET /v1/polymarket/write")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="the body must be a JSON object")
+        enabled, reason = gate_state(settings, spec.family)
+        if not enabled:  # checked first so a disabled route spends no step-up token and no idempotency slot
+            return _write_fail(WriteError(403, "write_disabled", f"{action} is disabled: {reason}"))
+        who = actor(request)
+        try:
+            stored, request_hash = full.idempotent(_idempotency_key(request), f"pm.write.{action}", body)
+            if stored is not None:
+                return {"ok": True, "replayed": True, **stored}
+            full.require_stepup(x_stepup, _session_id(request, user), "polymarket_write")
+            agent.store.audit(who, f"polymarket.write.{action}", {k: v for k, v in body.items() if k != "confirm"})
+            result = await pm_writer.execute(action, body, settings=settings, actor=who)
+        except (WriteError, FullControlError) as exc:
+            return _write_fail(exc)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)[:200]) from exc
+        full.remember(_idempotency_key(request) or "", f"pm.write.{action}", request_hash, result)
+        agent.store.audit(who, f"polymarket.write.{action}.result", {"outcome": result.get("outcome")})
+        return {"ok": result.get("outcome") == "OK", **result}
+
+    @app.post("/v1/polymarket/heartbeat/start")
+    async def polymarket_heartbeat_start(
+        request: Request,
+        user: str = Depends(require_auth),
+        x_stepup: str | None = Header(None, alias="X-Stepup-Token"),
+    ) -> Any:
+        """Starts the order heartbeat loop. Off unless POLYMARKET_HEARTBEAT_ENABLED is true. A restart
+        cancels every resting order, so the body must carry the typed acknowledgement."""
+
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        confirm = str(body.get("confirm", "")) if isinstance(body, dict) else ""
+        who = actor(request)
+        try:
+            if not (settings.polymarket_write_api and settings.polymarket_heartbeat_enabled):
+                raise WriteError(
+                    403, "write_disabled", "POLYMARKET_WRITE_API and POLYMARKET_HEARTBEAT_ENABLED must be true"
+                )
+            full.require_stepup(x_stepup, _session_id(request, user), "polymarket_write")
+            agent.store.audit(who, "polymarket.heartbeat.start", {})
+            return {"ok": True, **await pm_heartbeat.start(settings, confirm)}
+        except (WriteError, FullControlError) as exc:
+            return _write_fail(exc)
+
+    @app.post("/v1/polymarket/heartbeat/stop")
+    async def polymarket_heartbeat_stop(request: Request, _: str = Depends(require_auth)) -> dict[str, Any]:
+        """Stops sending beats. The venue's timeout still applies: resting orders are cancelled soon after."""
+
+        agent.store.audit(actor(request), "polymarket.heartbeat.stop", {})
+        await pm_heartbeat.stop()
+        return {"ok": True, **pm_heartbeat.state(settings)}
+
     @app.get("/v1/crypto/spot")
     async def crypto_spot(
         symbol: str, window_start: int | None = None, _: str = Depends(require_auth)
