@@ -54,6 +54,7 @@ STEPUP_ACTIONS = (
     "allowlist_add",
     "ceiling_raise",
     "approvals",
+    "polymarket_write",
 )
 
 # Official venue pages, shown to the operator when a feature has no API.
@@ -139,12 +140,12 @@ class FullControlService:
             "cancel_all": True,
             "heartbeat": {
                 "venue": "polymarket",
-                "enabled": False,
+                "enabled": bool(self.settings.polymarket_write_api and self.settings.polymarket_heartbeat_enabled),
                 "reason": (
-                    "The Polymarket heartbeat has no disarm: the first accepted send enables "
-                    "timeout cancellation for every open order, so a backend restart would "
-                    "silently cancel resting orders. It is deliberately not used."
+                    "Off unless an operator turns it on and accepts that a restart cancels every resting order. "
+                    "The first accepted send arms timeout cancellation and has no disarm."
                 ),
+                "env": ["POLYMARKET_WRITE_API", "POLYMARKET_HEARTBEAT_ENABLED"],
             },
             "venues": venues,
         }

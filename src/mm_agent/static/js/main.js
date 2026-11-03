@@ -1,6 +1,7 @@
 /* Entry point: exposes window.MMLive to the classic script in index.html (trade sheet, discover cards, search box). */
 import { LiveClient } from "./live.js";
 import { mountLiveView } from "./view.js";
+import { mountExplorer, mountMarketInsights } from "./explorer.js";
 
 const client = new LiveClient();
 const URL_RE = /^https:\/\/(www\.)?(polymarket\.com|kalshi\.com|limitless\.exchange)\//i;
@@ -24,4 +25,5 @@ window.MMLive = {
     return { venue: v.venue, id: String(v.event_id || v.slug) };
   },
 };
+window.MMExplorer = { mount: (root) => mountExplorer(root), insights: (el, market) => mountMarketInsights(el, market) };
 document.dispatchEvent(new Event("mmlive-ready"));

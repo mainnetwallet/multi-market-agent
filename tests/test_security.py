@@ -66,3 +66,51 @@ def test_repo_has_no_secret_patterns() -> None:
         if "BEGIN PRIVATE KEY" in text and path.name != "test_security.py":
             offenders.append(str(path))
     assert not offenders, offenders
+
+
+def test_polymarket_account_reads_never_return_credentials() -> None:
+    """Canary: no secret-looking field and no full API key id leaves the read-only account module."""
+
+    import asyncio
+
+    from mm_agent.polymarket_account import PolymarketAccount, plain
+
+    class Secure:
+        async def fetch_api_keys(self) -> tuple[str, ...]:
+            return ("CANARY-API-KEY-0000-1111",)
+
+        async def get_notifications(self) -> tuple[dict[str, object], ...]:
+            return (
+                {"type": "fill", "secret": "CANARY-SECRET", "passphrase": "CANARY-PASS", "signature": "CANARY-SIG"},
+            )
+
+    async def get() -> Secure:
+        return Secure()
+
+    account = PolymarketAccount(get)
+    out = str(asyncio.run(account.call("api_keys"))) + str(asyncio.run(account.call("notifications")))
+    for canary in ("CANARY-API-KEY", "CANARY-SECRET", "CANARY-PASS", "CANARY-SIG"):
+        assert canary not in out
+    assert plain({"Authorization": "Bearer x", "ok": 1}) == {"ok": 1}
+
+
+def test_write_results_never_carry_credentials() -> None:
+    import asyncio
+
+    from mm_agent import polymarket_write as pw
+
+    class Secure:
+        async def delete_api_key(self) -> dict[str, str]:
+            return {"ok": "yes", "secret": "CANARY-SECRET", "passphrase": "CANARY-PASS", "apiKey": "CANARY-KEY"}
+
+    class On:
+        polymarket_write_api = True
+        polymarket_write_keys = True
+
+    async def get() -> Secure:
+        return Secure()
+
+    out = asyncio.run(
+        pw.PolymarketWriter(get).execute("keys.api.delete", {"confirm": "DELETE API KEY"}, settings=On(), actor="t")
+    )
+    assert out["outcome"] == "OK" and "CANARY" not in str(out)

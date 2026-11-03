@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     polymarket_wallet_address: str = ""
     polymarket_signature_type: int = 3
     polymarket_allow_real_test: bool = True
+    # Write-class Polymarket API (see polymarket_write.py). Every flag defaults to false.
+    polymarket_write_api: bool = False
+    polymarket_write_orders: bool = False
+    polymarket_write_keys: bool = False
+    polymarket_write_combos_rfq: bool = False
+    polymarket_heartbeat_enabled: bool = False
     kalshi_api_key_id: str = ""
     kalshi_private_key_path: str = ""
     kalshi_base_url: str = "https://api.elections.kalshi.com/trade-api/v2"

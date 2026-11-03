@@ -49,7 +49,9 @@ from ..domain import (
     to_decimal,
     utcnow,
 )
+from ..polymarket_account import PolymarketAccount
 from ..polymarket_data import ClobPublic, PolymarketData
+from ..polymarket_explorer import PolymarketExplorer
 from . import polymarket_signing
 from .base import HttpVenue, MarketQuery, Page, VenueAuthError, VenueUnavailableError
 
@@ -183,7 +185,7 @@ class PolymarketVenue(HttpVenue):
         post_only=True,
         market_unbounded=True,
         amend=False,
-        batch_orders=True,
+        batch_orders=False,  # no POST /orders code exists yet; do not advertise it
         approvals_needed=True,
         collateral_asset="pUSD",
         deposit=True,
@@ -211,6 +213,9 @@ class PolymarketVenue(HttpVenue):
         # public Data API v2 and CLOB price routes (other wallets, holders, open interest, leaderboards, ...)
         self.market_data = PolymarketData(lambda: self.client)
         self.clob_public = ClobPublic(lambda: self.client)
+        # every other read-only route (Gamma, CLOB extras, rewards, system) and the signed-in account's reads
+        self.explorer = PolymarketExplorer(lambda: self.client)
+        self.account = PolymarketAccount(self._secure)
         self.test_orders = False
         self._test_error: str | None = None
         self._unresolvable_assets: set[str] = set()

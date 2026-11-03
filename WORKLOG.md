@@ -250,3 +250,32 @@ Status words: done / partial / missing / cannot verify here. "(fixed in P6)" mar
 - `python scripts/probe_live_shapes.py` and `python scripts/live_hub_check.py` on a machine that reaches the venues; replace the synthetic fixtures with the scrubbed real ones; check `/live_data/batch` parameter style (comma-joined vs repeated) and `/milestones?related_event_ticker=`; then set `LIVE_VERIFIED` only if they match.
 - PWA by hand: a soccer game (score, tabs, delayed note), a bracket (ordered rows, chart ranges), an Up/Down (countdown, spot vs price to beat), a Kalshi sports event (score line); cut the network and watch the indicator flip.
 - Revoke the GitHub token that was pasted into the chat; it was never used by this audit (GH_TOKEN was not set in the sandbox).
+
+
+## Polymarket Data tab (read-only API gap work)
+
+- Added `polymarket_explorer.py` (about 55 public rows: Gamma markets/tags/series/comments/sports/teams/profile,
+  CLOB batch and variant prices, fee/tick/neg-risk, market info, time, health, sampling lists, rewards, rebates,
+  Data combos/builders/accounting, relayer `/deployed`, geoblock) and `polymarket_account.py` (12 own-account reads).
+- New routes: `/v1/polymarket/catalog`, `/explore/{key}`, `/account/{key}`, `/system`. UI: Markets > Data, plus
+  Market insights in the market sheet. Service worker cache `mm-agent-v9`.
+- Fixed: `caps.batch_orders` was advertised without code; now `False`.
+- Tests: `tests/test_polymarket_explorer.py` (30 cases), `tests/js/explorer.test.mjs` (10), security canary.
+- Not done: write routes, Perps, PolyBolt rewrite (F1), Android screen, live fixtures (sandbox cannot reach polymarket.com).
+- Owner must run: `python scripts/pm_api_smoke.py`; open Markets > Data on a phone; revoke the GitHub token pasted in chat.
+
+
+## Polymarket write-class API and remaining read rows
+
+- Read rows added to the explorer registry: Perps public (`/v1/info/*`, class X, own host), combo markets
+  (`combos-rfq-api`), relayer `/relay-payload`, `/v1/account/transactions/params` and `/transactions/{id}`.
+  Evidence `S` = path read in SDK 0.15.0, not seen live; a 404 is shown as "not available".
+- New `polymarket_write.py`: ten flag-gated write actions plus an opt-in `HeartbeatLoop`. New flags in `config.py`
+  and `.env.example`, step-up action `polymarket_write`, routes under `/v1/polymarket/write` and `/heartbeat`.
+  Capabilities now report the heartbeat from the flags. Markets > Data > System shows a read-only status list.
+- `orders.batch` goes through `full.place_manual_order` per order (caps, ceilings, UNKNOWN handling), not the
+  venue's atomic `/orders`, so `caps.batch_orders` stays `False`.
+- Not built, with reasons: see `not_built` in `GET /v1/polymarket/write` and SECURITY.md.
+- Tests: `tests/test_polymarket_write.py` (22), new cases in `test_polymarket_explorer.py` and `explorer.test.mjs`.
+  Service worker cache `mm-agent-v10`.
+- Owner must: set the flags only when ready, revoke the GitHub token pasted in chat, run `scripts/pm_api_smoke.py`.

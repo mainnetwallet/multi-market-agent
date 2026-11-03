@@ -604,6 +604,33 @@ curl -s -H "Authorization: Bearer $TOKEN" "https://<service>/v1/polymarket/data/
 
 ---
 
+## Polymarket Data tab (Gamma, CLOB extras, rewards, account reads)
+
+Everything below is read-only and sits behind the same session login as every `/v1` route.
+
+- **UI:** Markets, third segment **Data** (Discover | Stored | Data). The form and the result view are
+  built from `GET /v1/polymarket/catalog`, so a new backend route needs no UI change. Sub-tabs: Wallet,
+  Boards, Market insights, Prices, Sports, Tags & Series, Comments, Rewards, Markets, System. The market
+  sheet also has a collapsible **Market insights** block (holders with PnL, open interest, resolution, fee
+  rate, tick size, CLOB market info).
+- **Routes:** `GET /v1/polymarket/catalog`, `GET /v1/polymarket/explore/{key}` (Gamma, CLOB public, Data,
+  relayer `/deployed`, geoblock; `data.accounting` answers with the ZIP itself),
+  `GET /v1/polymarket/account/{key}` (own account, needs the signer; without it the answer is
+  `{"ok": false, "needs_credentials": true}`), `GET /v1/polymarket/system` (health of Gamma, CLOB and Data,
+  geoblock, venue clock skew, `/v2/status`). The older `/v1/polymarket/data*` and `/price/*` routes are unchanged.
+- **Code:** `polymarket_explorer.py` (registry of `Route` rows, validation, per-host rate guard with the
+  official limits, cache TTLs, 429 `Retry-After` surfaced and never retried), `polymarket_account.py`
+  (SDK reads; API key ids are masked and every secret-looking field is dropped),
+  `static/js/explorer.js`.
+- **Path evidence:** each catalog row says `V` (path read in the official docs, OpenAPI or SDK 0.15.0 source)
+  or `U` (not verified live). A `U` row that answers 404 is reported as "not available"; the path is never guessed.
+- **Not built here (by decision, see the gap report):** every write route (batch orders, cancel by ids,
+  heartbeat, API/session key management, relayer `/submit`, combo RFQ), the RFQ WebSocket, the Perps API,
+  the PolyBolt rewrite (finding F1) and the Android Data screen. `caps.batch_orders` for Polymarket is now `False`
+  because no `POST /orders` code exists.
+- **Live check:** `python scripts/pm_api_smoke.py` calls each public route once and writes sanitized fixtures
+  to `tests/fixtures/live/polymarket/api/`. It needs a machine that reaches polymarket.com.
+
 ## Funds (off by default)
 
 The funds module lives in `src/mm_agent/funds/` and every route refuses with a
@@ -672,6 +699,17 @@ only after the operator says yes. An identical withdrawal still in its hold wind
 assistant (or anything it reads) to be able to name a new receiver.
 
 ---
+
+## Polymarket write-class API (off by default)
+
+`GET /v1/polymarket/write` lists every write action, whether it is enabled and which flags turn it on.
+`POST /v1/polymarket/write/{action}` runs one. Actions: `orders.cancel_ids`, `orders.batch` (up to 15 limit
+orders, each through the normal risk checks, stops at the first failure), `notifications.drop`,
+`keys.api.delete`, `keys.builder.revoke`, `session.authorize`, `session.revoke`, `combos.request_quote`,
+`combos.collateral_plan`, `heartbeat.send`. The order heartbeat loop has its own routes
+(`/v1/polymarket/heartbeat/start|stop`). Gates: `POLYMARKET_WRITE_API` plus the family flag (both default
+`false`), `Idempotency-Key`, step-up token (action `polymarket_write`), typed `confirm` where needed, audit row.
+Perps public data and combo markets are read-only rows in Markets > Data (groups Perps and Combos).
 
 ## Known gaps / limitations
 
