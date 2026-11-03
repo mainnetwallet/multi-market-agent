@@ -51,7 +51,7 @@ async def drain(paginator: Any, cap: int = 200) -> dict[str, Any]:
             complete = False
             break
         if len(items) >= cap:
-            complete = not page.has_more
+            complete = not page.has_more and len(items) == cap  # cutting a longer page is not complete
             items = items[:cap]
             break
     return {"items": plain(items), "complete": complete}

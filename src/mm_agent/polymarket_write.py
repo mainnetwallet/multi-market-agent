@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .polymarket_account import plain
-from .polymarket_data import DataAPIError, Validator, address, enum
+from .polymarket_data import DataAPIError, Validator, address, boolean, enum
 from .polymarket_explorer import csv_of, ident
 
 STEPUP_ACTION = "polymarket_write"
@@ -277,6 +277,34 @@ async def _guard(call: Awaitable[Any]) -> dict[str, Any]:
 PlaceOrder = Callable[..., Awaitable[dict[str, Any]]]
 
 
+_DECIMAL = re.compile(r"[0-9]{1,12}(\.[0-9]{1,8})?")
+
+
+def _batch_item(index: int, item: Mapping[str, Any]) -> dict[str, Any]:
+    """Check one batch order before anything is sent, so a bad field fails the whole batch up front.
+
+    ``post_only`` is parsed strictly: ``bool("false")`` is ``True``, which would silently turn a
+    normal order into a post-only one.
+    """
+
+    where = f"orders[{index}]"
+    out: dict[str, Any] = {
+        "market_id": ident(f"{where}.market_id", item["market_id"]),
+        "outcome": enum("YES", "NO")(f"{where}.outcome", str(item["outcome"]).strip().upper()),
+        "side": enum("BUY", "SELL")(f"{where}.side", str(item["side"]).strip().upper()),
+    }
+    for name in ("price", "shares"):
+        text = str(item[name]).strip()
+        if not _DECIMAL.fullmatch(text) or float(text) <= 0:
+            raise ValueError(f"{where}.{name} must be a positive decimal")
+        out[name] = text
+    if "post_only" in item and item["post_only"] is not None:
+        out["post_only"] = boolean(f"{where}.post_only", item["post_only"]) == "true"
+    if item.get("client_id") is not None:
+        out["client_id"] = ident(f"{where}.client_id", item["client_id"])
+    return out
+
+
 class PolymarketWriter:
     def __init__(
         self,
@@ -352,13 +380,15 @@ class PolymarketWriter:
         if not isinstance(orders, list) or not 1 <= len(orders) <= MAX_BATCH_ORDERS:
             raise ValueError(f"orders must be a list of 1 to {MAX_BATCH_ORDERS} orders")
         keys = {"market_id", "outcome", "side", "price", "shares"}
+        clean: list[dict[str, Any]] = []
         for index, item in enumerate(orders):
             if not isinstance(item, dict) or not keys <= set(item) or set(item) - keys - {"post_only", "client_id"}:
                 raise ValueError(
                     f"orders[{index}] needs exactly: {', '.join(sorted(keys))} (+ optional post_only, client_id)"
                 )
+            clean.append(_batch_item(index, item))
         results: list[dict[str, Any]] = []
-        for item in orders:
+        for item in clean:
             try:
                 placed = await self._place_order(actor=actor, **item)
             except Exception as exc:

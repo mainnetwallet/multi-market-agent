@@ -225,6 +225,15 @@ class _Pager:
         return gen()
 
 
+def test_drain_reports_a_cut_page_as_incomplete() -> None:
+    from mm_agent.polymarket_account import drain
+
+    cut = run(drain(_Pager([{"n": i} for i in range(300)]), cap=200))
+    assert len(cut["items"]) == 200 and cut["complete"] is False
+    whole = run(drain(_Pager([{"n": i} for i in range(200)]), cap=200))
+    assert len(whole["items"]) == 200 and whole["complete"] is True
+
+
 class _FakeSecure:
     async def fetch_api_keys(self) -> tuple[str, ...]:
         return ("11111111-2222-3333-4444-555555555555",)

@@ -246,6 +246,39 @@ def test_batch_limits_and_shape() -> None:
         run(_writer(_FakeSecure()).execute("orders.batch", {"orders": [_order()]}, settings=_Settings(**ON), actor="t"))
 
 
+def test_batch_post_only_string_false_is_not_post_only_and_bad_fields_fail_before_any_order() -> None:
+    seen: list[dict[str, Any]] = []
+
+    async def place(**kw: Any) -> dict[str, Any]:
+        seen.append(kw)
+        return {"order_id": kw["market_id"]}
+
+    w = _writer(_FakeSecure(), place)
+    out = run(
+        w.execute(
+            "orders.batch",
+            {"orders": [{**_order(1), "post_only": "false", "outcome": "no"}, {**_order(2), "post_only": True}]},
+            settings=_Settings(**ON),
+            actor="t",
+        )
+    )
+    assert out["outcome"] == "OK"
+    assert seen[0]["post_only"] is False and seen[0]["outcome"] == "NO"
+    assert seen[1]["post_only"] is True
+
+    seen.clear()
+    for bad in (
+        {**_order(2), "post_only": "maybe"},
+        {**_order(2), "price": "NaN"},
+        {**_order(2), "shares": "0"},
+        {**_order(2), "side": "HOLD"},
+        {**_order(2), "outcome": "MAYBE"},
+    ):
+        with pytest.raises(ValueError):
+            run(w.execute("orders.batch", {"orders": [_order(1), bad]}, settings=_Settings(**ON), actor="t"))
+    assert seen == []  # the good first order was not sent either: the batch is checked as a whole first
+
+
 # ── heartbeat ──────────────────────────────────────────────────────────────────────────────
 
 
